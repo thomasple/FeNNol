@@ -58,7 +58,7 @@ def CG_SO3(j1: int, j2: int, j3: int) -> np.array:
 
 
 def generate_spherical_harmonics(
-    lmax, normalize=True, print_code=False
+    lmax, normalize=False, print_code=False, jit=False, vmapped=False
 ):  # pragma: no cover
     r"""returns a function that computes spherical harmonic up to lmax
     (adapted from e3nn)
@@ -74,11 +74,15 @@ def generate_spherical_harmonics(
         x = sympy.simplify(x)
         return x
 
-    fn_str = "def spherical_harmonics(vec):\n"
-    if normalize:
-        fn_str += "  vec = vec/jnp.linalg.norm(vec,axis=-1,keepdims=True)\n"
-    fn_str += "  x,y,z = vec[...,0],vec[...,1],vec[...,2]\n"
-    fn_str += "  sh_0_0 = jnp.ones_like(x)\n"
+    if vmapped:
+        fn_str = "def spherical_harmonics_(x,y,z):\n"
+        fn_str += "  sh_0_0 = 1.\n"
+    else:
+        fn_str = "def spherical_harmonics_(vec):\n"
+        if normalize:
+            fn_str += "  vec = vec/jnp.linalg.norm(vec,axis=-1,keepdims=True)\n"
+        fn_str += "  x,y,z = [jax.lax.index_in_dim(vec, i, axis=-1, keepdims=False) for i in range(3)]\n"
+        fn_str += "  sh_0_0 = jnp.ones_like(x)\n"
 
     x_var, y_var, z_var = sympy.symbols("x y z")
     polynomials = [sympy.sqrt(3) * x_var, sympy.sqrt(3) * y_var, sympy.sqrt(3) * z_var]
@@ -119,8 +123,36 @@ def generate_spherical_harmonics(
     u = ",\n        ".join(
         ", ".join(f"sh_{j}_{m}" for m in range(2 * j + 1)) for j in range(l + 1)
     )
-    fn_str += f"  return jnp.stack([\n        {u}\n    ], axis=-1)\n"
+    if vmapped:
+        fn_str += f"  return jnp.array([\n        {u}\n    ])\n"
+    else:
+        fn_str += f"  return jnp.stack([\n        {u}\n    ], axis=-1)\n"
+
     if print_code:
         print(fn_str)
     exec(fn_str)
-    return locals()["spherical_harmonics"]
+    sh = locals()["spherical_harmonics_"]
+    if jit:
+        sh = jax.jit(sh)
+    if not vmapped: return sh
+
+    if normalize:
+
+        def spherical_harmonics(vec):
+            vec = vec / jnp.linalg.norm(vec, axis=-1, keepdims=True)
+            x, y, z = [
+                jax.lax.index_in_dim(vec, i, axis=-1, keepdims=False) for i in range(3)
+            ]
+            return jax.vmap(sh)(x, y, z)
+
+    else:
+
+        def spherical_harmonics(vec):
+            x, y, z = [
+                jax.lax.index_in_dim(vec, i, axis=-1, keepdims=False) for i in range(3)
+            ]
+            return jax.vmap(sh)(x, y, z)
+
+    if jit:
+        spherical_harmonics = jax.jit(spherical_harmonics)
+    return spherical_harmonics

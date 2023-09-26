@@ -1,7 +1,7 @@
 from numpy import pi
 
 
-class au:
+class AtomicUnits:
     EV = 27.211  # Hartree to eV
     KCALPERMOL = 627.509  # Hartree to kcal/mol
     KJPERMOL = 2625.5  # Hartree to kJ/mol
