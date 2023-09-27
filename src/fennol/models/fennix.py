@@ -14,6 +14,7 @@ from .preprocessing import GraphGenerator, PreprocessingChain,PREPROCESSING, Jax
 import numpy as np
 from flax import serialization
 from copy import deepcopy
+from flax.core.frozen_dict import freeze, unfreeze
 
 _MODULES = {**EMBEDDINGS, **ENCODINGS, **NETWORKS}
 
@@ -84,11 +85,11 @@ class FENNIX:
         energy_terms=["energy"],
     ) -> None:
         
-        self._input_args = {
+        self._input_args = freeze({
             "cutoff": cutoff,
             "modules": deepcopy(modules),
             "preprocessing": deepcopy(preprocessing),
-        }
+        })
         self.cutoff = cutoff
         self.energy_terms = energy_terms
 
@@ -312,7 +313,7 @@ class FENNIX:
     
     def save(self,filename):
         state_dict = {
-            **self._input_args,
+            **unfreeze(self._input_args),
             "energy_terms": self.energy_terms,
             "variables": self.variables,
         }
