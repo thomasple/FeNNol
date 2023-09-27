@@ -4,7 +4,6 @@ import flax.linen as nn
 import flax
 
 from typing import Any, Sequence, Callable, Union, Optional, Tuple, Dict
-from collections import OrderedDict
 from copy import deepcopy
 import dataclasses
 
@@ -13,6 +12,8 @@ from .encodings import ENCODINGS
 from .nets import NETWORKS
 from .preprocessing import GraphGenerator, PreprocessingChain,PREPROCESSING, JaxConverter
 import numpy as np
+from flax import serialization
+from copy import deepcopy
 
 _MODULES = {**EMBEDDINGS, **ENCODINGS, **NETWORKS}
 
@@ -64,23 +65,30 @@ class FENNIX:
     modules: FENNIXModules
     variables: Dict
     preprocessing: PreprocessingChain
-    preproc_state: Dict
     energy_terms: Sequence[str]
     _apply: Callable[[Dict, Dict], Dict]
     _total_energy: Callable[[Dict, Dict], Tuple[jnp.ndarray, Dict]]
     _energy_and_forces: Callable[[Dict, Dict], Tuple[jnp.ndarray, jnp.ndarray, Dict]]
+    _input_args: Dict
     init: bool = False
+    preproc_state: Dict = None
 
     def __init__(
         self,
         cutoff: float,
-        modules: OrderedDict,
-        preprocessing: OrderedDict = OrderedDict(),
+        modules: dict,
+        preprocessing: dict = dict(),
         example_data=None,
-        rng_key: jax.random.PRNGKey = None,
+        rng_key: Optional[jax.random.PRNGKey] = None,
         variables: Optional[dict] = None,
         energy_terms=["energy"],
     ) -> None:
+        
+        self._input_args = {
+            "cutoff": cutoff,
+            "modules": deepcopy(modules),
+            "preprocessing": deepcopy(preprocessing),
+        }
         self.cutoff = cutoff
         self.energy_terms = energy_terms
 
@@ -126,26 +134,16 @@ class FENNIX:
         self.set_energy_terms(energy_terms)
 
         # initialize the model
+
+        inputs,rng_key=self.reinitialize_preprocessing(rng_key, example_data)
+        
         if variables is not None:
             self.variables = variables
-        elif example_data is not None:
-            if rng_key is None:
-                raise ValueError("rng_key must be provided for initialization")
-            rng_key, rng_key_pre = jax.random.split(rng_key)
-            inputs, self.preproc_state = self.preprocessing.init_with_output(
-                rng_key_pre, example_data
-            )
-            self.variables = self.modules.init(rng_key, inputs)
         elif rng_key is not None:
-            rng_key, rng_key_sys, rng_key_pre = jax.random.split(rng_key, 3)
-            example_data = self.generate_dummy_system(rng_key_sys, n_atoms=10)
-            inputs, self.preproc_state = self.preprocessing.init_with_output(
-                rng_key_pre, example_data
-            )
             self.variables = self.modules.init(rng_key, inputs)
         else:
             raise ValueError(
-                "Either variables, example_data of a jax.random.PRNGKey must be provided for initialization"
+                "Either variables or a jax.random.PRNGKey must be provided for initialization"
             )
 
         self.init = True
@@ -198,17 +196,21 @@ class FENNIX:
         return out
 
     def reinitialize_preprocessing(
-        self, rng_key: jax.random.PRNGKey = None, example_data=None, **kwargs
+        self, rng_key: Optional[jax.random.PRNGKey] = None, example_data=None, **kwargs
     ) -> None:
         ### TODO ###
         if rng_key is None:
-            rng_key = jax.random.PRNGKey(0)
+            rng_key_pre = jax.random.PRNGKey(0)
+        else:
+            rng_key, rng_key_pre = jax.random.split(rng_key)
+
         if example_data is None:
-            rng_key, rng_key_sys = jax.random.split(rng_key)
+            rng_key_sys,rng_key_pre = jax.random.split(rng_key_pre)
             example_data = self.generate_dummy_system(rng_key_sys, n_atoms=10)
 
-        preproc_state = self.preprocessing.init(rng_key, example_data)
+        inputs,preproc_state = self.preprocessing.init_with_output(rng_key_pre, example_data)
         object.__setattr__(self, "preproc_state", preproc_state)
+        return inputs,rng_key
 
     def __call__(
         self, *args, variables: Optional[dict] = None, **kwargs
@@ -307,3 +309,18 @@ class FENNIX:
         rng_key, rng_key_pre = jax.random.split(rng_key)
         inputs, _ = self.preprocessing.init_with_output(rng_key_pre, example_data)
         return head + nn.tabulate(self.modules, rng_key, **kwargs)(inputs)
+    
+    def save(self,filename):
+        state_dict = {
+            **self._input_args,
+            "energy_terms": self.energy_terms,
+            "variables": self.variables,
+        }
+        with open(filename,'wb') as f:
+            f.write(serialization.msgpack_serialize(state_dict))
+    
+    @classmethod
+    def load(cls,filename):
+        with open(filename,'rb') as f:
+            state_dict = serialization.msgpack_restore(f.read())
+        return cls(**state_dict)

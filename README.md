@@ -12,7 +12,7 @@ TODO:
 - [ ] Port modules from torchnff
 - [ ] Convert ANI models parameters
 - [ ] Add a MD code (with adQTB) -> test efficiency with ANI
-- [ ] Implement a save/load system like in torchnff
+- [X] Implement a save/load system like in torchnff
 - [ ] generic training system ?
 - [ ] Add tests (?)
 - [ ] DOCUMENTATION / TUTORIALS
