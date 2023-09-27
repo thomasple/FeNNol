@@ -13,6 +13,7 @@ TODO:
 - [ ] Convert ANI models parameters
 - [ ] Add a MD code (with adQTB) -> test efficiency with ANI
 - [X] Implement a save/load system like in torchnff
+- [ ] Add method to load a pretrained model
 - [ ] generic training system ?
 - [ ] Add tests (?)
 - [ ] DOCUMENTATION / TUTORIALS

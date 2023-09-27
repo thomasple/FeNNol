@@ -138,7 +138,7 @@ class FENNIX:
         inputs,rng_key=self.reinitialize_preprocessing(rng_key, example_data)
         
         if variables is not None:
-            self.variables = variables
+            self.variables = JaxConverter()(variables)
         elif rng_key is not None:
             self.variables = self.modules.init(rng_key, inputs)
         else:
