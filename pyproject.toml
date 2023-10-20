@@ -10,5 +10,9 @@ dependencies = [
    "numpy",
    "scipy",
    "sympy",
-   "flax[all]"
+   "flax[all]",
 ]
+
+
+[project.scripts]
+fennol_md = "fennol.md.dynamic:main"

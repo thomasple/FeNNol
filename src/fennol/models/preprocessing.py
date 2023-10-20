@@ -93,13 +93,13 @@ class GraphGeneratorFixed(nn.Module):
         
         mult_size=float(inputs.get("nblist_mult_size",self.mult_size))
 
-        coords = jnp.asarray(inputs["coordinates"])
-        isys = jnp.asarray(inputs["isys"])
-        natoms = jnp.asarray(inputs["natoms"])
+        coords = np.asarray(inputs["coordinates"])
+        isys = np.asarray(inputs["isys"])
+        natoms = np.asarray(inputs["natoms"])
         padding_value=coords.shape[0]
         if "true_atoms" in inputs:
-            true_atoms=jnp.asarray(inputs["true_atoms"],dtype=bool)
-            true_sys=jnp.asarray(inputs["true_sys"],dtype=bool)
+            true_atoms=np.asarray(inputs["true_atoms"],dtype=bool)
+            true_sys=np.asarray(inputs["true_sys"],dtype=bool)
             coords=coords[true_atoms]
             isys=isys[true_atoms]
             natoms=natoms[true_sys]
@@ -119,8 +119,8 @@ class GraphGeneratorFixed(nn.Module):
             edge_src, edge_dst, d12, npairs = compute_nblist_fixed(
                 coords, cutoff, isys, natoms, max_nat, prev_nblist_size_,padding_value
             )
-        edge_src,edge_dst = jnp.concatenate((edge_src,edge_dst)),jnp.concatenate((edge_dst,edge_src))
-        d12 = jnp.concatenate((d12,d12))
+        edge_src,edge_dst = np.concatenate((edge_src,edge_dst)),np.concatenate((edge_dst,edge_src))
+        d12 = np.concatenate((d12,d12))
 
         if not self.is_initializing():
             prev_nblist_size.value = prev_nblist_size_
@@ -132,10 +132,10 @@ class GraphGeneratorFixed(nn.Module):
                 "edge_dst": edge_dst,
                 "d12": d12,
                 "cutoff": self.cutoff,
-                "vec":jnp.empty((2*prev_nblist_size_,3),dtype=np.float32),
-                "distances":jnp.empty(2*prev_nblist_size_,dtype=np.float32),
-                "switch":jnp.empty(2*prev_nblist_size_,dtype=np.float32),
-                "edge_mask":jnp.empty(2*prev_nblist_size_,dtype=bool),
+                "vec":np.empty((2*prev_nblist_size_,3),dtype=np.float32),
+                "distances":np.empty(2*prev_nblist_size_,dtype=np.float32),
+                "switch":np.empty(2*prev_nblist_size_,dtype=np.float32),
+                "edge_mask":np.empty(2*prev_nblist_size_,dtype=bool),
             },
         }
 
