@@ -5,43 +5,10 @@ import jax
 import numpy as np
 from typing import Optional, Tuple
 import numba
+from ..utils.nblist import compute_nblist_flatbatch, angular_nblist,compute_nblist_fixed
 
-
-@numba.njit
-def compute_nblist_flatbatch(
-    coords, cutoff, isys, natoms, mult_size, prev_nblist_size=0
-):
-    src, dst = [], []
-    d12s = []
-    c2 = cutoff**2
-    shifts = np.cumsum(natoms)
-
-    for i in range(coords.shape[0]):
-        for j in range(i + 1, shifts[isys[i]]):
-            vec = coords[i] - coords[j]
-            d12 = np.sum(vec**2)
-            if d12 < c2:
-                src.append(i)
-                dst.append(j)
-                d12s.append(d12)
-    nattot = shifts[-1]
-    src, dst = np.array(src + dst), np.array(dst + src)
-    d12s = np.array(d12s + d12s)
-
-    nblist_size = src.shape[0]
-    if nblist_size > prev_nblist_size:
-        prev_nblist_size = int(mult_size * nblist_size)
-    src = np.append(
-        src, nattot * np.ones(prev_nblist_size - nblist_size, dtype=np.int32)
-    )
-    dst = np.append(
-        dst, nattot * np.ones(prev_nblist_size - nblist_size, dtype=np.int32)
-    )
-    d12s = np.append(
-        d12s, c2 * np.ones(prev_nblist_size - nblist_size, dtype=np.float32)
-    )
-    return src, dst, d12s, prev_nblist_size
-
+def minmaxone(x,name=""):
+    print(name,x.min(),x.max(),(x**2).mean())
 
 class GraphGenerator(nn.Module):
     cutoff: float
@@ -51,10 +18,26 @@ class GraphGenerator(nn.Module):
     @nn.compact
     def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:
         if self.graph_key in inputs:
-            return inputs
+            if inputs[self.graph_key].get("keep_graph", False):
+                return inputs
+
+        cutoff=self.cutoff
+        if "nblist_skin" in inputs:
+            cutoff+=float(inputs["nblist_skin"])
+        
+        mult_size=float(inputs.get("nblist_mult_size",self.mult_size))
+
         coords = np.array(inputs["coordinates"])
         isys = np.array(inputs["isys"])
         natoms = np.array(inputs["natoms"])
+        padding_value=coords.shape[0]
+        if "true_atoms" in inputs:
+            true_atoms=np.array(inputs["true_atoms"],dtype=bool)
+            true_sys=np.array(inputs["true_sys"],dtype=bool)
+            coords=coords[true_atoms]
+            isys=isys[true_atoms]
+            natoms=natoms[true_sys]
+
 
         prev_nblist_size = self.variable(
             "preprocessing",
@@ -62,7 +45,8 @@ class GraphGenerator(nn.Module):
             lambda: 0,
         )
         edge_src, edge_dst, d12, prev_nblist_size_ = compute_nblist_flatbatch(
-            coords, self.cutoff, isys, natoms, self.mult_size, prev_nblist_size.value
+            coords, cutoff, isys, natoms, mult_size, prev_nblist_size.value
+            ,padding_value=padding_value
         )
 
         if not self.is_initializing():
@@ -75,6 +59,83 @@ class GraphGenerator(nn.Module):
                 "edge_dst": edge_dst,
                 "d12": d12,
                 "cutoff": self.cutoff,
+                "vec":jnp.empty((prev_nblist_size_,3),dtype=np.float32),
+                "distances":jnp.empty(prev_nblist_size_,dtype=np.float32),
+                "switch":jnp.empty(prev_nblist_size_,dtype=np.float32),
+                "edge_mask":jnp.empty(prev_nblist_size_,dtype=bool),
+            },
+        }
+
+    def get_processor(self) -> Tuple[nn.Module, Dict]:
+        return GraphProcessor, {
+            "cutoff": self.cutoff,
+            "graph_key": self.graph_key,
+            "name": f"{self.graph_key}_Processor",
+        }
+
+    def get_graph_properties(self):
+        return {self.graph_key: {"cutoff": self.cutoff, "directed": True}}
+
+class GraphGeneratorFixed(nn.Module):
+    cutoff: float
+    mult_size: float = 1.1
+    graph_key: str = "graph"
+
+    @nn.compact
+    def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:
+        if self.graph_key in inputs:
+            if inputs[self.graph_key].get("keep_graph", False):
+                return inputs
+
+        cutoff=self.cutoff
+        if "nblist_skin" in inputs:
+            cutoff+=float(inputs["nblist_skin"])
+        
+        mult_size=float(inputs.get("nblist_mult_size",self.mult_size))
+
+        coords = jnp.asarray(inputs["coordinates"])
+        isys = jnp.asarray(inputs["isys"])
+        natoms = jnp.asarray(inputs["natoms"])
+        padding_value=coords.shape[0]
+        if "true_atoms" in inputs:
+            true_atoms=jnp.asarray(inputs["true_atoms"],dtype=bool)
+            true_sys=jnp.asarray(inputs["true_sys"],dtype=bool)
+            coords=coords[true_atoms]
+            isys=isys[true_atoms]
+            natoms=natoms[true_sys]
+
+        prev_nblist_size = self.variable(
+            "preprocessing",
+            f"{self.graph_key}_prev_nblist_size",
+            lambda: 1,
+        )
+        prev_nblist_size_=prev_nblist_size.value
+        max_nat = int(jnp.max(natoms))
+        edge_src, edge_dst, d12, npairs = compute_nblist_fixed(
+            coords, cutoff, isys, natoms, max_nat, prev_nblist_size_,padding_value
+        )
+        if npairs>prev_nblist_size.value:
+            prev_nblist_size_ = int(mult_size * npairs)+1
+            edge_src, edge_dst, d12, npairs = compute_nblist_fixed(
+                coords, cutoff, isys, natoms, max_nat, prev_nblist_size_,padding_value
+            )
+        edge_src,edge_dst = jnp.concatenate((edge_src,edge_dst)),jnp.concatenate((edge_dst,edge_src))
+        d12 = jnp.concatenate((d12,d12))
+
+        if not self.is_initializing():
+            prev_nblist_size.value = prev_nblist_size_
+
+        return {
+            **inputs,
+            self.graph_key: {
+                "edge_src": edge_src,
+                "edge_dst": edge_dst,
+                "d12": d12,
+                "cutoff": self.cutoff,
+                "vec":jnp.empty((2*prev_nblist_size_,3),dtype=np.float32),
+                "distances":jnp.empty(2*prev_nblist_size_,dtype=np.float32),
+                "switch":jnp.empty(2*prev_nblist_size_,dtype=np.float32),
+                "edge_mask":jnp.empty(2*prev_nblist_size_,dtype=bool),
             },
         }
 
@@ -91,21 +152,20 @@ class GraphGenerator(nn.Module):
 
 class GraphProcessor(nn.Module):
     cutoff: float
-    graph_key: Optional[str] = "graph"
+    graph_key:str = "graph"
 
     @nn.compact
     def __call__(self, inputs: Union[dict, Tuple[jax.Array, dict]]):
-        if self.graph_key is None:
-            coords, graph = inputs
-        else:
-            graph = inputs[self.graph_key]
-            coords = inputs["coordinates"]
+        graph = inputs[self.graph_key]
+        coords = inputs["coordinates"]
         edge_src, edge_dst = graph["edge_src"], graph["edge_dst"]
         edge_mask = edge_src < coords.shape[0]
         vec = coords.at[edge_dst].get(mode="fill", fill_value=self.cutoff) - coords.at[
             edge_src
         ].get(mode="fill", fill_value=0.0)
         distances = jnp.linalg.norm(vec, axis=-1)
+        edge_mask = distances < self.cutoff
+
         switch = jnp.where(
             edge_mask, 0.5 * jnp.cos(distances * (jnp.pi / self.cutoff)) + 0.5, 0.0
         )
@@ -117,9 +177,7 @@ class GraphProcessor(nn.Module):
             "switch": switch,
             "edge_mask": edge_mask,
         }
-        if self.graph_key is not None:
-            return {**inputs, self.graph_key: graph_out}
-        return graph_out
+        return {**inputs, self.graph_key: graph_out}
 
 
 class GraphFilter(nn.Module):
@@ -131,9 +189,13 @@ class GraphFilter(nn.Module):
     @nn.compact
     def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:
         if self.graph_out in inputs:
-            return inputs
+            if inputs[self.graph_out].get("keep_graph", False):
+                return inputs
 
-        c2 = self.cutoff**2
+        if "nblist_skin" in inputs:
+            c2 = (self.cutoff + float(inputs["nblist_skin"])) ** 2
+        else:
+            c2 = self.cutoff**2
 
         graph_in = inputs[self.graph_key]
         d12 = graph_in["d12"]
@@ -151,23 +213,25 @@ class GraphFilter(nn.Module):
         )
         prev_nblist_size_ = prev_nblist_size.value
 
+        mult_size=float(inputs.get("nblist_mult_size",self.mult_size))
+
         nattot = inputs["species"].shape[0]
         nblist_size = edge_src.shape[0]
         if nblist_size > prev_nblist_size_:
-            prev_nblist_size_ = int(self.mult_size * nblist_size)
+            prev_nblist_size_ = int(mult_size * nblist_size)
 
         edge_src = np.append(
-            edge_src, nattot * np.ones(prev_nblist_size - nblist_size, dtype=np.int32)
+            edge_src, nattot * np.ones(prev_nblist_size_ - nblist_size, dtype=np.int64)
         )
         edge_dst = np.append(
-            edge_dst, nattot * np.ones(prev_nblist_size - nblist_size, dtype=np.int32)
+            edge_dst, nattot * np.ones(prev_nblist_size_ - nblist_size, dtype=np.int64)
         )
         d12 = np.append(
-            d12, c2 * np.ones(prev_nblist_size - nblist_size, dtype=np.float32)
+            d12, c2 * np.ones(prev_nblist_size_ - nblist_size, dtype=np.float32)
         )
         indices = np.append(
             indices,
-            nblist_size_in * np.ones(prev_nblist_size - nblist_size, dtype=np.int32),
+            nblist_size_in * np.ones(prev_nblist_size_ - nblist_size, dtype=np.int64),
         )
 
         if not self.is_initializing():
@@ -181,6 +245,10 @@ class GraphFilter(nn.Module):
                 "d12": d12,
                 "filter_indices": indices,
                 "cutoff": self.cutoff,
+                "vec":np.empty((prev_nblist_size_,3),dtype=np.float32),
+                "distances":np.empty(prev_nblist_size_,dtype=np.float32),
+                "switch":np.empty(prev_nblist_size_,dtype=np.float32),
+                "edge_mask":np.empty(prev_nblist_size_,dtype=bool),
             },
         }
 
@@ -205,7 +273,7 @@ class GraphFilter(nn.Module):
 class GraphFilterProcessor(nn.Module):
     cutoff: float
     graph_out: str
-    graph_key: Optional[str] = "graph"
+    graph_key: str = "graph"
 
     @nn.compact
     def __call__(self, inputs: Union[dict, Tuple[jax.Array, dict]]):
@@ -213,8 +281,6 @@ class GraphFilterProcessor(nn.Module):
         graph = inputs[self.graph_out]
         coords = inputs["coordinates"]
 
-        edge_src = graph["edge_src"]
-        edge_mask = edge_src < coords.shape[0]
         filter_indices = graph["filter_indices"]
 
         vec = (
@@ -225,6 +291,7 @@ class GraphFilterProcessor(nn.Module):
             .at[filter_indices]
             .get(mode="fill", fill_value=self.cutoff)
         )
+        edge_mask = distances < self.cutoff
 
         switch = jnp.where(
             edge_mask, 0.5 * jnp.cos(distances * (jnp.pi / self.cutoff)) + 0.5, 0.0
@@ -240,38 +307,7 @@ class GraphFilterProcessor(nn.Module):
         return {**inputs, self.graph_out: graph_out}
 
 
-@numba.njit
-def angular_nblist(edge_src, natoms):
-    idx = np.argsort(edge_src)
-    rev_idx = np.argsort(idx)
 
-    counts = np.zeros(natoms, dtype=np.int32)
-    for i in edge_src:
-        counts[i] += 1
-
-    pair_sizes = (counts * (counts - 1)) // 2
-    nangles = np.sum(pair_sizes)
-
-    shift = 0
-    p1s = np.zeros(nangles, dtype=np.int32)
-    p2s = np.zeros(nangles, dtype=np.int32)
-    central_atom_index = np.zeros(nangles, dtype=np.int32)
-    iang = 0
-    for i, c in enumerate(counts):
-        if c < 2:
-            shift += c
-            continue
-        for j in range(c):
-            for k in range(j + 1, c):
-                p1s[iang] = k + shift
-                p2s[iang] = j + shift
-                central_atom_index[iang] = i
-                iang += 1
-        shift += c
-    angle_src = rev_idx[p1s]
-    angle_dst = rev_idx[p2s]
-
-    return central_atom_index, angle_src, angle_dst
 
 
 class GraphAngularExtension(nn.Module):
@@ -282,7 +318,7 @@ class GraphAngularExtension(nn.Module):
     def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:
         graph = inputs[self.graph_key]
 
-        edge_src = graph["edge_src"]
+        edge_src = np.array(graph["edge_src"])
         nattot = inputs["species"].shape[0]
 
         central_atom_index, angle_src, angle_dst = angular_nblist(edge_src, nattot)
@@ -292,20 +328,23 @@ class GraphAngularExtension(nn.Module):
             f"{self.graph_key}_prev_angle_size",
             lambda: 0,
         )
+        mult_size=float(inputs.get("nblist_mult_size",self.mult_size))
+
         prev_angle_size_ = prev_angle_size.value
         angle_size = angle_src.shape[0]
         if angle_size > prev_angle_size_:
-            prev_angle_size_ = int(self.mult_size * angle_size)
+            prev_angle_size_ = int(mult_size * angle_size)
 
+        nblist_size=edge_src.shape[0]
         angle_src = np.append(
-            angle_src, -1 * np.ones(prev_angle_size - angle_size, dtype=np.int32)
+            angle_src, nblist_size * np.ones(prev_angle_size_ - angle_size, dtype=np.int64)
         )
         angle_dst = np.append(
-            angle_dst, -1 * np.ones(prev_angle_size - angle_size, dtype=np.int32)
+            angle_dst, nblist_size * np.ones(prev_angle_size_ - angle_size, dtype=np.int64)
         )
         central_atom_index = np.append(
             central_atom_index,
-            nattot * np.ones(prev_angle_size - angle_size, dtype=np.int32),
+            nattot * np.ones(prev_angle_size_ - angle_size, dtype=np.int64),
         )
 
         if not self.is_initializing():
@@ -318,6 +357,9 @@ class GraphAngularExtension(nn.Module):
                 "angle_src": angle_src,
                 "angle_dst": angle_dst,
                 "central_atom": central_atom_index,
+                "cos_angles": np.empty(prev_angle_size_,dtype=np.float32),
+                "angles": np.empty(prev_angle_size_,dtype=np.float32),
+                "angle_mask": np.empty(prev_angle_size_,dtype=bool),
             },
         }
 
@@ -345,10 +387,14 @@ class GraphAngleProcessor(nn.Module):
         vec = graph["vec"]
         angle_src = graph["angle_src"]
         angle_dst = graph["angle_dst"]
-        angle_mask = angle_src >= 0
-        d1, d2 = distances[angle_src], distances[angle_dst]
+        angle_mask = angle_src < distances.shape[0]
+        d1 = distances.at[angle_src].get(mode="fill", fill_value=1.)
+        d2 = distances.at[angle_dst].get(mode="fill", fill_value=1.)
+        vec1 = vec.at[angle_src].get(mode="fill", fill_value=1.)
+        vec2 = vec.at[angle_dst].get(mode="fill", fill_value=0.)
 
-        cos_angles = (vec[angle_src] * vec[angle_dst]).sum(axis=-1) / jnp.clip(
+
+        cos_angles = (vec1 * vec2).sum(axis=-1) / jnp.clip(
             d1 * d2, a_min=1e-10
         )
         angles = jnp.arccos(0.95 * cos_angles)
@@ -364,50 +410,96 @@ class GraphAngleProcessor(nn.Module):
         }
 
 
-def check_fennix_args(*args, **kwargs) -> Dict[str, Any]:
-    if len(args) == 2:
-        species, coordinates = args
-        return {"species": species, "coordinates": coordinates, **kwargs}
+class AtomPadding(nn.Module):
+    mult_size: float = 1.
 
-    if len(args) == 1:
-        assert isinstance(args[0], dict), "input must be a dictionary"
-        inputs = {**args[0], **kwargs}
-        assert "species" in inputs, "species must be provided"
-        assert "coordinates" in inputs, "coordinates must be provided"
+    @nn.compact
+    def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:   
+        species=inputs["species"]
+        nat=species.shape[0]
+            
+        prev_nat = self.variable(
+            "preprocessing",
+            "prev_nat",
+            lambda: 0,
+        )
+        prev_nat_ = prev_nat.value
+        if nat > prev_nat_:
+            prev_nat_ = nat
+        
+        nsys=len(inputs["natoms"])
+        
+        add_atoms = prev_nat_ - nat
+        output={**inputs}
+        if add_atoms>0:
+            isys=inputs["isys"]
+            for k,v in inputs.items():
+                if isinstance(v,np.ndarray):
+                    if v.shape[0]==nat:
+                        output[k]=np.append(v,np.zeros((add_atoms,*v.shape[1:]),dtype=v.dtype),axis=0)
+                    elif v.shape[0]==nsys:
+                        output[k]=np.append(v,np.zeros((1,*v.shape[1:]),dtype=v.dtype),axis=0)
+            output["natoms"] = np.append(inputs["natoms"], add_atoms)
+            output["species"] = np.append(
+                species, -1 * np.ones(add_atoms, dtype=species.dtype)
+            )
+            output["isys"] = np.append(isys,np.array([nsys]*add_atoms,dtype=isys.dtype))
+
+        output["true_atoms"]=output["species"]>0
+        output["true_sys"]=np.arange(len(output["natoms"]))<nsys
+
+        if not self.is_initializing():
+            prev_nat.value = prev_nat_
+
+        return output
+
+def atom_unpadding(inputs: Dict[str,Any]) -> Dict[str,Any]:
+    species=inputs["species"]
+    natall = species.shape[0]
+    nat = np.argmax(species<=0) 
+    if nat==0:
         return inputs
+    
+    natoms=inputs["natoms"]
+    nsysall=len(natoms)
+    
+    output={**inputs}
+    for k,v in inputs.items():
+        if isinstance(v,jax.Array) or isinstance(v,np.ndarray):
+            if v.shape[0]==natall:
+                output[k]=v[:nat]
+            elif v.shape[0]==nsysall:
+                output[k]=v[:-1]
+    return output
 
-    if len(args) == 0:
-        assert "species" in kwargs, "species must be provided"
-        assert "coordinates" in kwargs, "coordinates must be provided"
-        return kwargs
+def check_input(inputs):
+    assert "species" in inputs, "species must be provided"
+    assert "coordinates" in inputs, "coordinates must be provided"
+    species=inputs["species"]
+    ifake = np.argmax(species<=0)
+    if ifake>0:
+        assert np.all(species[:ifake]>0), "species must be positive"
+    nat = inputs["species"].shape[0]
 
-    print(
-        "Invalid input, must be either a dictionary or two arrays (species, coordinates) and/or keyword arguments"
-    )
-    raise ValueError("invalid input")
-
-
-def format_input(*args, **kwargs):
-    inputs = check_fennix_args(*args, **kwargs)
-    species = inputs["species"]
-    if "isys" not in inputs:
-        inputs["isys"] = np.zeros_like(species, dtype=np.int32)
-
-    if "natoms" not in inputs:
-        inputs["natoms"] = np.array([species.shape[0]], dtype=np.int32)
-
-    return inputs
-
+    natoms = inputs.get("natoms",np.array([nat], dtype=np.int64))
+    isys = inputs.get("isys",np.repeat(np.arange(len(natoms),dtype=np.int64), natoms))
+    return {**inputs,"natoms":natoms,"isys":isys}
 
 class JaxConverter(nn.Module):
     def __call__(self, data):
-        return jax.tree_util.tree_map(
-            lambda x: jnp.asarray(x) if isinstance(x, np.ndarray) else x, data
-        )
+        def convert(x):
+            if isinstance(x, np.ndarray):
+                # if x.dtype == np.float64:
+                #     return jnp.asarray(x, dtype=jnp.float32)
+                return jnp.asarray(x)
+            return x
+
+        return jax.tree_util.tree_map(convert, data)
 
 
 class PreprocessingChain(nn.Module):
     layers: Sequence[Callable[..., Dict[str, Any]]]
+    use_atom_padding: bool = False
 
     def __post_init__(self):
         if not isinstance(self.layers, Sequence):
@@ -416,11 +508,14 @@ class PreprocessingChain(nn.Module):
             )
         super().__post_init__()
 
-    def __call__(self, *args, **kwargs):
+    @nn.compact
+    def __call__(self,inputs: Dict[str, Any]) -> Dict[str, Any]:
         if not self.layers:
             raise ValueError(f"Empty Sequential module {self.name}.")
 
-        data = format_input(*args, **kwargs)
+        data=check_input(inputs)
+        if self.use_atom_padding:
+            data = AtomPadding()(data)
         for layer in self.layers:
             data = layer(data)
         return data
@@ -428,6 +523,7 @@ class PreprocessingChain(nn.Module):
 
 PREPROCESSING = {
     "GRAPH": GraphGenerator,
+    "GRAPH_FIXED": GraphGeneratorFixed,
     "GRAPH_FILTER": GraphFilter,
     "GRAPH_ANGULAR_EXTENSION": GraphAngularExtension,
 }

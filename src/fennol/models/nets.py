@@ -55,7 +55,7 @@ class FullyConnectedNet(nn.Module):
         for i,d in enumerate(self.neurons[:-1]):
             x = nn.Dense(d, use_bias=self.use_bias, name=f"Layer_{i+1}")(x)
             x = activation(x)
-        x = nn.Dense(self.neurons[-1], use_bias=self.use_bias, name=f"Layer_{i+2}")(x)
+        x = nn.Dense(self.neurons[-1], use_bias=self.use_bias, name=f"Layer_{len(self.neurons)}")(x)
         ############################
 
         if self.input_key is not None:
@@ -171,7 +171,7 @@ class ChemicalNet(nn.Module):
         rev_idx = {s: k for k, s in enumerate(PERIODIC_TABLE)}
         maxidx = max(rev_idx.values())
         nspecies = len(self.species_order)
-        conv_tensor_ = np.full((maxidx + 2,), nspecies, dtype=np.int32)
+        conv_tensor_ = np.full((maxidx + 2,), -1, dtype=np.int32)
         for i, s in enumerate(self.species_order):
             conv_tensor_[rev_idx[s]] = i
         conv_tensor = jnp.asarray(conv_tensor_)
@@ -193,6 +193,8 @@ class ChemicalNet(nn.Module):
             jnp.take_along_axis(Networks(x), indices[None, :, None], axis=0), axis=0
         )
         ############################
+
+        out = jnp.where((indices>=0)[:,None], out, 0.0)
 
         if self.input_key is not None:
             output_key = self.name if self.output_key is None else self.output_key

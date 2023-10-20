@@ -99,7 +99,7 @@ class AtomicUnits:
                     tmp_power = tmp_power * tmp_power_read
 
                 unit_substring = unit_string[unit_start : unit_stop + 1]
-                tmp_unit = au.mapping[unit_substring]
+                tmp_unit = AtomicUnits.mapping[unit_substring]
 
                 multiplier = multiplier * (tmp_unit**tmp_power)
 
@@ -124,7 +124,7 @@ class AtomicUnits:
                     raise ValueError
 
                 unit_substring = unit_string[unit_start : unit_stop + 1]
-                tmp_unit = au.mapping[unit_substring]
+                tmp_unit = AtomicUnits.mapping[unit_substring]
                 multiplier = multiplier * (tmp_unit**tmp_power)
 
                 unit_start = i + 1
@@ -147,7 +147,7 @@ class AtomicUnits:
                     raise ValueError
 
                 unit_substring = unit_string[unit_start : unit_stop + 1]
-                tmp_unit = au.mapping[unit_substring]
+                tmp_unit = AtomicUnits.mapping[unit_substring]
                 multiplier = multiplier * (tmp_unit**tmp_power)
 
                 unit_start = i + 1
@@ -166,7 +166,7 @@ class AtomicUnits:
                         raise ValueError
 
                     unit_substring = unit_string[unit_start : unit_stop + 1]
-                    tmp_unit = au.mapping[unit_substring]
+                    tmp_unit = AtomicUnits.mapping[unit_substring]
                     multiplier = multiplier * (tmp_unit**tmp_power)
 
         return multiplier

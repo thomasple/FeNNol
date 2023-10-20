@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
-from typing import Sequence,Dict
+from typing import Sequence, Dict
 import numpy as np
 from ...utils.periodic_table import PERIODIC_TABLE
 
@@ -26,6 +26,7 @@ class ANIAEV(nn.Module):
         embedding_key (str, optional): The key to use for the output embedding in the returned dictionary. Default is "embedding".
         graph_key (str, optional): The key in the input dictionary that corresponds to the radial graph. Default is "graph".
     """
+
     _graphs_properties: Dict
     species_order: Sequence[str]
     graph_angle_key: str
@@ -47,7 +48,7 @@ class ANIAEV(nn.Module):
         maxidx = max(rev_idx.values())
 
         #convert species to internal indices
-        conv_tensor = [-1] * (maxidx + 2)
+        conv_tensor = [0] * (maxidx + 2)
         for i, s in enumerate(self.species_order):
             conv_tensor[rev_idx[s]] = i
         indices = jnp.asarray(conv_tensor, dtype=jnp.int32)[species]
@@ -66,21 +67,17 @@ class ANIAEV(nn.Module):
         shiftR = jnp.asarray(
             np.linspace(self.radial_start, cutoff, self.radial_dist_divisions + 1)[
                 None, :-1
-            ]
+            ],
+            dtype=distances.dtype,
         )
         x2 = self.radial_eta * (distances[:, None] - shiftR) ** 2
         radial_terms = 0.25 * jnp.exp(-x2) * switch[:, None]
         # aggregate radial AEV
         radial_index = edge_src * num_species + indices[edge_dst]
-        radial_aev = (
-            jnp.zeros(
-                (species.shape[0] * num_species, radial_terms.shape[-1]),
-                dtype=distances.dtype,
-            )
-            .at[radial_index]
-            .add(radial_terms)
-            .reshape(species.shape[0], num_species * radial_terms.shape[-1])
-        )
+
+        radial_aev = jax.ops.segment_sum(
+            radial_terms, radial_index, num_species * species.shape[0]
+        ).reshape(species.shape[0], num_species * radial_terms.shape[-1])
 
         # Angular graph
         graph = inputs[self.graph_angle_key]
@@ -88,52 +85,50 @@ class ANIAEV(nn.Module):
         distances = graph["distances"]
         central_atom = graph["central_atom"]
         angle_src, angle_dst = graph["angle_src"], graph["angle_dst"]
+        switch = graph["switch"]
         d12 = 0.5 * (distances[angle_src] + distances[angle_dst])[:, None]
 
         # Angular AEV parameters
         angular_cutoff = self._graphs_properties[self.graph_angle_key]["cutoff"]
         angle_start = np.pi / (2 * self.angle_sections)
         shiftZ = jnp.asarray(
-            (np.linspace(0, np.pi, self.angle_sections + 1) + angle_start)[None, :-1]
+            (np.linspace(0, np.pi, self.angle_sections + 1) + angle_start)[None, :-1],
+            dtype=distances.dtype,
         )
         shiftA = jnp.asarray(
             np.linspace(
                 self.angular_start, angular_cutoff, self.angular_dist_divisions + 1
-            )[None, :-1]
+            )[None, :-1],
+            dtype=distances.dtype,
         )
 
         # Angular AEV
         factor1 = (0.5 + 0.5 * jnp.cos(angles[:, None] - shiftZ)) ** self.zeta
         factor2 = jnp.exp(-self.angular_eta * (d12 - shiftA) ** 2)
         angular_terms = (
-            2
-            * (factor1[:, None, :] * factor2[:, :, None]).reshape(
+            (factor1[:, None, :] * factor2[:, :, None]).reshape(
                 -1, self.angle_sections * self.angular_dist_divisions
             )
+            * 2
             * (switch[angle_src] * switch[angle_dst])[:, None]
         )
 
         # aggregate angular AEV
         index_dest = indices[graph["edge_dst"]]
-        species1, species2 = np.triu_indices(num_species)
+        species1, species2 = np.triu_indices(num_species, 0)
         pair_index = np.arange(species1.shape[0], dtype=np.int32)
         triu_index = np.zeros((num_species, num_species), dtype=np.int32)
         triu_index[species1, species2] = pair_index
         triu_index[species2, species1] = pair_index
-        triu_index = jnp.asarray(triu_index)
+        triu_index = jnp.asarray(triu_index, dtype=jnp.int32)
         angular_index = (
             central_atom * num_species_pair
             + triu_index[index_dest[angle_src], index_dest[angle_dst]]
         )
-        angular_aev = (
-            jnp.zeros(
-                (species.shape[0] * num_species_pair, angular_terms.shape[-1]),
-                dtype=distances.dtype,
-            )
-            .at[angular_index]
-            .add(angular_terms)
-            .reshape(species.shape[0], num_species_pair * angular_terms.shape[-1])
-        )
+
+        angular_aev = jax.ops.segment_sum(
+            angular_terms, angular_index, num_species_pair * species.shape[0]
+        ).reshape(species.shape[0], num_species_pair * angular_terms.shape[-1])
 
         embedding = jnp.concatenate((radial_aev, angular_aev), axis=-1)
         if self.embedding_key is None:
