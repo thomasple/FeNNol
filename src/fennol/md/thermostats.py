@@ -12,11 +12,11 @@ def get_thermostat(thermostat_name,dt,mass, gamma=None, kT=None):
         if kT is None or gamma is None:
             raise ValueError("kT and gamma must be specified for Langevin thermostat")
         a1 = math.exp(-gamma * dt)
-        a2 = jnp.asarray(((1 - a1 * a1) * kT / mass) ** 0.5)
+        a2 = jnp.asarray(((1 - a1 * a1) * kT / mass[:,None]) ** 0.5)
 
         def thermostat(vel, rng_key):
             rng_key,noise_key = jax.random.split(rng_key)
-            noise = jax.random.normal(noise_key, vel.shape)
+            noise = jax.random.normal(noise_key, vel.shape,dtype=vel.dtype)
             vel = a1 * vel + a2 * noise
             return vel, rng_key
     elif thermostat_name in [

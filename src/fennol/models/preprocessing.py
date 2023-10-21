@@ -59,10 +59,6 @@ class GraphGenerator(nn.Module):
                 "edge_dst": edge_dst,
                 "d12": d12,
                 "cutoff": self.cutoff,
-                "vec":jnp.empty((prev_nblist_size_,3),dtype=np.float32),
-                "distances":jnp.empty(prev_nblist_size_,dtype=np.float32),
-                "switch":jnp.empty(prev_nblist_size_,dtype=np.float32),
-                "edge_mask":jnp.empty(prev_nblist_size_,dtype=bool),
             },
         }
 
@@ -132,10 +128,6 @@ class GraphGeneratorFixed(nn.Module):
                 "edge_dst": edge_dst,
                 "d12": d12,
                 "cutoff": self.cutoff,
-                "vec":np.empty((2*prev_nblist_size_,3),dtype=np.float32),
-                "distances":np.empty(2*prev_nblist_size_,dtype=np.float32),
-                "switch":np.empty(2*prev_nblist_size_,dtype=np.float32),
-                "edge_mask":np.empty(2*prev_nblist_size_,dtype=bool),
             },
         }
 
@@ -245,10 +237,6 @@ class GraphFilter(nn.Module):
                 "d12": d12,
                 "filter_indices": indices,
                 "cutoff": self.cutoff,
-                "vec":np.empty((prev_nblist_size_,3),dtype=np.float32),
-                "distances":np.empty(prev_nblist_size_,dtype=np.float32),
-                "switch":np.empty(prev_nblist_size_,dtype=np.float32),
-                "edge_mask":np.empty(prev_nblist_size_,dtype=bool),
             },
         }
 
@@ -357,9 +345,6 @@ class GraphAngularExtension(nn.Module):
                 "angle_src": angle_src,
                 "angle_dst": angle_dst,
                 "central_atom": central_atom_index,
-                "cos_angles": np.empty(prev_angle_size_,dtype=np.float32),
-                "angles": np.empty(prev_angle_size_,dtype=np.float32),
-                "angle_mask": np.empty(prev_angle_size_,dtype=bool),
             },
         }
 

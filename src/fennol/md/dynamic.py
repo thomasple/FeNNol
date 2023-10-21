@@ -125,7 +125,7 @@ def dynamic(simulation_parameters,device,fprec):
 
     nblist_stride = int(simulation_parameters.get("nblist_stride", 1))
     nblist_skin = simulation_parameters.get("nblist_skin", 0.)
-    nprint = max(int(simulation_parameters.get("nprint", 10)),nblist_stride)
+    nprint = int(simulation_parameters.get("nprint", 10))
     print("nprint: ", nprint, "; nblist_stride: ", nblist_stride)
 
     random_seed = simulation_parameters.get("random_seed",np.random.randint(0,2**32-1))
@@ -137,8 +137,9 @@ def dynamic(simulation_parameters,device,fprec):
     thermostat  = get_thermostat(thermostat_name,dt=dt,mass=mass,gamma=gamma,kT=kT)
 
     dt2m = jnp.asarray(dt2 / mass[:, None],dtype=fprec)
-    # @jax.jit
-    def step(i,system):
+
+    @jax.jit
+    def step(system):
         v = system["vel"]
         f = system["forces"]
         x = system["coordinates"]
@@ -147,8 +148,8 @@ def dynamic(simulation_parameters,device,fprec):
         x = x + dt2 * v
         v,rng_key = thermostat(v,system["rng_key"])
         x = x + dt2 * v
-        system = {**system, "coordinates": x } #, "rng_key": rng_key}
-        e,f, system = model._energy_and_forces(model.variables,system)
+        system = {**system, "coordinates": x , "rng_key": rng_key}
+        _,f, system = model._energy_and_forces(model.variables,system)
         v = v + f * dt2m
 
         ek=0.5*jnp.sum(mass[:,None]*v**2)
@@ -157,9 +158,9 @@ def dynamic(simulation_parameters,device,fprec):
 
         return system
     
-    @partial(jax.jit, static_argnums=1)
-    def integrate(system,nsteps):
-        return jax.lax.fori_loop(0,nsteps,step,system)
+    # @partial(jax.jit, static_argnums=1)
+    # def integrate(system,nsteps):
+    #     return jax.lax.fori_loop(0,nsteps,step,system)
     
     system = model.preprocess(species=species, coordinates=coordinates)
     if simulation_parameters.get("print_model_summary",False):
@@ -185,28 +186,20 @@ def dynamic(simulation_parameters,device,fprec):
     print(header)
     fout = open(traj_file, "a+")
     t0 = time.time()
-    tpre = 0
-    tstep = 0
+    tstart_dyn=t0
     istep=0
-    for _ in range(nsteps//nblist_stride):
+    for istep in range(1,nsteps+1):
         ### BAOAB evolution
-        tpre0 = time.time()
-        system = model.preprocess(**system)
-        tpre += time.time() - tpre0
+        if istep % nblist_stride == 0:
+            system = model.preprocess(**system)
 
-        tstep0 = time.time()
-        system = integrate(system,nblist_stride)
-        # system = step(i,system)
-        system["coordinates"].block_until_ready()
-        tstep += time.time() - tstep0
-
-        istep+=nblist_stride
+        system = step(system)
 
         if istep % ndump == 0:
             print("write XYZ frame")
             write_arc_frame(fout, symbols, coordinates)
             print(header)
-            #model.reinitialize_preprocessing()
+            # model.reinitialize_preprocessing()
 
         if istep % nprint == 0:
             if jnp.any(jnp.isnan(system["vel"])) or jnp.any(jnp.isnan(system["coordinates"])):
@@ -220,11 +213,8 @@ def dynamic(simulation_parameters,device,fprec):
             line = f"{istep:10} {(start_time+istep*dt)*au.PS:10.3f} {ek+e:10.3f} {e:10.3f} {ek:10.3f} {2*ek/(3.*nat)*au.KELVIN:10.3f} {nsperday:10.3f} {1./tperstep:10.3f}"
             
             print(line)
-            print("preprocess: ", tpre / nprint, "; integrate: ", tstep / nprint)
-            tpre = 0
-            tstep = 0
 
-
+    print(f"Run done in {(time.time()-tstart_dyn)/60.0} minutes")
     ### close trajectory file
     fout.close()
 
