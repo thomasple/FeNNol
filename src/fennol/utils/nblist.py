@@ -42,6 +42,57 @@ def compute_nblist_flatbatch(
     )
     return src, dst, d12s, prev_nblist_size
 
+@numba.njit
+def compute_nblist_flatbatch_minimage(
+    coords, cutoff, isys, natoms, mult_size, cells, reciprocal_cells,prev_nblist_size=0,padding_value=None
+):
+    src, dst = [], []
+    pbc_shifts = []
+    d12s = []
+    c2 = cutoff**2
+    shifts = np.cumsum(natoms)
+
+    for i in range(coords.shape[0]):
+        cell = cells[isys[i]]
+        reciprocal_cell = reciprocal_cells[isys[i]]
+        for j in range(i + 1, shifts[isys[i]]):
+            vec = coords[i] - coords[j]
+            vecpbc = np.dot(reciprocal_cell,vec)
+            vecpbc -= np.round(vecpbc)
+            vecpbc = np.dot(cell,vecpbc)
+            d12 = np.sum(vecpbc**2)
+            if d12 < c2:
+                src.append(i)
+                dst.append(j)
+                d12s.append(d12)
+                pbc_shifts.append(list(vec-vecpbc))
+    nattot = shifts[-1]
+    src, dst = np.array(src + dst,dtype=np.int64), np.array(dst + src,dtype=np.int64)
+    d12s = np.array(d12s + d12s, dtype=np.float32)
+    pbc_shifts = np.array(pbc_shifts, dtype=np.float32)
+    pbc_shifts = np.concatenate((pbc_shifts, -pbc_shifts),axis=0)
+
+    nblist_size = src.shape[0]
+    if nblist_size > prev_nblist_size:
+        prev_nblist_size = int(mult_size * nblist_size)
+    
+    if padding_value is None:
+        padding_value = nattot
+    src = np.append(
+        src, padding_value * np.ones(prev_nblist_size - nblist_size, dtype=np.int64)
+    )
+    dst = np.append(
+        dst, padding_value * np.ones(prev_nblist_size - nblist_size, dtype=np.int64)
+    )
+    d12s = np.append(
+        d12s, c2 * np.ones(prev_nblist_size - nblist_size, dtype=np.float32)
+    )
+    pbc_shifts = np.append(
+        pbc_shifts, np.zeros((prev_nblist_size - nblist_size,3), dtype=np.float32)
+        ,axis=0
+    )
+    return src, dst, d12s, pbc_shifts,prev_nblist_size
+
 def hash_cell(cell_coords,isys,nel):
     return (15823*cell_coords[...,0]+9737333*cell_coords[...,1]+95483*cell_coords[...,2] + 79411*isys)%nel
 
@@ -214,3 +265,34 @@ def compute_nblist_fixed(coords,cutoff,isys,natoms,max_nat,max_pairs,padding_val
 
     edge_src,edge_dst = p1[idx],p2[idx]
     return edge_src,edge_dst,d12[idx],npairs
+
+@partial(jax.jit, static_argnums=(1,4,5))
+def compute_nblist_fixed_minimage(coords,cutoff,isys,natoms,max_nat,max_pairs,padding_value,cells):
+    p1,p2=jnp.triu_indices(max_nat, 1)
+    mask = ((p1[None,:]<natoms[:,None])*(p2[None,:]<natoms[:,None])).flatten()
+    reciprocal_cells = jnp.linalg.inv(cells)
+
+    if natoms.shape[0]==1:
+        shift=jnp.array([0])
+    else:
+        shift=jnp.concatenate((jnp.array([0]),jnp.cumsum(natoms[:-1])))
+
+    p1 = (p1[None,:]+shift[:,None]).flatten()*mask - (1-mask)
+    p2 = (p2[None,:]+shift[:,None]).flatten()*mask - (1-mask)
+    isysvec=isys[p1]
+    vec = coords[p1]-coords[p2]
+    vecpbc = jnp.einsum("sij,si->sj",reciprocal_cells[isysvec],vec)
+    vecpbc -= jnp.round(vecpbc)
+    vecpbc = jnp.einsum("sij,si->sj",cells[isysvec],vecpbc) #jnp.dot(cells[isysvec],vecpbc.T).T
+    pbc_shifts = vec-vecpbc
+    d12=jnp.sum(vecpbc**2,axis=-1)
+
+    mask = mask*(d12<cutoff**2)
+    d12 = d12*mask + (cutoff**2)*(1-mask)
+    p1 = p1*mask + padding_value*(1-mask)
+    p2 = p2*mask + padding_value*(1-mask)
+    npairs=jnp.sum(mask)
+    idx = jnp.argsort(d12)[:max_pairs]
+
+    edge_src,edge_dst = p1[idx],p2[idx]
+    return edge_src,edge_dst,d12[idx],pbc_shifts[idx],npairs

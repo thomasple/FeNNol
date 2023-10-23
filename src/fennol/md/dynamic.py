@@ -5,7 +5,7 @@ from pathlib import Path
 import math
 
 import numpy as np
-from typing import Optional,Callable
+from typing import Optional, Callable
 from functools import partial
 import jax
 import jax.numpy as jnp
@@ -13,13 +13,14 @@ import jax.numpy as jnp
 
 from ..models import FENNIX
 from ..utils.io import write_arc_frame, last_xyz_frame
-from ..utils.periodic_table import PERIODIC_TABLE_REV_IDX,ATOMIC_MASSES
+from ..utils.periodic_table import PERIODIC_TABLE_REV_IDX, ATOMIC_MASSES
 from ..utils.atomic_units import AtomicUnits as au
 from ..utils.input_parser import parse_input
 from .thermostats import get_thermostat
 
-def minmaxone(x,name=""):
-    print(name,x.min(),x.max(),(x**2).mean())
+
+def minmaxone(x, name=""):
+    print(name, x.min(), x.max(), (x**2).mean())
 
 
 def main():
@@ -34,25 +35,25 @@ def main():
     simulation_parameters = parse_input(args.param_file)
 
     ### Set the device
-    device:str = simulation_parameters.get("device", "cpu")
+    device: str = simulation_parameters.get("device", "cpu")
     if device == "cpu":
-        device="cpu"
+        device = "cpu"
     elif device.startswith("cuda"):
-        num=device.split(":")[-1]
+        num = device.split(":")[-1]
         os.environ["CUDA_VISIBLE_DEVICES"] = num
         device = "gpu"
-    
+
     _device = jax.devices(device)[0]
 
     ### Set the precision
-    jax.config.update("jax_enable_x64", True)
-    fprec='float32'
+    jax.config.update("jax_enable_x64", simulation_parameters.get("enable_x64", False))
+    fprec = "float32"
 
     with jax.default_device(_device):
-        dynamic(simulation_parameters,device,fprec)
+        dynamic(simulation_parameters, device, fprec)
 
 
-def dynamic(simulation_parameters,device,fprec):
+def dynamic(simulation_parameters, device, fprec):
     ### Initialize the model
     # assert 'model_file' in simulation_parameters, "model_file not specified in parameter file"
     model_file = simulation_parameters.get("model_file")
@@ -77,9 +78,9 @@ def dynamic(simulation_parameters,device,fprec):
         xyzfile, indexed=indexed, box_info=box_info
     )
     coordinates = coordinates.astype(fprec)
-    species = np.array([PERIODIC_TABLE_REV_IDX[s] for s in symbols],dtype=np.int32)
+    species = np.array([PERIODIC_TABLE_REV_IDX[s] for s in symbols], dtype=np.int32)
     nat = species.shape[0]
-    mass_amu = np.array(ATOMIC_MASSES,dtype=fprec)[species]
+    mass_amu = np.array(ATOMIC_MASSES, dtype=fprec)[species]
     deuterate = simulation_parameters.get("deuterate", False)
     if deuterate:
         print("Replacing all hydrogens with deuteriums")
@@ -96,7 +97,7 @@ def dynamic(simulation_parameters,device,fprec):
 
     cell = simulation_parameters.get("cell", None)
     if cell is not None:
-        cell = np.array(cell,dtype=fprec).reshape(3, 3).T
+        cell = np.array(cell, dtype=fprec).reshape(3, 3).T
         volume = np.linalg.det(cell)
         print("cell matrix:")
         print(cell)
@@ -105,7 +106,7 @@ def dynamic(simulation_parameters,device,fprec):
 
     if crystal_input:
         assert cell is not None, "cell must be specified for crystal units"
-        coordinates = coordinates @ cell #.double()
+        coordinates = coordinates @ cell  # .double()
         with open("initial.arc", "w") as finit:
             write_arc_frame(finit, symbols, coordinates)
     ### Set simulation parameters
@@ -124,19 +125,21 @@ def dynamic(simulation_parameters,device,fprec):
     traj_file = Path(simulation_parameters.get("traj_file", system_name + ".arc"))
 
     nblist_stride = int(simulation_parameters.get("nblist_stride", 1))
-    nblist_skin = simulation_parameters.get("nblist_skin", 0.)
+    nblist_skin = simulation_parameters.get("nblist_skin", 0.0)
     nprint = int(simulation_parameters.get("nprint", 10))
     print("nprint: ", nprint, "; nblist_stride: ", nblist_stride)
 
-    random_seed = simulation_parameters.get("random_seed",np.random.randint(0,2**32-1))
+    random_seed = simulation_parameters.get(
+        "random_seed", np.random.randint(0, 2**32 - 1)
+    )
     print(f"random_seed: {random_seed}")
     rng_key = jax.random.PRNGKey(random_seed)
 
     ### Set the thermostat
     thermostat_name = str(simulation_parameters.get("thermostat", "NONE")).upper()
-    thermostat  = get_thermostat(thermostat_name,dt=dt,mass=mass,gamma=gamma,kT=kT)
+    thermostat = get_thermostat(thermostat_name, dt=dt, mass=mass, gamma=gamma, kT=kT)
 
-    dt2m = jnp.asarray(dt2 / mass[:, None],dtype=fprec)
+    dt2m = jnp.asarray(dt2 / mass[:, None], dtype=fprec)
 
     @jax.jit
     def step(system):
@@ -146,39 +149,45 @@ def dynamic(simulation_parameters,device,fprec):
 
         v = v + f * dt2m
         x = x + dt2 * v
-        v,rng_key = thermostat(v,system["rng_key"])
+        v, rng_key = thermostat(v, system["rng_key"])
         x = x + dt2 * v
-        system = {**system, "coordinates": x , "rng_key": rng_key}
-        _,f, system = model._energy_and_forces(model.variables,system)
+        system = {**system, "coordinates": x, "rng_key": rng_key}
+        _, f, system = model._energy_and_forces(model.variables, system)
         v = v + f * dt2m
 
-        ek=0.5*jnp.sum(mass[:,None]*v**2)
-        system["vel"]=v
-        system["ek"]=ek
+        ek = 0.5 * jnp.sum(mass[:, None] * v**2)
+        system["vel"] = v
+        system["ek"] = ek
 
         return system
-    
+
     # @partial(jax.jit, static_argnums=1)
     # def integrate(system,nsteps):
     #     return jax.lax.fori_loop(0,nsteps,step,system)
-    
-    system = model.preprocess(species=species, coordinates=coordinates)
-    if simulation_parameters.get("print_model_summary",False):
+    if cell is None:
+        system = model.preprocess(species=species, coordinates=coordinates)
+    else:
+        system = model.preprocess(
+            species=species, coordinates=coordinates, cells=cell[None, :, :]
+        )
+    if simulation_parameters.get("print_model_summary", False):
         print(model.summarize(example_data=system))
     # initial energy and forces
     print("Computing initial energy and forces")
-    e, f, system = model._energy_and_forces(model.variables,system)
+    e, f, system = model._energy_and_forces(model.variables, system)
     print(f"Initial energy: {e}")
 
-    rng_key,v_key = jax.random.split(rng_key)
-    v=jnp.zeros_like(coordinates) #jax.random.normal(v_key,coordinates.shape)*(kT/mass[:,None])**0.5
-    system["rng_key"]=rng_key
-    ek=0.5*jnp.sum(mass[:,None]*v**2)
-    system["vel"]=v
-    system["ek"]=ek
-    system["nblist_skin"]=nblist_skin
+    rng_key, v_key = jax.random.split(rng_key)
+    v = (
+        jax.random.normal(v_key, coordinates.shape) * (kT / mass[:, None]) ** 0.5
+    ).astype(fprec)
+    system["rng_key"] = rng_key
+    ek = 0.5 * jnp.sum(mass[:, None] * v**2)
+    system["vel"] = v
+    system["ek"] = ek
+    system["nblist_skin"] = nblist_skin
     if "nblist_mult_size" in simulation_parameters:
-        system["nblist_mult_size"]=simulation_parameters["nblist_mult_size"]
+        system["nblist_mult_size"] = simulation_parameters["nblist_mult_size"]
 
     ### Print header
     print(f"Running {nsteps} steps of MD simulation on {device}")
@@ -186,9 +195,10 @@ def dynamic(simulation_parameters,device,fprec):
     print(header)
     fout = open(traj_file, "a+")
     t0 = time.time()
-    tstart_dyn=t0
-    istep=0
-    for istep in range(1,nsteps+1):
+    t0dump = t0
+    tstart_dyn = t0
+    istep = 0
+    for istep in range(1, nsteps + 1):
         ### BAOAB evolution
         if istep % nblist_stride == 0:
             system = model.preprocess(**system)
@@ -197,21 +207,27 @@ def dynamic(simulation_parameters,device,fprec):
 
         if istep % ndump == 0:
             print("write XYZ frame")
-            write_arc_frame(fout, symbols, coordinates)
+            write_arc_frame(fout, symbols, np.asarray(system["coordinates"]))
+            print("ns/day: ", nsperday)
             print(header)
+            tperstep = (time.time() - t0dump) / ndump
+            t0dump = time.time()
+            nsperday = (24 * 60 * 60 / tperstep) * dt * au.PS / 1000
             # model.reinitialize_preprocessing()
 
         if istep % nprint == 0:
-            if jnp.any(jnp.isnan(system["vel"])) or jnp.any(jnp.isnan(system["coordinates"])):
+            if jnp.any(jnp.isnan(system["vel"])) or jnp.any(
+                jnp.isnan(system["coordinates"])
+            ):
                 raise ValueError("dynamics crashed.")
             t1 = time.time()
             tperstep = (t1 - t0) / nprint
             t0 = t1
             nsperday = (24 * 60 * 60 / tperstep) * dt * au.PS / 1000
-            ek=system["ek"]
-            e=system["total_energy"][0]
+            ek = system["ek"]
+            e = system["total_energy"][0]
             line = f"{istep:10} {(start_time+istep*dt)*au.PS:10.3f} {ek+e:10.3f} {e:10.3f} {ek:10.3f} {2*ek/(3.*nat)*au.KELVIN:10.3f} {nsperday:10.3f} {1./tperstep:10.3f}"
-            
+
             print(line)
 
     print(f"Run done in {(time.time()-tstart_dyn)/60.0} minutes")
