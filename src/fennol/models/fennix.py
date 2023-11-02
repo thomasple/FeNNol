@@ -14,6 +14,7 @@ from .embeddings import EMBEDDINGS
 from .encodings import ENCODINGS
 from .nets import NETWORKS
 from .misc import MISC
+from .physics import PHYSICS
 from .preprocessing import (
     GraphGenerator,
     GraphGeneratorFixed,
@@ -25,7 +26,7 @@ from .preprocessing import (
 from ..utils import deep_update
 
 
-_MODULES = {**EMBEDDINGS, **ENCODINGS, **NETWORKS, **MISC}
+_MODULES = {**EMBEDDINGS, **ENCODINGS, **NETWORKS, **MISC, **PHYSICS}
 
 
 class FENNIXModules(nn.Module):
@@ -80,7 +81,7 @@ class FENNIX:
     _total_energy: Callable[[Dict, Dict], Tuple[jnp.ndarray, Dict]]
     _energy_and_forces: Callable[[Dict, Dict], Tuple[jnp.ndarray, jnp.ndarray, Dict]]
     _input_args: Dict
-    _graphs_properties: Dict 
+    _graphs_properties: Dict
     preproc_state: Dict
     _initializing: bool = True
     use_atom_padding: bool = False
@@ -95,29 +96,33 @@ class FENNIX:
         variables: Optional[dict] = None,
         energy_terms=["energy"],
         use_atom_padding: bool = False,
+        fixed_preprocessing: bool = False,
     ) -> None:
-        self._input_args = (
-            {
-                "cutoff": cutoff,
-                "modules": OrderedDict(modules),
-                "preprocessing":  OrderedDict(preprocessing),
-            }
-        )
+        self._input_args = {
+            "cutoff": cutoff,
+            "modules": OrderedDict(modules),
+            "preprocessing": OrderedDict(preprocessing),
+        }
         self.cutoff = cutoff
         self.energy_terms = energy_terms
         self.use_atom_padding = use_atom_padding
 
         # add non-differentiable/non-jittable modules
-        preprocessing_modules = [
-            GraphGeneratorFixed(cutoff=cutoff),
-        ]
+        if fixed_preprocessing:
+            preprocessing_modules = [
+                GraphGeneratorFixed(cutoff=cutoff),
+            ]
+        else:
+            preprocessing_modules = [
+                GraphGenerator(cutoff=cutoff),
+            ]
         preprocessing = deepcopy(preprocessing)
         for name, params in preprocessing.items():
             key = str(params.pop("module_name")) if "module_name" in params else name
             mod = PREPROCESSING[key.upper()](**params)
             preprocessing_modules.append(mod)
 
-        self.preprocessing = PreprocessingChain(preprocessing_modules,use_atom_padding)
+        self.preprocessing = PreprocessingChain(preprocessing_modules, use_atom_padding)
         mods = [(JaxConverter, {})]
         # add preprocessing modules that should be differentiated/jitted
         # mods.append((JaxConverter, {})
@@ -174,14 +179,21 @@ class FENNIX:
         def total_energy(variables, data):
             out = self._apply(variables, data)
             atomic_energies = 0.0
+            species=out["species"]
             for term in self.energy_terms:
-                atomic_energies += out[term]
-            atomic_energies = jnp.squeeze(atomic_energies, axis=-1)
+                e= out[term]
+                if e.shape[-1] == 1:
+                    e = jnp.squeeze(e, axis=-1)
+                assert e.shape == species.shape
+                atomic_energies += e
+            # atomic_energies = jnp.squeeze(atomic_energies, axis=-1)
             if "true_atoms" in out:
                 atomic_energies = jnp.where(out["true_atoms"], atomic_energies, 0.0)
             out["atomic_energies"] = atomic_energies
 
-            energies = jax.ops.segment_sum(atomic_energies, data["isys"],num_segments=len(data["natoms"]))
+            energies = jax.ops.segment_sum(
+                atomic_energies, data["isys"], num_segments=len(data["natoms"])
+            )
             out["total_energy"] = energies
             return energies, out
 
@@ -232,9 +244,7 @@ class FENNIX:
         object.__setattr__(self, "preproc_state", preproc_state)
         return inputs, rng_key
 
-    def __call__(
-        self, variables: Optional[dict] = None, **inputs
-    ) -> Dict[str, Any]:
+    def __call__(self, variables: Optional[dict] = None, **inputs) -> Dict[str, Any]:
         """Apply the FENNIX model (preprocess + modules)
 
         !!! This is not a pure function => do not apply jax transforms !!!
@@ -270,8 +280,8 @@ class FENNIX:
             variables = self.variables
         inputs = self.preprocess(**inputs)
         return self._energy_and_forces(variables, inputs)
-    
-    def remove_atom_padding(self,inputs):
+
+    def remove_atom_padding(self, inputs):
         return atom_unpadding(inputs)
 
     def get_model(self) -> Tuple[FENNIXModules, Dict]:
@@ -285,7 +295,7 @@ class FENNIX:
             if __value is not None:
                 if not isinstance(__value, dict):
                     raise ValueError("variables must be a dict")
-                object.__setattr__(self, __name,  JaxConverter()(__value))
+                object.__setattr__(self, __name, JaxConverter()(__value))
             else:
                 raise ValueError("variables cannot be None")
         elif self._initializing:
@@ -338,15 +348,21 @@ class FENNIX:
 
     def save(self, filename):
         state_dict = self.to_dict()
-        state_dict["preprocessing"] =  [[k, v] for k, v in state_dict["preprocessing"].items()]
-        state_dict["modules"]=[[k, v] for k, v in state_dict["modules"].items()]
+        state_dict["preprocessing"] = [
+            [k, v] for k, v in state_dict["preprocessing"].items()
+        ]
+        state_dict["modules"] = [[k, v] for k, v in state_dict["modules"].items()]
         with open(filename, "wb") as f:
             f.write(serialization.msgpack_serialize(state_dict))
 
     @classmethod
-    def load(cls, filename,use_atom_padding=False):
+    def load(cls, filename, use_atom_padding=False, fixed_preprocessing=False):
         with open(filename, "rb") as f:
             state_dict = serialization.msgpack_restore(f.read())
-        state_dict["preprocessing"] = {k:v for k,v in state_dict["preprocessing"]}
-        state_dict["modules"]={k:v for k,v in state_dict["modules"]}
-        return cls(**state_dict,use_atom_padding=use_atom_padding)
+        state_dict["preprocessing"] = {k: v for k, v in state_dict["preprocessing"]}
+        state_dict["modules"] = {k: v for k, v in state_dict["modules"]}
+        return cls(
+            **state_dict,
+            use_atom_padding=use_atom_padding,
+            fixed_preprocessing=fixed_preprocessing,
+        )
