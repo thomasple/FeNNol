@@ -265,6 +265,7 @@ class GraphFilter(nn.Module):
     graph_out: str
     mult_size: float = 1.1
     graph_key: str = "graph"
+    remove_hydrogens: int = False
 
     @nn.compact
     def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:
@@ -279,9 +280,13 @@ class GraphFilter(nn.Module):
 
         graph_in = inputs[self.graph_key]
         d12 = graph_in["d12"]
-        indices = (d12 < c2).nonzero()
         edge_src_in = graph_in["edge_src"]
         nblist_size_in = edge_src_in.shape[0]
+        mask = (d12 < c2) #.nonzero()
+        if self.remove_hydrogens:
+            species = inputs["species"]
+            mask = mask*(species[edge_src_in] > 1)
+        indices = mask.nonzero()
         edge_src = edge_src_in[indices]
         edge_dst = graph_in["edge_dst"][indices]
         d12 = d12[indices]
@@ -386,6 +391,7 @@ class GraphFilterProcessor(nn.Module):
 class GraphAngularExtension(nn.Module):
     mult_size: float = 1.1
     graph_key: str = "graph"
+    remove_hydrogens: int = False
 
     @nn.compact
     def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:
@@ -395,6 +401,12 @@ class GraphAngularExtension(nn.Module):
         nattot = inputs["species"].shape[0]
 
         central_atom_index, angle_src, angle_dst = angular_nblist(edge_src, nattot)
+        if self.remove_hydrogens:
+            species = np.array(inputs["species"])
+            mask = species[central_atom_index] > 1
+            central_atom_index = central_atom_index[mask]
+            angle_src = angle_src[mask]
+            angle_dst = angle_dst[mask]
 
         prev_angle_size = self.variable(
             "preprocessing",
@@ -480,7 +492,7 @@ class GraphAngleProcessor(nn.Module):
 
 
 class AtomPadding(nn.Module):
-    mult_size: float = 1.0
+    mult_size: float = 1.2
 
     @nn.compact
     def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:
@@ -494,7 +506,7 @@ class AtomPadding(nn.Module):
         )
         prev_nat_ = prev_nat.value
         if nat > prev_nat_:
-            prev_nat_ = nat
+            prev_nat_ = int(self.mult_size * nat) + 1
 
         nsys = len(inputs["natoms"])
 
