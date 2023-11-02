@@ -40,6 +40,19 @@ class ScatterEdges(nn.Module):
         key_out = self.key if self.key_out is None else self.key_out
         return {**inputs, key_out: output}
 
+class SumAxis(nn.Module):
+    key: str
+    axis: Union[None, int, Sequence[int]] = None
+    key_out: Optional[str] = None
+
+    @nn.compact
+    def __call__(self, inputs) -> Any:
+        x = inputs[self.key]
+        output = jnp.sum(x, axis=self.axis)
+        key_out = self.key if self.key_out is None else self.key_out
+        return {**inputs, key_out: output}
+
 MISC = {
     "SCATTER_EDGES": ScatterEdges,
+    "SUM_AXIS": SumAxis,
 }
