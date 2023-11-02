@@ -61,7 +61,7 @@ def dynamic(simulation_parameters, device, fprec):
     if not model_file.exists():
         raise FileNotFoundError(f"model file {model_file} not found")
     else:
-        model = FENNIX.load(model_file)  # \
+        model = FENNIX.load(model_file,fixed_preprocessing=True)  # \
         print(f"model_file: {model_file}")
         # .train(False).requires_grad_(False).to(prec)
 
@@ -198,12 +198,23 @@ def dynamic(simulation_parameters, device, fprec):
     t0dump = t0
     tstart_dyn = t0
     istep = 0
+    tpre=0
+    tstep=0
+    print_timings = simulation_parameters.get("print_timings", False)
     for istep in range(1, nsteps + 1):
         ### BAOAB evolution
         if istep % nblist_stride == 0:
+            tpre0=time.time()
             system = model.preprocess(**system)
+            if print_timings:
+                system["coordinates"].block_until_ready()
+                tpre += time.time()-tpre0
 
+        tstep0=time.time()
         system = step(system)
+        if print_timings:
+            system["coordinates"].block_until_ready()
+            tstep += time.time()-tstep0
 
         if istep % ndump == 0:
             print("write XYZ frame")
@@ -229,6 +240,10 @@ def dynamic(simulation_parameters, device, fprec):
             line = f"{istep:10} {(start_time+istep*dt)*au.PS:10.3f} {ek+e:10.3f} {e:10.3f} {ek:10.3f} {2*ek/(3.*nat)*au.KELVIN:10.3f} {nsperday:10.3f} {1./tperstep:10.3f}"
 
             print(line)
+            if print_timings:
+                print(f"tpre: {tpre/nprint:.5f}; tstep: {tstep/nprint:.5f}")
+                tpre=0
+                tstep=0
 
     print(f"Run done in {(time.time()-tstart_dyn)/60.0} minutes")
     ### close trajectory file
