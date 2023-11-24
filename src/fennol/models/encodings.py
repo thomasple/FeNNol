@@ -68,6 +68,7 @@ class RadialBasis(nn.Module):
     output_key: Optional[str] = None
     basis: str = "bessel"
     trainable: bool = False
+    enforce_positive: bool = False
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -81,6 +82,8 @@ class RadialBasis(nn.Module):
         if basis == "bessel":
             c = self.end - self.start
             x = x[:, None] - self.start
+            if self.enforce_positive:
+                x=jax.nn.softplus(x)
 
             if self.trainable:
                 bessel_roots = self.param(
@@ -90,12 +93,15 @@ class RadialBasis(nn.Module):
                     ),
                     self.dim,
                 )
+                norm = 1./jnp.max(bessel_roots) # (2.0 / c) ** 0.5 /jnp.max(bessel_roots)
             else:
                 bessel_roots = jnp.asarray(
                     np.arange(1, self.dim + 1, dtype=x.dtype)[None, :] * (math.pi / c)
                 )
+                norm = 1./(self.dim*math.pi/c) #(2.0 / c) ** 0.5/(self.dim*math.pi/c)
 
-            out = (2.0 / c) ** 0.5 * jnp.sin(x * bessel_roots) / x
+
+            out =  norm * jnp.sin(x * bessel_roots) / x
 
         elif basis == "gaussian":
             if self.trainable:
@@ -185,9 +191,12 @@ class RadialBasis(nn.Module):
                 roots = jnp.asarray(
                     np.arange(self.dim)[None, :] * math.pi, dtype=x.dtype
                 )
-            x = (x[:, None] - self.start) / (self.end - self.start)
+            c = (self.end - self.start)
+            x = (x[:, None] - self.start) 
+            if self.enforce_positive:
+                x=jax.nn.softplus(x)
             norm = 1.0 / (0.25 + 0.5 * self.dim) ** 0.5
-            out = norm * jnp.cos(x * roots)
+            out = norm * jnp.cos(x * roots/c)
 
         elif basis == "spooky":
             norms = []
@@ -199,7 +208,10 @@ class RadialBasis(nn.Module):
                 gamma = jnp.abs(
                     self.param("gamma", lambda key: jnp.asarray(gamma, dtype=x.dtype))
                 )
-            e = jnp.exp(-gamma * x)[:, None]
+            x= x[:, None] - self.start
+            if self.enforce_positive:
+                x=jax.nn.softplus(x)
+            e = jnp.exp(-gamma * x)
             k = jnp.asarray(np.arange(self.dim, dtype=x.dtype)[None, :])
             b = e**k * (1 - e) ** (self.dim - 1 - k)
             out = b * norms
@@ -209,7 +221,7 @@ class RadialBasis(nn.Module):
 
         if self.graph_key is not None:
             output_key = self.name if self.output_key is None else self.output_key
-            return {**inputs, output_key: out} if output_key is not None else out
+            return {**inputs, output_key: out}
         return out
 
 

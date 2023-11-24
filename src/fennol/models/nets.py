@@ -26,6 +26,7 @@ class FullyConnectedNet(nn.Module):
     use_bias: bool = True
     input_key: Optional[str] = None
     output_key: Optional[str] = None
+    squeeze: bool = False
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -58,6 +59,8 @@ class FullyConnectedNet(nn.Module):
         x = nn.Dense(
             self.neurons[-1], use_bias=self.use_bias, name=f"Layer_{len(self.neurons)}"
         )(x)
+        if self.squeeze and x.shape[-1] == 1:
+            x = jnp.squeeze(x, axis=-1)
         ############################
 
         if self.input_key is not None:
@@ -74,6 +77,7 @@ class ResMLP(nn.Module):
     use_bias: bool = True
     input_key: Optional[str] = None
     output_key: Optional[str] = None
+    squeeze: bool = False
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -96,6 +100,8 @@ class ResMLP(nn.Module):
         x = nn.Dense(
             self.output_dim, use_bias=self.use_bias
         )(y)
+        if self.squeeze and x.shape[-1] == 1:
+            x = jnp.squeeze(x, axis=-1)
         ############################
 
         if self.input_key is not None:
@@ -123,6 +129,7 @@ class FullyResidualNet(nn.Module):
     use_bias: bool = True
     input_key: Optional[str] = None
     output_key: Optional[str] = None
+    squeeze: bool = False
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -159,6 +166,8 @@ class FullyResidualNet(nn.Module):
         x = nn.Dense(
             self.output_dim, use_bias=self.use_bias, name=f"Layer_{self.nlayers}"
         )(x)
+        if self.squeeze and x.shape[-1] == 1:
+            x = jnp.squeeze(x, axis=-1)
         ############################
 
         if self.input_key is not None:
@@ -178,6 +187,7 @@ class HierarchicalNet(nn.Module):
     input_key: Optional[str] = None
     output_key: Optional[str] = None
     decay: float = 0.01
+    squeeze: bool = False
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -203,6 +213,8 @@ class HierarchicalNet(nn.Module):
         decay = jnp.asarray([self.decay**i for i in range(out.shape[-2])])
         out = out * decay[..., :, None]
 
+        if self.squeeze and out.shape[-1] == 1:
+            out = jnp.squeeze(out, axis=-1)
         ############################
 
         if self.input_key is not None:
@@ -235,6 +247,7 @@ class ChemicalNetHet(nn.Module):
     use_bias: bool = True
     input_key: Optional[str] = None
     output_key: Optional[str] = None
+    squeeze: bool = False
 
     def setup(self):
         idx_map = {s: i for i, s in enumerate(PERIODIC_TABLE)}
@@ -268,6 +281,8 @@ class ChemicalNetHet(nn.Module):
         out = jnp.zeros((species.shape[0], self.neurons[-1]), dtype=embedding.dtype)
         for s, net in self.networks.items():
             out += jnp.where((species == s)[:, None], net(embedding), 0.0)
+        if self.squeeze and out.shape[-1] == 1:
+            out = jnp.squeeze(out, axis=-1)
         ############################
 
         if self.input_key is not None:
@@ -300,6 +315,7 @@ class ChemicalNet(nn.Module):
     use_bias: bool = True
     input_key: Optional[str] = None
     output_key: Optional[str] = None
+    squeeze: bool = False
 
     @nn.compact
     def __call__(
@@ -339,9 +355,11 @@ class ChemicalNet(nn.Module):
         out = jnp.squeeze(
             jnp.take_along_axis(networks(x), indices[None, :, None], axis=0), axis=0
         )
-        ############################
 
         out = jnp.where((indices >= 0)[:, None], out, 0.0)
+        if self.squeeze and out.shape[-1] == 1:
+            out = jnp.squeeze(out, axis=-1)
+        ############################
 
         if self.input_key is not None:
             output_key = self.name if self.output_key is None else self.output_key
