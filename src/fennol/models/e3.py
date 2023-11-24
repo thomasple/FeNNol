@@ -5,7 +5,7 @@ import jax
 import numpy as np
 from functools import partial
 from typing import Optional, Tuple
-from ..utils.spherical_harmonics import CG_SO3
+from ..utils.spherical_harmonics import CG_SO3, spherical_to_cartesian_tensor
 
 
 class FullTensorProduct(nn.Module):
@@ -88,7 +88,7 @@ class FilteredTensorProduct(nn.Module):
         irreps_1 = [(l, (-1) ** l) for l in range(self.lmax1 + 1)]
         irreps_2 = [(l, (-1) ** l) for l in range(self.lmax2 + 1)]
         lmax_out = self.lmax_out or self.lmax1
-        irreps_out = [(l,(-1)**l) for l in range(lmax_out+1)]
+        irreps_out = [(l, (-1) ** l) for l in range(lmax_out + 1)]
 
         slices_1 = [0]
         for l, p in irreps_1:
@@ -133,25 +133,57 @@ class ChannelMixing(nn.Module):
     lmax: int
     nchannels: int
     nchannels_out: Optional[int] = None
+    input_key: Optional[str] = None
+    output_key: Optional[str] = None
+    squeeze: bool = False
 
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, inputs):
+        if self.input_key is None:
+            assert not isinstance(
+                inputs, dict
+            ), "input key must be provided if inputs is a dictionary"
+            x = inputs
+        else:
+            x = inputs[self.input_key]
+
+        ########################################
         nchannels_out = self.nchannels_out or self.nchannels
         weights = self.param(
             "weights",
             jax.nn.initializers.normal(),
             (nchannels_out, self.nchannels),
         )
-        return jnp.einsum("ij,...jk->...ik", weights, x)
+        out = jnp.einsum("ij,...jk->...ik", weights, x)
+        if self.squeeze and nchannels_out == 1:
+            out = jnp.squeeze(out, axis=-2)
+        ########################################
+
+        if self.input_key is not None:
+            output_key = self.name if self.output_key is None else self.output_key
+            return {**inputs, output_key: out} if output_key is not None else out
+        return out
 
 
 class ChannelMixingE3(nn.Module):
     lmax: int
     nchannels: int
     nchannels_out: Optional[int] = None
+    input_key: Optional[str] = None
+    output_key: Optional[str] = None
+    squeeze: bool = False
 
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, inputs):
+        if self.input_key is None:
+            assert not isinstance(
+                inputs, dict
+            ), "input key must be provided if inputs is a dictionary"
+            x = inputs
+        else:
+            x = inputs[self.input_key]
+
+        ########################################
         nrep = np.array([2 * l + 1 for l in range(self.lmax + 1)])
         nchannels_out = self.nchannels_out or self.nchannels
         weights = jnp.repeat(
@@ -163,4 +195,44 @@ class ChannelMixingE3(nn.Module):
             nrep,
             axis=-1,
         )
-        return jnp.einsum("ijk,...jk->...ik", weights, x)
+        out = jnp.einsum("ijk,...jk->...ik", weights, x)
+        if self.squeeze and nchannels_out == 1:
+            out = jnp.squeeze(out, axis=-2)
+        ########################################
+
+        if self.input_key is not None:
+            output_key = self.name if self.output_key is None else self.output_key
+            return {**inputs, output_key: out} if output_key is not None else out
+        return out
+
+
+class SphericalToCartesian(nn.Module):
+    lmax: int
+    input_key: Optional[str] = None
+    output_key: Optional[str] = None
+
+    @nn.compact
+    def __call__(self, inputs) -> Any:
+        if self.input_key is None:
+            assert not isinstance(
+                inputs, dict
+            ), "input key must be provided if inputs is a dictionary"
+            x = inputs
+        else:
+            x = inputs[self.input_key]
+
+        ########################################
+        out = spherical_to_cartesian_tensor(x, self.lmax)
+        ########################################
+
+        if self.input_key is not None:
+            output_key = self.input_key if self.output_key is None else self.output_key
+            return {**inputs, output_key: out} if output_key is not None else out
+        return out
+
+
+E3MODULES = {
+    "CHANNEL_MIXING": ChannelMixing,
+    "CHANNEL_MIXING_E3": ChannelMixingE3,
+    "SPHERICAL_TO_CARTESIAN": SphericalToCartesian,
+}

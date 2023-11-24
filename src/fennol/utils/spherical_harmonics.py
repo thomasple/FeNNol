@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import sympy
 from sympy.printing.pycode import pycode
 from sympy.physics.wigner import clebsch_gordan
+from functools import partial
 
 
 def CG_SU2(j1: int, j2: int, j3: int) -> np.array:
@@ -134,7 +135,8 @@ def generate_spherical_harmonics(
     sh = locals()["spherical_harmonics_"]
     if jit:
         sh = jax.jit(sh)
-    if not vmapped: return sh
+    if not vmapped:
+        return sh
 
     if normalize:
 
@@ -156,3 +158,41 @@ def generate_spherical_harmonics(
     if jit:
         spherical_harmonics = jax.jit(spherical_harmonics)
     return spherical_harmonics
+
+
+@partial(jax.jit, static_argnums=1)
+def spherical_to_cartesian_tensor(Q, lmax):
+    q = Q[..., 0]
+    if lmax == 0:
+        return q[..., None]
+
+    mu = Q[..., 1:4]
+    if lmax == 1:
+        return jnp.concatenate([q[..., None], mu], axis=-1)
+
+    Q22s = Q[..., 4]
+    Q21s = Q[..., 5]
+    Q20 = Q[..., 6]
+    Q21c = Q[..., 7]
+    Q22c = Q[..., 8]
+    Tzz = -0.5 * Q20 + (0.5 * 3**0.5) * Q22c
+    Txx = -0.5 * Q20 - (0.5 * 3**0.5) * Q22c
+    Tyy = Q20
+    Txz = 0.5 * (3**0.5) * Q22s
+    Tyz = 0.5 * (3**0.5) * Q21c
+    Txy = 0.5 * (3**0.5) * Q21s
+
+    if lmax == 2:
+        return jnp.concatenate(
+            [
+                q[..., None],
+                mu,
+                Txx[..., None],
+                Tyy[..., None],
+                Tzz[..., None],
+                Txy[..., None],
+                Txz[..., None],
+                Tyz[..., None],
+            ],
+            axis=-1,
+        )

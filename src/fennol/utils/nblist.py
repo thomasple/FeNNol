@@ -3,6 +3,7 @@ import numpy as np
 from functools import partial
 import jax
 import jax.numpy as jnp
+import math
 
 @numba.njit
 def compute_nblist_flatbatch(
@@ -15,7 +16,7 @@ def compute_nblist_flatbatch(
 
     for i in range(coords.shape[0]):
         for j in range(i + 1, shifts[isys[i]]):
-            vec = coords[i] - coords[j]
+            vec = coords[j] - coords[i]
             d12 = np.sum(vec**2)
             if d12 < c2:
                 src.append(i)
@@ -56,16 +57,16 @@ def compute_nblist_flatbatch_minimage(
         cell = cells[isys[i]]
         reciprocal_cell = reciprocal_cells[isys[i]]
         for j in range(i + 1, shifts[isys[i]]):
-            vec = coords[i] - coords[j]
+            vec = coords[j] - coords[i]
             vecpbc = np.dot(reciprocal_cell,vec)
-            vecpbc -= np.round(vecpbc)
-            vecpbc = np.dot(cell,vecpbc)
+            shifts = -np.round(vecpbc)
+            vecpbc = np.dot(cell,vecpbc+shifts)
             d12 = np.sum(vecpbc**2)
             if d12 < c2:
                 src.append(i)
                 dst.append(j)
                 d12s.append(d12)
-                pbc_shifts.append(list(vec-vecpbc))
+                pbc_shifts.append(list(shifts))
     nattot = shifts[-1]
     src, dst = np.array(src + dst,dtype=np.int64), np.array(dst + src,dtype=np.int64)
     d12s = np.array(d12s + d12s, dtype=np.float32)
@@ -139,7 +140,7 @@ def compute_cell_list(coords,cutoff, isys, natoms, mult_size, prev_nblist_size=0
     mask = np.logical_and(neighbors>=0,edge_src<neighbors,isys[edge_src]==isys[neighbors])
     edge_src,edge_dst = edge_src[mask],neighbors[mask]
 
-    d12s = np.sum((coords[edge_src]-coords[edge_dst])**2,axis=-1)
+    d12s = np.sum((coords[edge_dst]-coords[edge_src])**2,axis=-1)
     mask = d12s<cutoff**2
     edge_src,edge_dst,d12s = edge_src[mask],edge_dst[mask],d12s[mask]
 
@@ -232,7 +233,7 @@ def compute_cell_list_fixed(coords,cutoff,isys,natoms,max_occupancy,max_pairs,pa
     src = jnp.asarray(np.repeat(np.arange(nattot),neighbors.shape[1]))
     neighbors = neighbors.flatten()
 
-    d12 = jnp.sum((coords[src]-coords[neighbors])**2,axis=-1)
+    d12 = jnp.sum((coords[neighbors]-coords[src])**2,axis=-1)
     mask = (d12<cutoff**2)*(neighbors>=0)*(isys[src]==isys[neighbors])
     npairs=jnp.sum(mask)
     d12 = d12*mask + (cutoff**2)*(1-mask)
@@ -254,7 +255,7 @@ def compute_nblist_fixed(coords,cutoff,isys,natoms,max_nat,max_pairs,padding_val
 
     p1 = (p1[None,:]+shift[:,None]).flatten()*mask - (1-mask)
     p2 = (p2[None,:]+shift[:,None]).flatten()*mask - (1-mask)
-    d12=jnp.sum((coords[p1]-coords[p2])**2,axis=-1)
+    d12=jnp.sum((coords[p2]-coords[p1])**2,axis=-1)
 
     mask = mask*(d12<cutoff**2)
     d12 = d12*mask + (cutoff**2)*(1-mask)
@@ -280,11 +281,10 @@ def compute_nblist_fixed_minimage(coords,cutoff,isys,natoms,max_nat,max_pairs,pa
     p1 = (p1[None,:]+shift[:,None]).flatten()*mask - (1-mask)
     p2 = (p2[None,:]+shift[:,None]).flatten()*mask - (1-mask)
     isysvec=isys[p1]
-    vec = coords[p1]-coords[p2]
-    vecpbc = jnp.einsum("sij,si->sj",reciprocal_cells[isysvec],vec)
-    vecpbc -= jnp.round(vecpbc)
-    vecpbc = jnp.einsum("sij,si->sj",cells[isysvec],vecpbc) #jnp.dot(cells[isysvec],vecpbc.T).T
-    pbc_shifts = vec-vecpbc
+    vec = coords[p2]-coords[p1]
+    vecpbc = jnp.einsum("sij,sj->si",reciprocal_cells[isysvec],vec)
+    pbc_shifts = -jnp.round(vecpbc)
+    vecpbc = jnp.einsum("sij,sj->si",cells[isysvec],vecpbc+pbc_shifts) #jnp.dot(cells[isysvec],vecpbc.T).T
     d12=jnp.sum(vecpbc**2,axis=-1)
 
     mask = mask*(d12<cutoff**2)
@@ -296,3 +296,61 @@ def compute_nblist_fixed_minimage(coords,cutoff,isys,natoms,max_nat,max_pairs,pa
 
     edge_src,edge_dst = p1[idx],p2[idx]
     return edge_src,edge_dst,d12[idx],pbc_shifts[idx],npairs
+
+
+def get_reciprocal_space_parameters(reciprocal_cells,cutoff,kmax=30,kthr=1.e-6):
+    # find optimal ewald parameters (preprocessing)
+    eps=1.e-8
+    ratio=eps+1
+    x=0.5
+    i=0
+    # approximate value
+    while ratio>eps:
+        x*=2
+        ratio=math.erfc(x*cutoff)/cutoff
+    #refine with binary search
+    k=i+60
+    xlo=0.
+    xhi=x
+    for i in range(1,k+1):
+        x=(xlo+xhi)/2.
+        ratio=math.erfc(x*cutoff)/cutoff
+        if ratio>eps:
+            xlo=x
+        else:
+            xhi=x
+    bewald=x
+
+    # set k points
+    kxs = np.arange(kmax+1)
+    kxs = np.concatenate((kxs, -kxs[1:]))
+    k = np.array(np.meshgrid(kxs, kxs, kxs)).reshape(3, -1).T[1:]
+    # set exp factor
+    m2s=[]
+    expfacs=[]
+    ks = []
+    nks = []
+    for i,A in enumerate(range(reciprocal_cells.shape[0])):
+        A=reciprocal_cells[i]
+        m2 = np.sum((k[:,0,None]*A[None,0,:] + k[:,1,None]*A[None,1,:] + k[:,2,None]*A[None,2,:])**2,axis=-1)
+        a2 =(np.pi/bewald)**2
+        expfac = np.exp(-a2*m2)/m2
+        isort = np.argsort(expfac)[::-1]
+        expfac = expfac[isort]
+        m2 = m2[isort]
+        ki = k[isort]
+        sel = (expfac>kthr).nonzero()[0]
+        nks.append(len(sel))
+        m2s.append(m2)
+        expfacs.append(expfac)
+        ks.append(ki)
+    
+    ks = np.stack(ks,axis=0)
+    m2s = np.stack(m2s,axis=0)
+    expfacs = np.stack(expfacs,axis=0)
+    nks = np.array(nks,dtype=np.int64)
+    nk = np.max(nks)
+    return ks[:,:nk],expfacs[:,:nk],m2s[:,:nk],bewald
+    
+
+    

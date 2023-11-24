@@ -20,7 +20,14 @@ from .thermostats import get_thermostat
 
 
 def minmaxone(x, name=""):
-    print(name, x.min(), x.max(), (x**2).mean())
+    print(name, x.min(), x.max(), (x**2).mean() ** 0.5)
+
+
+@jax.jit
+def wrapbox(x, cell, reciprocal_cell):
+    q = jnp.einsum("ij,sj->si", reciprocal_cell, x)
+    q = q - jnp.floor(q)
+    return jnp.einsum("ij,sj->si", cell, q)
 
 
 def main():
@@ -46,8 +53,9 @@ def main():
     _device = jax.devices(device)[0]
 
     ### Set the precision
-    jax.config.update("jax_enable_x64", simulation_parameters.get("enable_x64", False))
-    fprec = "float32"
+    enable_x64 = simulation_parameters.get("enable_x64", False)
+    jax.config.update("jax_enable_x64", enable_x64)
+    fprec = "float64" if enable_x64 else "float32"
 
     with jax.default_device(_device):
         dynamic(simulation_parameters, device, fprec)
@@ -61,7 +69,7 @@ def dynamic(simulation_parameters, device, fprec):
     if not model_file.exists():
         raise FileNotFoundError(f"model file {model_file} not found")
     else:
-        model = FENNIX.load(model_file,fixed_preprocessing=True)  # \
+        model = FENNIX.load(model_file, fixed_preprocessing=True)  # \
         print(f"model_file: {model_file}")
         # .train(False).requires_grad_(False).to(prec)
 
@@ -98,17 +106,30 @@ def dynamic(simulation_parameters, device, fprec):
     cell = simulation_parameters.get("cell", None)
     if cell is not None:
         cell = np.array(cell, dtype=fprec).reshape(3, 3).T
+        reciprocal_cell = np.linalg.inv(cell)
         volume = np.linalg.det(cell)
         print("cell matrix:")
         print(cell)
         dens = totmass_amu / 6.02214129e-1 / volume
         print("density: ", dens.item(), " g/cm^3")
+        pscale = au.KBAR / (3.0 * volume / au.BOHR**3)
 
     if crystal_input:
         assert cell is not None, "cell must be specified for crystal units"
         coordinates = coordinates @ cell  # .double()
         with open("initial.arc", "w") as finit:
             write_arc_frame(finit, symbols, coordinates)
+
+    estimate_pressure = simulation_parameters.get("estimate_pressure", False)
+    if estimate_pressure:
+        if cell is None:
+            raise ValueError(
+                "estimate_pressure requires cell to be specified in the input file"
+            )
+        # shift = jnp.einsum("ij,sj->si",cell,np.random.randint(-10,10,size=coordinates.shape))
+        # print(shift)
+        # coordinates = coordinates + shift
+
     ### Set simulation parameters
     dt = simulation_parameters.get("dt")  # /au.FS
     dt2 = 0.5 * dt
@@ -121,7 +142,7 @@ def dynamic(simulation_parameters, device, fprec):
     ### Set I/O parameters
     Tdump = simulation_parameters.get("tdump", 1.0 / au.PS)
     ndump = int(Tdump / dt)
-    wrap_box = simulation_parameters.get("wrap_box", True) and cell is not None
+    do_wrap_box = simulation_parameters.get("wrap_box", True) and cell is not None
     traj_file = Path(simulation_parameters.get("traj_file", system_name + ".arc"))
 
     nblist_stride = int(simulation_parameters.get("nblist_stride", 1))
@@ -135,31 +156,87 @@ def dynamic(simulation_parameters, device, fprec):
     print(f"random_seed: {random_seed}")
     rng_key = jax.random.PRNGKey(random_seed)
 
+    state = {}
+    ## window averaging
+    window_size = simulation_parameters.get("tau_avg", 0.0)
+    win_b1 = np.exp(-dt / window_size) if window_size > 0 else 0.0
+
+    state["window_avg"] = {}
+    state["window_avg"]["n"] = 0
+    state["window_avg"]["ek"] = 0.0
+    state["window_avg"]["pressure"] = 0.0
+    state["window_avg"]["Pkin"] = 0.0
+    state["window_avg"]["Pvir"] = 0.0
+    state["window_avg"]["epot"] = 0.0
+    state["window_avg"]["ek_m"] = 0.0
+    state["window_avg"]["pressure_m"] = 0.0
+    state["window_avg"]["Pkin_m"] = 0.0
+    state["window_avg"]["Pvir_m"] = 0.0
+    state["window_avg"]["epot_m"] = 0.0
+
     ### Set the thermostat
+    rng_key, t_key = jax.random.split(rng_key)
     thermostat_name = str(simulation_parameters.get("thermostat", "NONE")).upper()
-    thermostat = get_thermostat(thermostat_name, dt=dt, mass=mass, gamma=gamma, kT=kT)
+    qtb_parameters = simulation_parameters.get("qtb", {})
+    assert isinstance(qtb_parameters, dict), "qtb must be a dictionary"
+    thermostat, thermostat_post, state["thermostat"] = get_thermostat(
+        thermostat_name,
+        rng_key=t_key,
+        dt=dt,
+        mass=mass,
+        gamma=gamma,
+        kT=kT,
+        qtb_parameters=qtb_parameters,
+        species=species,
+    )
 
     dt2m = jnp.asarray(dt2 / mass[:, None], dtype=fprec)
 
     @jax.jit
-    def step(system):
+    def step(system, state):
         v = system["vel"]
         f = system["forces"]
         x = system["coordinates"]
 
         v = v + f * dt2m
         x = x + dt2 * v
-        v, rng_key = thermostat(v, system["rng_key"])
+        v, state_th = thermostat(v, state["thermostat"])
         x = x + dt2 * v
-        system = {**system, "coordinates": x, "rng_key": rng_key}
-        _, f, system = model._energy_and_forces(model.variables, system)
+        system = {**system, "coordinates": x}
+        if estimate_pressure:
+            epot, f, vir_t, system = model._energy_and_forces_and_virial(
+                model.variables, system
+            )
+        else:
+            epot, f, system = model._energy_and_forces(model.variables, system)
         v = v + f * dt2m
 
-        ek = 0.5 * jnp.sum(mass[:, None] * v**2)
+        ek = 0.5 * jnp.sum(mass[:, None] * v**2) / state_th.get("corr_kin", 1.0)
         system["vel"] = v
         system["ek"] = ek
 
-        return system
+        n = state["window_avg"]["n"] + 1
+        state_avg = {**state["window_avg"], "n": n}
+        state_avg["ek_m"] = state_avg["ek_m"] * win_b1 + ek * (1 - win_b1)
+        state_avg["ek"] = state_avg["ek_m"] / (1 - win_b1**n)
+        state_avg["epot_m"] = state_avg["epot_m"] * win_b1 + epot[0] * (1 - win_b1)
+        state_avg["epot"] = state_avg["epot_m"] / (1 - win_b1**n)
+        if estimate_pressure:
+            vir = jnp.trace(vir_t[0])
+            Pkin = (2 * pscale) * ek
+            Pvir = (-pscale) * vir
+            system["virial"] = vir
+            system["pressure"] = Pkin + Pvir
+            state_avg["Pkin_m"] = state_avg["Pkin_m"] * win_b1 + Pkin * (1 - win_b1)
+            state_avg["Pkin"] = state_avg["Pkin_m"] / (1 - win_b1**n)
+            state_avg["Pvir_m"] = state_avg["Pvir_m"] * win_b1 + Pvir * (1 - win_b1)
+            state_avg["Pvir"] = state_avg["Pvir_m"] / (1 - win_b1**n)
+            state_avg["pressure_m"] = state_avg["pressure_m"] * win_b1 + system[
+                "pressure"
+            ] * (1 - win_b1)
+            state_avg["pressure"] = state_avg["pressure_m"] / (1 - win_b1**n)
+
+        return system, {**state, "window_avg": state_avg, "thermostat": state_th}
 
     # @partial(jax.jit, static_argnums=1)
     # def integrate(system,nsteps):
@@ -181,49 +258,89 @@ def dynamic(simulation_parameters, device, fprec):
     v = (
         jax.random.normal(v_key, coordinates.shape) * (kT / mass[:, None]) ** 0.5
     ).astype(fprec)
-    system["rng_key"] = rng_key
     ek = 0.5 * jnp.sum(mass[:, None] * v**2)
+    system["nwin_avg"] = 0
     system["vel"] = v
     system["ek"] = ek
     system["nblist_skin"] = nblist_skin
     if "nblist_mult_size" in simulation_parameters:
         system["nblist_mult_size"] = simulation_parameters["nblist_mult_size"]
 
+    if estimate_pressure and fprec == "float64":
+        Pkin = (2 * au.KBAR) * ek / ((3.0 / au.BOHR**3) * volume)
+        e, f, vir_t, system = model._energy_and_forces_and_virial(
+            model.variables, system
+        )
+        Pvir = -(np.trace(vir_t[0]) * au.KBAR) / ((3.0 / au.BOHR**3) * volume)
+        vstep = volume * 0.000001
+        scalep = ((volume + vstep) / volume) ** (1.0 / 3.0)
+        sysp = model.preprocess(
+            **{
+                **system,
+                "coordinates": coordinates * scalep,
+                "cells": cell[None, :, :] * scalep,
+            }
+        )
+        ep, _ = model._total_energy(model.variables, sysp)
+        scalem = ((volume - vstep) / volume) ** (1.0 / 3.0)
+        sysm = model.preprocess(
+            **{
+                **system,
+                "coordinates": coordinates * scalem,
+                "cells": cell[None, :, :] * scalem,
+            }
+        )
+        em, _ = model._total_energy(model.variables, sysm)
+        Pvir_fd = -(ep[0] * au.KBAR - em[0] * au.KBAR) / (2.0 * vstep / au.BOHR**3)
+        print(
+            f"Initial pressure: {Pkin+Pvir:.3f} (virial); {Pkin+Pvir_fd:.3f} (finite difference) ; Pkin: {Pkin:.3f} ; Pvir: {Pvir:.3f} ; Pvir_fd: {Pvir_fd:.3f}"
+        )
+
     ### Print header
     print(f"Running {nsteps} steps of MD simulation on {device}")
     header = "#     step       time       etot       epot         ek       temp     ns/day   step/s"
+    if estimate_pressure:
+        header += "        press"
     print(header)
     fout = open(traj_file, "a+")
     t0 = time.time()
     t0dump = t0
     tstart_dyn = t0
     istep = 0
-    tpre=0
-    tstep=0
+    tpre = 0
+    tstep = 0
     print_timings = simulation_parameters.get("print_timings", False)
+    force_preprocess = False
     for istep in range(1, nsteps + 1):
         ### BAOAB evolution
-        if istep % nblist_stride == 0:
-            tpre0=time.time()
+        if istep % nblist_stride == 0 or force_preprocess:
+            force_preprocess = False
+            tpre0 = time.time()
             system = model.preprocess(**system)
             if print_timings:
                 system["coordinates"].block_until_ready()
-                tpre += time.time()-tpre0
+                tpre += time.time() - tpre0
 
-        tstep0=time.time()
-        system = step(system)
+        tstep0 = time.time()
+        system, state = step(system, state)
+        state["thermostat"] = thermostat_post(state["thermostat"])
         if print_timings:
             system["coordinates"].block_until_ready()
-            tstep += time.time()-tstep0
+            tstep += time.time() - tstep0
 
         if istep % ndump == 0:
-            print("write XYZ frame")
+            tperstep = (time.time() - t0dump) / ndump
+            nsperday = (24 * 60 * 60 / tperstep) * dt * au.PS / 1000
+            if do_wrap_box:
+                force_preprocess = True
+                system["coordinates"]=wrapbox(system["coordinates"], cell, reciprocal_cell)
+                print("Wrap atoms into box")
+            print("Write XYZ frame")
             write_arc_frame(fout, symbols, np.asarray(system["coordinates"]))
             print("ns/day: ", nsperday)
             print(header)
-            tperstep = (time.time() - t0dump) / ndump
             t0dump = time.time()
-            nsperday = (24 * 60 * 60 / tperstep) * dt * au.PS / 1000
+            
             # model.reinitialize_preprocessing()
 
         if istep % nprint == 0:
@@ -235,15 +352,18 @@ def dynamic(simulation_parameters, device, fprec):
             tperstep = (t1 - t0) / nprint
             t0 = t1
             nsperday = (24 * 60 * 60 / tperstep) * dt * au.PS / 1000
-            ek = system["ek"]
-            e = system["total_energy"][0]
+            ek = state["window_avg"]["ek"]
+            e = state["window_avg"]["epot"]
+            
             line = f"{istep:10} {(start_time+istep*dt)*au.PS:10.3f} {ek+e:10.3f} {e:10.3f} {ek:10.3f} {2*ek/(3.*nat)*au.KELVIN:10.3f} {nsperday:10.3f} {1./tperstep:10.3f}"
-
+            if estimate_pressure:
+                line += f' {state["window_avg"]["pressure"]:10.3f}'
             print(line)
+
             if print_timings:
                 print(f"tpre: {tpre/nprint:.5f}; tstep: {tstep/nprint:.5f}")
-                tpre=0
-                tstep=0
+                tpre = 0
+                tstep = 0
 
     print(f"Run done in {(time.time()-tstart_dyn)/60.0} minutes")
     ### close trajectory file

@@ -15,6 +15,7 @@ from .encodings import ENCODINGS
 from .nets import NETWORKS
 from .misc import MISC
 from .physics import PHYSICS
+from .e3 import E3MODULES
 from .preprocessing import (
     GraphGenerator,
     GraphGeneratorFixed,
@@ -26,7 +27,7 @@ from .preprocessing import (
 from ..utils import deep_update
 
 
-_MODULES = {**EMBEDDINGS, **ENCODINGS, **NETWORKS, **MISC, **PHYSICS}
+_MODULES = {**EMBEDDINGS, **ENCODINGS, **NETWORKS, **MISC, **PHYSICS, **E3MODULES}
 
 
 class FENNIXModules(nn.Module):
@@ -108,15 +109,23 @@ class FENNIX:
         self.use_atom_padding = use_atom_padding
 
         # add non-differentiable/non-jittable modules
+        preprocessing = deepcopy(preprocessing)
+        prep_keys = list(preprocessing.keys())
+        graph_params = {"cutoff": cutoff, "graph_key": "graph"}
+        if len(prep_keys) > 0 and prep_keys[0] == "graph":
+            graph_params = {
+                **graph_params,
+                **preprocessing.pop("graph"),
+            }
+            
         if fixed_preprocessing:
             preprocessing_modules = [
-                GraphGeneratorFixed(cutoff=cutoff),
+                GraphGeneratorFixed(**graph_params),
             ]
         else:
             preprocessing_modules = [
-                GraphGenerator(cutoff=cutoff),
+                GraphGenerator(**graph_params),
             ]
-        preprocessing = deepcopy(preprocessing)
         for name, params in preprocessing.items():
             key = str(params.pop("module_name")) if "module_name" in params else name
             mod = PREPROCESSING[key.upper()](**params)
@@ -179,9 +188,9 @@ class FENNIX:
         def total_energy(variables, data):
             out = self._apply(variables, data)
             atomic_energies = 0.0
-            species=out["species"]
+            species = out["species"]
             for term in self.energy_terms:
-                e= out[term]
+                e = out[term]
                 if e.shape[-1] == 1:
                     e = jnp.squeeze(e, axis=-1)
                 assert e.shape == species.shape
@@ -212,8 +221,40 @@ class FENNIX:
 
             return out["total_energy"], out["forces"], out
 
+        @jax.jit
+        def energy_and_forces_and_virial(variables, data):
+            assert "cells" in data
+            cells = data["cells"]
+            isys = data["isys"]
+            x=data["coordinates"]
+
+            def _etot(variables, coordinates, cells):
+                energy, out = total_energy(
+                    variables,
+                    {
+                        **data,
+                        "coordinates": coordinates,
+                        "cells": cells,
+                    },
+                )
+                return energy.sum(), out
+
+            (dedx, dedcells), out = jax.grad(_etot, argnums=(1, 2), has_aux=True)(
+                variables, x, cells
+            )
+            # dedx = jnp.einsum("sij,si->sj", reciprocal_cells[isys], deds)
+            out["forces"] = -dedx
+            fx = jax.ops.segment_sum(dedx[:,:,None]*x[:,None,:], isys, num_segments=len(data["natoms"]))
+
+            out["virial_tensor"] = jnp.einsum("sik,sjk->sij", dedcells, cells[isys]) + fx
+
+            return out["total_energy"], out["forces"], out["virial_tensor"], out
+
         object.__setattr__(self, "_total_energy", total_energy)
         object.__setattr__(self, "_energy_and_forces", energy_and_forces)
+        object.__setattr__(
+            self, "_energy_and_forces_and_virial", energy_and_forces_and_virial
+        )
 
     def preprocess(self, **inputs) -> Dict[str, Any]:
         """apply preprocessing to the input data
@@ -281,6 +322,19 @@ class FENNIX:
         inputs = self.preprocess(**inputs)
         return self._energy_and_forces(variables, inputs)
 
+    def energy_and_forces_and_virial(
+        self, variables: Optional[dict] = None, **inputs
+    ) -> Tuple[jnp.ndarray, jnp.ndarray, Dict]:
+        """compute the total energy and forces of the system
+
+        !!! This is not a pure function => do not apply jax transforms !!!
+        if you want to apply jax transforms, use  self._energy_and_forces_and_virial(variables, inputs) which is pure and preprocess the input using self.preprocess
+        """
+        if variables is None:
+            variables = self.variables
+        inputs = self.preprocess(**inputs)
+        return self._energy_and_forces_and_virial(variables, inputs)
+
     def remove_atom_padding(self, inputs):
         return atom_unpadding(inputs)
 
@@ -311,6 +365,8 @@ class FENNIX:
         """
         if box_size is None:
             box_size = 2 * self.cutoff
+            for g in self._graphs_properties.values():
+                box_size = min(box_size, 2 * g["cutoff"])
         coordinates = np.array(
             jax.random.uniform(rng_key, (n_atoms, 3), maxval=box_size)
         )

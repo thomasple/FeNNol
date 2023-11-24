@@ -19,6 +19,7 @@ class AtomicUnits:
     ATM = KBAR * 1000.0 / 1.01325  # Hartree/bohr**3 to atm
     GPA = 0.1 * KBAR  # Hartree/bohr**3 to GPa
     DEBYE = 2.541746  # e.Bohr to Debye
+    FSC = 1.0 / 137.035999084  # Fine structure constant
 
     mapping = {
         "1": 1.0,
@@ -44,6 +45,7 @@ class AtomicUnits:
         "ATM": ATM,
         "GPA": GPA,
         "DEBYE": DEBYE,
+        "FSC": FSC,
     }
 
     @staticmethod

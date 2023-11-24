@@ -22,6 +22,7 @@ class GraphGenerator(nn.Module):
     cutoff: float
     mult_size: float = 1.1
     graph_key: str = "graph"
+    switch_start: float = 0.0
 
     @nn.compact
     def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:
@@ -103,6 +104,7 @@ class GraphGenerator(nn.Module):
         return GraphProcessor, {
             "cutoff": self.cutoff,
             "graph_key": self.graph_key,
+            "switch_start": self.switch_start,
             "name": f"{self.graph_key}_Processor",
         }
 
@@ -114,6 +116,7 @@ class GraphGeneratorFixed(nn.Module):
     cutoff: float
     mult_size: float = 1.1
     graph_key: str = "graph"
+    switch_start: float = 0.0
 
     @nn.compact
     def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:
@@ -127,13 +130,13 @@ class GraphGeneratorFixed(nn.Module):
 
         mult_size = float(inputs.get("nblist_mult_size", self.mult_size))
 
-        coords = np.asarray(inputs["coordinates"])
-        isys = np.asarray(inputs["isys"])
-        natoms = np.asarray(inputs["natoms"])
+        coords = inputs["coordinates"]
+        isys = inputs["isys"]
+        natoms = inputs["natoms"]
         padding_value = coords.shape[0]
         if "true_atoms" in inputs:
-            true_atoms = np.asarray(inputs["true_atoms"], dtype=bool)
-            true_sys = np.asarray(inputs["true_sys"], dtype=bool)
+            true_atoms = inputs["true_atoms"]
+            true_sys = inputs["true_sys"]
             coords = coords[true_atoms]
             isys = isys[true_atoms]
             natoms = natoms[true_sys]
@@ -144,7 +147,7 @@ class GraphGeneratorFixed(nn.Module):
             lambda: 1,
         )
         prev_nblist_size_ = prev_nblist_size.value
-        max_nat = int(jnp.max(natoms))
+        max_nat = int(np.max(natoms))
 
         if "cells" in inputs:
             cells = np.asarray(inputs["cells"])
@@ -221,6 +224,7 @@ class GraphGeneratorFixed(nn.Module):
         return GraphProcessor, {
             "cutoff": self.cutoff,
             "graph_key": self.graph_key,
+            "switch_start": self.switch_start,
             "name": f"{self.graph_key}_Processor",
         }
 
@@ -231,6 +235,7 @@ class GraphGeneratorFixed(nn.Module):
 class GraphProcessor(nn.Module):
     cutoff: float
     graph_key: str = "graph"
+    switch_start: float = 0.0
 
     @nn.compact
     def __call__(self, inputs: Union[dict, Tuple[jax.Array, dict]]):
@@ -242,13 +247,30 @@ class GraphProcessor(nn.Module):
             edge_src
         ].get(mode="fill", fill_value=0.0)
         if "cells" in inputs:
-            vec = vec + graph["pbc_shifts"]
+            isysvec = inputs["isys"][edge_src]
+            cells = inputs["cells"][isysvec]
+            vec = vec + jnp.einsum("sij,sj->si",cells,graph["pbc_shifts"])
+            # vec = vec + graph["pbc_shifts"]
         distances = jnp.linalg.norm(vec, axis=-1)
         edge_mask = distances < self.cutoff
 
-        switch = jnp.where(
-            edge_mask, 0.5 * jnp.cos(distances * (jnp.pi / self.cutoff)) + 0.5, 0.0
-        )
+        if self.switch_start > 1.e-5:
+            assert self.switch_start < 1.0, "switch_start is a proportion of cutoff and must be smaller than 1."
+            cutoff_in = self.switch_start * self.cutoff
+            x = distances - cutoff_in
+            switch = jnp.where(
+                distances < cutoff_in,
+                1.0,
+                jnp.where(
+                    edge_mask,
+                    0.5 * jnp.cos(x * (jnp.pi / (self.cutoff - cutoff_in))) + 0.5,
+                    0.0,
+                ),
+            )
+        else:
+            switch = jnp.where(
+                edge_mask, 0.5 * jnp.cos(distances * (jnp.pi / self.cutoff)) + 0.5, 0.0
+            )
 
         graph_out = {
             **graph,
@@ -268,7 +290,7 @@ class GraphFilter(nn.Module):
     remove_hydrogens: int = False
 
     @nn.compact
-    def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:
+    def __call__(self, inputs: Dict):
         if self.graph_out in inputs:
             if inputs[self.graph_out].get("keep_graph", False):
                 return inputs
@@ -282,14 +304,18 @@ class GraphFilter(nn.Module):
         d12 = graph_in["d12"]
         edge_src_in = graph_in["edge_src"]
         nblist_size_in = edge_src_in.shape[0]
-        mask = (d12 < c2) #.nonzero()
-        if self.remove_hydrogens:
-            species = inputs["species"]
-            mask = mask*(species[edge_src_in] > 1)
-        indices = mask.nonzero()
+        mask = d12 < c2
+        indices = mask.nonzero()[0]
         edge_src = edge_src_in[indices]
         edge_dst = graph_in["edge_dst"][indices]
         d12 = d12[indices]
+        if self.remove_hydrogens:
+            species = np.array(inputs["species"])
+            mask = species[edge_src] > 1
+            edge_src = edge_src[mask]
+            edge_dst = edge_dst[mask]
+            d12 = d12[mask]
+            indices = indices[mask]
 
         prev_nblist_size = self.variable(
             "preprocessing",
@@ -391,7 +417,6 @@ class GraphFilterProcessor(nn.Module):
 class GraphAngularExtension(nn.Module):
     mult_size: float = 1.1
     graph_key: str = "graph"
-    remove_hydrogens: int = False
 
     @nn.compact
     def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:
@@ -401,12 +426,6 @@ class GraphAngularExtension(nn.Module):
         nattot = inputs["species"].shape[0]
 
         central_atom_index, angle_src, angle_dst = angular_nblist(edge_src, nattot)
-        if self.remove_hydrogens:
-            species = np.array(inputs["species"])
-            mask = species[central_atom_index] > 1
-            central_atom_index = central_atom_index[mask]
-            angle_src = angle_src[mask]
-            angle_dst = angle_dst[mask]
 
         prev_angle_size = self.variable(
             "preprocessing",
