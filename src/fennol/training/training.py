@@ -281,8 +281,11 @@ def train(parameters, model_file=None, stage=None,output_directory=None):
 
             # train step
             s = time.time()
-            opt_st.inner_states["trainable"].inner_state[1].hyperparams[
-                "learning_rate"
+            # opt_st.inner_states["trainable"].inner_state[1].hyperparams[
+            #     "learning_rate"
+            # ] = schedule(count)
+            opt_st.inner_states["trainable"].inner_state[-1].hyperparams[
+                "step_size"
             ] = schedule(count)
             variables, model.variables, opt_st, ema_st, loss = train_step(
                 variables, model.variables, opt_st, ema_st, inputs

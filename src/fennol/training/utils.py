@@ -7,6 +7,7 @@ from collections import defaultdict
 import pickle
 from flax import traverse_util
 import json
+from functools import partial
 from copy import deepcopy
 from typing import Dict, List, Tuple, Union,Optional, Callable
 try:
@@ -62,7 +63,7 @@ def load_dataset(training_parameters, rename_refs=[]):
     dspath = training_parameters.get("dspath", None)
     if dspath is None:
         raise ValueError("Dataset path 'training/dspath' should be specified.")
-    print(f"Loading dataset at {dspath}...")
+    print(f"Loading dataset from {dspath}...")
     with open(dspath, "rb") as f:
         dataset = pickle.load(f)
 
@@ -222,7 +223,17 @@ def get_optimizer(training_parameters: Dict[str, any], variables: Dict, initial_
         print(json.dumps(params_partition, indent=2, sort_keys=False))
 
     ## Gradient preprocessing
-    grad_preprocessing = []
+    grad_processing = []
+    
+
+    # gradient clipping
+    clip_threshold = training_parameters.get("gradient_clipping", -1.)
+    if clip_threshold > 0.0:
+        print("Adaptive gradient clipping threshold:", clip_threshold)
+        grad_processing.append(optax.adaptive_grad_clip(clip_threshold))
+
+    # OPTIMIZER
+    grad_processing.append(optax.adabelief(learning_rate=1.))
 
     # weight decay
     weight_decay = training_parameters.get("weight_decay", 0.0)
@@ -243,22 +254,17 @@ def get_optimizer(training_parameters: Dict[str, any], variables: Dict, initial_
     if weight_decay > 0.0:
         print("weight decay:", weight_decay)
         print(json.dumps(decay_mask, indent=2, sort_keys=False))
-        grad_preprocessing.append(
-            optax.add_decayed_weights(weight_decay=weight_decay, mask=decay_mask)
+        grad_processing.append(
+            optax.add_decayed_weights(weight_decay=weight_decay,mask=decay_mask)
         )
+    
+    # learning rate
+    grad_processing.append(optax.inject_hyperparams(optax.scale)(step_size=initial_lr))
 
-    # gradient clipping
-    clip_threshold = training_parameters.get("gradient_clipping", -1.)
-    if clip_threshold > 0.0:
-        print("Adaptive gradient clipping threshold:", clip_threshold)
-        grad_preprocessing.append(optax.adaptive_grad_clip(clip_threshold))
-
-    if len(grad_preprocessing) == 0:
-        grad_preprocessing.append(optax.identity())
+    
     ## define optimizer chain
     optimizer_ = optax.chain(
-        optax.chain(*grad_preprocessing),
-        optax.inject_hyperparams(optax.adabelief)(learning_rate=initial_lr),
+        *grad_processing,
     )
     partition_optimizer = {"trainable": optimizer_, "frozen": optax.set_to_zero()}
     return optax.multi_transform(partition_optimizer, params_partition)
