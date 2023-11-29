@@ -8,6 +8,7 @@ version = "0.1"
 readme = "README.md"
 dependencies = [
    "numpy",
+   "numba",
    "scipy",
    "sympy",
    "flax[all]",

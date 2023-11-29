@@ -20,7 +20,7 @@ from ...utils.periodic_table import (
 
 class CND4(nn.Module):
     graph_key: str = "graph"
-    key_out: Optional[str] = None
+    output_key: Optional[str] = None
     k0: float = 7.5
     k1: float = 4.1
     k2: float = 19.09
@@ -63,12 +63,12 @@ class CND4(nn.Module):
             CNij = CNij * dij
         CNi = jax.ops.segment_sum(CNij, edge_src, species.shape[0])
 
-        key_out = self.name if self.key_out is None else self.key_out
-        return {**inputs, key_out: CNi, key_out + "_pair": CNij}
+        output_key = self.name if self.output_key is None else self.output_key
+        return {**inputs, output_key: CNi, output_key + "_pair": CNij}
 
 class SumSwitch(nn.Module):
     graph_key: str = "graph"
-    key_out: Optional[str] = None
+    output_key: Optional[str] = None
 
     @nn.compact
     def __call__(self, inputs):
@@ -78,12 +78,12 @@ class SumSwitch(nn.Module):
 
         cn = jax.ops.segment_sum(switch, edge_src, inputs["species"].shape[0])
 
-        key_out = self.name if self.key_out is None else self.key_out
-        return {**inputs, key_out: cn}
+        output_key = self.name if self.output_key is None else self.output_key
+        return {**inputs, output_key: cn}
     
 class CNShift(nn.Module):
     cn_key: str
-    key_out: Optional[str] = None
+    output_key: Optional[str] = None
     kappa_key: Optional[str] = None
     sqrt_shift: float = 1.e-6
     ref_value: Union[str, float] = 1.
@@ -112,12 +112,12 @@ class CNShift(nn.Module):
         
         out = ref_value + shift
 
-        key_out = self.name if self.key_out is None else self.key_out
-        return {**inputs, key_out: out}
+        output_key = self.name if self.output_key is None else self.output_key
+        return {**inputs, output_key: out}
 
 class CNStore(nn.Module):
     cn_key: str
-    key_out: Optional[str] = None
+    output_key: Optional[str] = None
     store_size: int = 10
     n_gaussians: int = 4
     isolated_value: float = 0.
@@ -147,6 +147,6 @@ class CNStore(nn.Module):
         if self.output_dim == 1 and self.squeeze:
             values = jnp.squeeze(values,axis=-1)
         
-        key_out = self.name if self.key_out is None else self.key_out
-        return {**inputs, key_out: values}
+        output_key = self.name if self.output_key is None else self.output_key
+        return {**inputs, output_key: values}
         

@@ -349,7 +349,7 @@ class QeqD4(nn.Module):
 
 class ChargeCorrection(nn.Module):
     key: str = "charges"
-    key_out: str = None
+    output_key: str = None
     dq_key: str = "delta_qtot"
     ratioeta_key: str = None
     trainable: bool = False
@@ -386,5 +386,5 @@ class ChargeCorrection(nn.Module):
         f = dq / jax.ops.segment_sum(s, isys, nsys)
 
         q = q + s * f[isys]
-        key_out = self.key_out if self.key_out is not None else self.key
-        return {**inputs, key_out: q, self.dq_key: dq}
+        output_key = self.output_key if self.output_key is not None else self.key
+        return {**inputs, output_key: q, self.dq_key: dq}

@@ -5,6 +5,7 @@ from .hipnn import HIPNNEmbedding
 from .newtonnet import NewtonNetEmbedding
 from .painn import PAINNEmbedding
 from .eeacsf import EEACSF
+from .caiman import CaimanEmbedding
 
 
 EMBEDDINGS={
@@ -16,4 +17,5 @@ EMBEDDINGS={
     "NEWTONNET": NewtonNetEmbedding,
     "PAINN": PAINNEmbedding,
     "EEACSF": EEACSF,
+    "CAIMAN": CaimanEmbedding,
 }

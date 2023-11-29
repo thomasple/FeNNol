@@ -88,10 +88,10 @@ class VdwOQDO(nn.Module):
 
         edisp = 0.5 * jax.ops.segment_sum(epair * switch, edge_src, species.shape[0])
 
-        key_out = self.name if self.energy_key is None else self.energy_key
+        output_key = self.name if self.energy_key is None else self.energy_key
 
         if not self.include_exchange:
-            return {**inputs, key_out: edisp}
+            return {**inputs, output_key: edisp}
 
         ### exchange
         w = 4 * c6ij / (3 * alphaij**2)
@@ -132,7 +132,7 @@ class VdwOQDO(nn.Module):
 
         return {
             **inputs,
-            key_out + "_dispersion": edisp,
-            key_out + "_exchange": ex,
-            key_out: edisp + ex,
+            output_key + "_dispersion": edisp,
+            output_key + "_exchange": ex,
+            output_key: edisp + ex,
         }
