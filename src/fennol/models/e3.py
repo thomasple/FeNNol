@@ -14,6 +14,7 @@ class FullTensorProduct(nn.Module):
     lmax1: int
     lmax2: int
     lmax_out: Optional[int] = None
+    ignore_parity: bool = False
 
     @nn.compact
     def __call__(self, x1, x2) -> None:
@@ -29,7 +30,9 @@ class FullTensorProduct(nn.Module):
         for i1, (l1, p1) in enumerate(irreps_1):
             for i2, (l2, p2) in enumerate(irreps_2):
                 for lout in range(abs(l1 - l2), l1 + l2 + 1):
-                    if lout > lmax_out or p1 * p2 != (-1) ** lout:
+                    if p1 * p2 != (-1) ** lout and not self.ignore_parity:
+                        continue
+                    if lout > lmax_out:
                         continue
                     lsout.append(lout)
                     psout.append(p1 * p2)
@@ -82,12 +85,13 @@ class FilteredTensorProduct(nn.Module):
     lmax1: int
     lmax2: int
     lmax_out: Optional[int] = None
+    ignore_parity: bool = False
 
     @nn.compact
     def __call__(self, x1, x2) -> None:
         irreps_1 = [(l, (-1) ** l) for l in range(self.lmax1 + 1)]
         irreps_2 = [(l, (-1) ** l) for l in range(self.lmax2 + 1)]
-        lmax_out = self.lmax_out or self.lmax1
+        lmax_out = self.lmax_out if self.lmax_out is not None else self.lmax1
         irreps_out = [(l, (-1) ** l) for l in range(lmax_out + 1)]
 
         slices_1 = [0]
@@ -105,7 +109,7 @@ class FilteredTensorProduct(nn.Module):
         for iout, (lout, pout) in enumerate(irreps_out):
             for i1, (l1, p1) in enumerate(irreps_1):
                 for i2, (l2, p2) in enumerate(irreps_2):
-                    if pout != p1 * p2:
+                    if pout != p1 * p2 and not self.ignore_parity:
                         continue
                     if lout > l1 + l2 or lout < abs(l1 - l2):
                         continue
