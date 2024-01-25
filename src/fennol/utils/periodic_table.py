@@ -3,139 +3,154 @@ import jax.numpy as jnp
 from typing import Sequence, Callable
 import numpy as np
 from .atomic_units import AtomicUnits as au
+from .xenonpy_props import XENONPY_PROPS
 
-PERIODIC_TABLE = (
-    ["Dummy"]
-    + """
-    H                                                                                                                           He
-    Li  Be                                                                                                  B   C   N   O   F   Ne
-    Na  Mg                                                                                                  Al  Si  P   S   Cl  Ar
-    K   Ca  Sc                                                          Ti  V   Cr  Mn  Fe  Co  Ni  Cu  Zn  Ga  Ge  As  Se  Br  Kr
-    Rb  Sr  Y                                                           Zr  Nb  Mo  Tc  Ru  Rh  Pd  Ag  Cd  In  Sn  Sb  Te  I   Xe
-    Cs  Ba  La  Ce  Pr  Nd  Pm  Sm  Eu  Gd  Tb  Dy  Ho  Er  Tm  Yb  Lu  Hf  Ta  W   Re  Os  Ir  Pt  Au  Hg  Tl  Pb  Bi  Po  At  Rn
-    Fr  Ra  Ac  Th  Pa  U   Np  Pu  Am  Cm  Bk  Cf  Es  Fm  Md  No  Lr  Rf  Db  Sg  Bh  Hs  Mt  Ds  Rg  Cn  Nh  Fl  Mc  Lv  Ts  Og
-    """.strip().split()
-)
+PERIODIC_TABLE_STR = """
+H                                                                                                                           He
+Li  Be                                                                                                  B   C   N   O   F   Ne
+Na  Mg                                                                                                  Al  Si  P   S   Cl  Ar
+K   Ca  Sc                                                          Ti  V   Cr  Mn  Fe  Co  Ni  Cu  Zn  Ga  Ge  As  Se  Br  Kr
+Rb  Sr  Y                                                           Zr  Nb  Mo  Tc  Ru  Rh  Pd  Ag  Cd  In  Sn  Sb  Te  I   Xe
+Cs  Ba  La  Ce  Pr  Nd  Pm  Sm  Eu  Gd  Tb  Dy  Ho  Er  Tm  Yb  Lu  Hf  Ta  W   Re  Os  Ir  Pt  Au  Hg  Tl  Pb  Bi  Po  At  Rn
+Fr  Ra  Ac  Th  Pa  U   Np  Pu  Am  Cm  Bk  Cf  Es  Fm  Md  No  Lr  Rf  Db  Sg  Bh  Hs  Mt  Ds  Rg  Cn  Nh  Fl  Mc  Lv  Ts  Og
+"""
+
+PERIODIC_TABLE = ["Dummy"] + PERIODIC_TABLE_STR.strip().split()
 
 PERIODIC_TABLE_REV_IDX = {s: i for i, s in enumerate(PERIODIC_TABLE)}
+
+
+def _build_periodic_coordinates():
+    periods = PERIODIC_TABLE_STR.split("\n")[1:-1]
+    coords = [
+        [0, 0],
+    ]
+    for i, p in enumerate(periods):
+        for j in range(0, len(p), 4):
+            if p[j : j + 4].strip():
+                coords.append([i + 1, j // 4 + 1])
+    return coords
+
+
+PERIODIC_COORDINATES = _build_periodic_coordinates()
 
 ATOMIC_MASSES = [
     0.0,
     1.008,
     4.002602,
-    6.94,  
+    6.94,
     9.0121831,
     10.81,
     12.011,
-    14.007,  
+    14.007,
     15.999,
     18.99840316,
     20.1797,
-    22.98976928,  
+    22.98976928,
     24.305,
     26.9815385,
     28.085,
-    30.973762,  
+    30.973762,
     32.06,
     35.45,
     39.948,
-    39.0983,  
+    39.0983,
     40.078,
     44.955908,
     47.867,
-    50.9415,  
+    50.9415,
     51.9961,
     54.938044,
     55.845,
-    58.933194,  
+    58.933194,
     58.6934,
     63.546,
     65.38,
-    69.723,  
+    69.723,
     72.63,
     74.921595,
     78.971,
-    79.904,  
+    79.904,
     83.798,
     85.4678,
     87.62,
-    88.90584,  
+    88.90584,
     91.224,
     92.90637,
     95.95,
-    97.90721,  
+    97.90721,
     101.07,
     102.9055,
     106.42,
-    107.8682,  
+    107.8682,
     112.414,
     114.818,
     118.71,
-    121.76,  
+    121.76,
     127.6,
     126.90447,
     131.293,
-    132.90545196,  
+    132.90545196,
     137.327,
     138.90547,
     140.116,
-    140.90766,  
+    140.90766,
     144.242,
     144.91276,
     150.36,
-    151.964,  
+    151.964,
     157.25,
     158.92535,
     162.5,
-    164.93033,  
+    164.93033,
     167.259,
     168.93422,
     173.054,
-    174.9668,  
+    174.9668,
     178.49,
     180.94788,
     183.84,
-    186.207,  
+    186.207,
     190.23,
     192.217,
     195.084,
-    196.966569,  
+    196.966569,
     200.592,
     204.38,
     207.2,
-    208.9804,  
+    208.9804,
     208.98243,
     209.98715,
     222.01758,
-    223.01974,  
+    223.01974,
     226.02541,
     227.02775,
     232.0377,
-    231.03588,  
+    231.03588,
     238.02891,
     237.04817,
     244.06421,
-    243.06138,  
+    243.06138,
     247.07035,
     247.07031,
     251.07959,
-    252.083,  
+    252.083,
     257.09511,
     258.09843,
     259.101,
-    262.11,  
+    262.11,
     267.122,
     268.126,
     271.134,
-    270.133,  
+    270.133,
     269.1338,
     278.156,
     281.165,
-    281.166,  
+    281.166,
     285.177,
     286.182,
     289.19,
-    289.194,  
+    289.194,
     293.204,
     293.208,
     294.214,
@@ -189,7 +204,7 @@ class SpeciesConverter(nn.Module):
 
 
 ELECTRONIC_STRUCTURE = [[0] * 15] * len(PERIODIC_TABLE)
-######################## 1s 2s 2p 3s 3p 4s  3d 4p 5s  4d 5p 6s  4f  5d 6p
+######################### 1s 2s 2p 3s 3p 4s 3d 4p 5s 4d 5p  6s 4f 5d 6p
 ELECTRONIC_STRUCTURE[1] = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # H
 ELECTRONIC_STRUCTURE[2] = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # He
 ELECTRONIC_STRUCTURE[3] = [2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Li
@@ -200,6 +215,7 @@ ELECTRONIC_STRUCTURE[7] = [2, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # N
 ELECTRONIC_STRUCTURE[8] = [2, 2, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # O
 ELECTRONIC_STRUCTURE[9] = [2, 2, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # F
 ELECTRONIC_STRUCTURE[10] = [2, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ne
+########################## 1s 2s 2p 3s 3p 4s 3d 4p  5s 4d 5p 6s 4f 5d 6p
 ELECTRONIC_STRUCTURE[11] = [2, 2, 6, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Na
 ELECTRONIC_STRUCTURE[12] = [2, 2, 6, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Mg
 ELECTRONIC_STRUCTURE[13] = [2, 2, 6, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Al
@@ -208,43 +224,82 @@ ELECTRONIC_STRUCTURE[15] = [2, 2, 6, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # P
 ELECTRONIC_STRUCTURE[16] = [2, 2, 6, 2, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # S
 ELECTRONIC_STRUCTURE[17] = [2, 2, 6, 2, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Cl
 ELECTRONIC_STRUCTURE[18] = [2, 2, 6, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ar
+########################## 1s 2s 2p 3s 3p 4s 3d 4p  5s 4d 5p 6s 4f 5d 6p
 ELECTRONIC_STRUCTURE[19] = [2, 2, 6, 2, 6, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # K
 ELECTRONIC_STRUCTURE[20] = [2, 2, 6, 2, 6, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ca
 ELECTRONIC_STRUCTURE[21] = [2, 2, 6, 2, 6, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0]  # Sc
 ELECTRONIC_STRUCTURE[22] = [2, 2, 6, 2, 6, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0]  # Ti
 ELECTRONIC_STRUCTURE[23] = [2, 2, 6, 2, 6, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0]  # V
-ELECTRONIC_STRUCTURE[24] = [2, 2, 6, 2, 6, 2, 4, 0, 0, 0, 0, 0, 0, 0, 0]  # Cr
+ELECTRONIC_STRUCTURE[24] = [2, 2, 6, 2, 6, 1, 5, 0, 0, 0, 0, 0, 0, 0, 0]  # Cr
 ELECTRONIC_STRUCTURE[25] = [2, 2, 6, 2, 6, 2, 5, 0, 0, 0, 0, 0, 0, 0, 0]  # Mn
 ELECTRONIC_STRUCTURE[26] = [2, 2, 6, 2, 6, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0]  # Fe
 ELECTRONIC_STRUCTURE[27] = [2, 2, 6, 2, 6, 2, 7, 0, 0, 0, 0, 0, 0, 0, 0]  # Co
 ELECTRONIC_STRUCTURE[28] = [2, 2, 6, 2, 6, 2, 8, 0, 0, 0, 0, 0, 0, 0, 0]  # Ni
-ELECTRONIC_STRUCTURE[29] = [2, 2, 6, 2, 6, 2, 9, 0, 0, 0, 0, 0, 0, 0, 0]  # Cu
+ELECTRONIC_STRUCTURE[29] = [2, 2, 6, 2, 6, 1, 10, 0, 0, 0, 0, 0, 0, 0, 0]  # Cu
 ELECTRONIC_STRUCTURE[30] = [2, 2, 6, 2, 6, 2, 10, 0, 0, 0, 0, 0, 0, 0, 0]  # Zn
+########################### 1s 2s 2p 3s 3p 4s 3d 4p 5s 4d 5p 6s 4f 5d 6p
 ELECTRONIC_STRUCTURE[31] = [2, 2, 6, 2, 6, 2, 10, 1, 0, 0, 0, 0, 0, 0, 0]  # Ga
 ELECTRONIC_STRUCTURE[32] = [2, 2, 6, 2, 6, 2, 10, 2, 0, 0, 0, 0, 0, 0, 0]  # Ge
 ELECTRONIC_STRUCTURE[33] = [2, 2, 6, 2, 6, 2, 10, 3, 0, 0, 0, 0, 0, 0, 0]  # As
 ELECTRONIC_STRUCTURE[34] = [2, 2, 6, 2, 6, 2, 10, 4, 0, 0, 0, 0, 0, 0, 0]  # Se
 ELECTRONIC_STRUCTURE[35] = [2, 2, 6, 2, 6, 2, 10, 5, 0, 0, 0, 0, 0, 0, 0]  # Br
 ELECTRONIC_STRUCTURE[36] = [2, 2, 6, 2, 6, 2, 10, 6, 0, 0, 0, 0, 0, 0, 0]  # Kr
+########################### 1s 2s 2p 3s 3p 4s 3d 4p 5s 4d 5p 6s 4f 5d 6p
 ELECTRONIC_STRUCTURE[37] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 0, 0, 0, 0, 0, 0]  # Rb
 ELECTRONIC_STRUCTURE[38] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 0, 0, 0, 0, 0, 0]  # Sr
 ELECTRONIC_STRUCTURE[39] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 1, 0, 0, 0, 0, 0]  # Y
 ELECTRONIC_STRUCTURE[40] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 2, 0, 0, 0, 0, 0]  # Zr
-ELECTRONIC_STRUCTURE[41] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 3, 0, 0, 0, 0, 0]  # Nb
-ELECTRONIC_STRUCTURE[42] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 4, 0, 0, 0, 0, 0]  # Mo
+ELECTRONIC_STRUCTURE[41] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 4, 0, 0, 0, 0, 0]  # Nb
+ELECTRONIC_STRUCTURE[42] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 5, 0, 0, 0, 0, 0]  # Mo
 ELECTRONIC_STRUCTURE[43] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 5, 0, 0, 0, 0, 0]  # Tc
-ELECTRONIC_STRUCTURE[44] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 6, 0, 0, 0, 0, 0]  # Ru
-ELECTRONIC_STRUCTURE[45] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 7, 0, 0, 0, 0, 0]  # Rh
-ELECTRONIC_STRUCTURE[46] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 8, 0, 0, 0, 0, 0]  # Pd
-ELECTRONIC_STRUCTURE[47] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 9, 0, 0, 0, 0, 0]  # Ag
+ELECTRONIC_STRUCTURE[44] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 7, 0, 0, 0, 0, 0]  # Ru
+ELECTRONIC_STRUCTURE[45] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 8, 0, 0, 0, 0, 0]  # Rh
+ELECTRONIC_STRUCTURE[46] = [2, 2, 6, 2, 6, 2, 10, 6, 0, 10, 0, 0, 0, 0, 0]  # Pd
+ELECTRONIC_STRUCTURE[47] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 10, 0, 0, 0, 0, 0]  # Ag
 ELECTRONIC_STRUCTURE[48] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 0, 0, 0, 0, 0]  # Cd
+########################### 1s 2s 2p 3s 3p 4s 3d 4p 5s  4d 5p 6s 4f 5d 6p
 ELECTRONIC_STRUCTURE[49] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 1, 0, 0, 0, 0]  # In
 ELECTRONIC_STRUCTURE[50] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 2, 0, 0, 0, 0]  # Sn
 ELECTRONIC_STRUCTURE[51] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 3, 0, 0, 0, 0]  # Sb
 ELECTRONIC_STRUCTURE[52] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 4, 0, 0, 0, 0]  # Te
 ELECTRONIC_STRUCTURE[53] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 5, 0, 0, 0, 0]  # I
 ELECTRONIC_STRUCTURE[54] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 0, 0, 0, 0]  # Xe
-########################## 1s 2s 2p 3s 3p 4s  3d 4p 5s  4d 5p 6s  4f  5d 6p
+########################### 1s 2s 2p 3s 3p 4s 3d 4p 5s  4d 5p 6s 4f 5d 6p
+ELECTRONIC_STRUCTURE[55] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 1, 0, 0, 0]  # Cs
+ELECTRONIC_STRUCTURE[56] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 0, 0, 0]  # Ba
+ELECTRONIC_STRUCTURE[57] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 0, 1, 0]  # La
+ELECTRONIC_STRUCTURE[58] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 1, 1, 0]  # Ce
+ELECTRONIC_STRUCTURE[59] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 3, 0, 0]  # Pr
+ELECTRONIC_STRUCTURE[60] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 4, 0, 0]  # Nd
+ELECTRONIC_STRUCTURE[61] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 5, 0, 0]  # Pm
+ELECTRONIC_STRUCTURE[62] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 6, 0, 0]  # Sm
+ELECTRONIC_STRUCTURE[63] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 7, 0, 0]  # Eu
+ELECTRONIC_STRUCTURE[64] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 7, 1, 0]  # Gd
+ELECTRONIC_STRUCTURE[65] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 9, 0, 0]  # Tb
+ELECTRONIC_STRUCTURE[66] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 10, 0, 0] # Dy
+ELECTRONIC_STRUCTURE[67] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 11, 0, 0] # Ho
+ELECTRONIC_STRUCTURE[68] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 12, 0, 0] # Er
+ELECTRONIC_STRUCTURE[69] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 13, 0, 0] # Tm
+ELECTRONIC_STRUCTURE[70] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 0, 0] # Yb
+########################### 1s 2s 2p 3s 3p 4s 3d 4p 5s  4d 5p 6s  4f  5d 6p
+ELECTRONIC_STRUCTURE[71] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 1, 0] # Lu
+ELECTRONIC_STRUCTURE[71] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 2, 0] # Hf
+ELECTRONIC_STRUCTURE[73] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 3, 0] # Ta
+ELECTRONIC_STRUCTURE[74] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 4, 0] # W
+ELECTRONIC_STRUCTURE[75] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 5, 0] # Re
+ELECTRONIC_STRUCTURE[76] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 6, 0] # Os
+ELECTRONIC_STRUCTURE[77] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 7, 0] # Ir
+ELECTRONIC_STRUCTURE[78] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 1, 14, 9, 0] # Pt
+ELECTRONIC_STRUCTURE[79] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 1, 14, 10, 0] # Au
+ELECTRONIC_STRUCTURE[80] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 0] # Hg
+########################### 1s 2s 2p 3s 3p 4s 3d 4p 5s  4d 5p 6s  4f  5d 6p
+ELECTRONIC_STRUCTURE[81] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 1] # Tl
+ELECTRONIC_STRUCTURE[82] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 2] # Pb
+ELECTRONIC_STRUCTURE[83] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 3] # Bi
+ELECTRONIC_STRUCTURE[84] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 4] # Po
+ELECTRONIC_STRUCTURE[85] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 5] # At
+ELECTRONIC_STRUCTURE[86] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6] # Rn
+
 
 
 VALENCE_STRUCTURE = [[0] * 4] * len(PERIODIC_TABLE)
@@ -272,12 +327,12 @@ VALENCE_STRUCTURE[20] = [2, 0, 0, 0]  # Ca
 VALENCE_STRUCTURE[21] = [2, 0, 1, 0]  # Sc
 VALENCE_STRUCTURE[22] = [2, 0, 2, 0]  # Ti
 VALENCE_STRUCTURE[23] = [2, 0, 3, 0]  # V
-VALENCE_STRUCTURE[24] = [2, 0, 4, 0]  # Cr
+VALENCE_STRUCTURE[24] = [1, 0, 5, 0]  # Cr
 VALENCE_STRUCTURE[25] = [2, 0, 5, 0]  # Mn
 VALENCE_STRUCTURE[26] = [2, 0, 6, 0]  # Fe
 VALENCE_STRUCTURE[27] = [2, 0, 7, 0]  # Co
 VALENCE_STRUCTURE[28] = [2, 0, 8, 0]  # Ni
-VALENCE_STRUCTURE[29] = [2, 0, 9, 0]  # Cu
+VALENCE_STRUCTURE[29] = [1, 0, 10, 0]  # Cu
 VALENCE_STRUCTURE[30] = [2, 0, 10, 0]  # Zn
 VALENCE_STRUCTURE[31] = [2, 1, 10, 0]  # Ga
 VALENCE_STRUCTURE[32] = [2, 2, 10, 0]  # Ge
@@ -289,13 +344,13 @@ VALENCE_STRUCTURE[37] = [1, 0, 0, 0]  # Rb
 VALENCE_STRUCTURE[38] = [2, 0, 0, 0]  # Sr
 VALENCE_STRUCTURE[39] = [2, 0, 1, 0]  # Y
 VALENCE_STRUCTURE[40] = [2, 0, 2, 0]  # Zr
-VALENCE_STRUCTURE[41] = [2, 0, 3, 0]  # Nb
-VALENCE_STRUCTURE[42] = [2, 0, 4, 0]  # Mo
+VALENCE_STRUCTURE[41] = [1, 0, 4, 0]  # Nb
+VALENCE_STRUCTURE[42] = [1, 0, 5, 0]  # Mo
 VALENCE_STRUCTURE[43] = [2, 0, 5, 0]  # Tc
-VALENCE_STRUCTURE[44] = [2, 0, 6, 0]  # Ru
-VALENCE_STRUCTURE[45] = [2, 0, 7, 0]  # Rh
-VALENCE_STRUCTURE[46] = [2, 0, 8, 0]  # Pd
-VALENCE_STRUCTURE[47] = [2, 0, 9, 0]  # Ag
+VALENCE_STRUCTURE[44] = [1, 0, 7, 0]  # Ru
+VALENCE_STRUCTURE[45] = [1, 0, 8, 0]  # Rh
+VALENCE_STRUCTURE[46] = [0, 0, 10, 0]  # Pd
+VALENCE_STRUCTURE[47] = [1, 0, 10, 0]  # Ag
 VALENCE_STRUCTURE[48] = [2, 0, 10, 0]  # Cd
 VALENCE_STRUCTURE[49] = [2, 1, 10, 0]  # In
 VALENCE_STRUCTURE[50] = [2, 2, 10, 0]  # Sn
@@ -303,63 +358,41 @@ VALENCE_STRUCTURE[51] = [2, 3, 10, 0]  # Sb
 VALENCE_STRUCTURE[52] = [2, 4, 10, 0]  # Te
 VALENCE_STRUCTURE[53] = [2, 5, 10, 0]  # I
 VALENCE_STRUCTURE[54] = [2, 6, 10, 0]  # Xe
+VALENCE_STRUCTURE[55] = [1, 0, 0, 0]  # Cs
+VALENCE_STRUCTURE[56] = [2, 0, 0, 0]  # Ba
+VALENCE_STRUCTURE[57] = [2, 0, 1, 0]  # La
+VALENCE_STRUCTURE[58] = [2, 0, 1, 1]  # Ce
+VALENCE_STRUCTURE[59] = [2, 0, 0, 3]  # Pr
+VALENCE_STRUCTURE[60] = [2, 0, 0, 4]  # Nd
+VALENCE_STRUCTURE[61] = [2, 0, 0, 5]  # Pm
+VALENCE_STRUCTURE[62] = [2, 0, 0, 6]  # Sm
+VALENCE_STRUCTURE[63] = [2, 0, 0, 7]  # Eu
+VALENCE_STRUCTURE[64] = [2, 0, 1, 7]  # Gd
+VALENCE_STRUCTURE[65] = [2, 0, 0, 9]  # Tb
+VALENCE_STRUCTURE[66] = [2, 0, 0, 10]  # Dy
+VALENCE_STRUCTURE[67] = [2, 0, 0, 11]  # Ho
+VALENCE_STRUCTURE[68] = [2, 0, 0, 12]  # Er
+VALENCE_STRUCTURE[69] = [2, 0, 0, 13]  # Tm
+VALENCE_STRUCTURE[70] = [2, 0, 0, 14]  # Yb
+VALENCE_STRUCTURE[71] = [2, 0, 1, 14]  # Lu
+VALENCE_STRUCTURE[72] = [2, 0, 2, 14]  # Hf
+VALENCE_STRUCTURE[73] = [2, 0, 3, 14]  # Ta
+VALENCE_STRUCTURE[74] = [2, 0, 4, 14]  # W
+VALENCE_STRUCTURE[75] = [2, 0, 5, 14]  # Re
+VALENCE_STRUCTURE[76] = [2, 0, 6, 14]  # Os
+VALENCE_STRUCTURE[77] = [2, 0, 7, 14]  # Ir
+VALENCE_STRUCTURE[78] = [1, 0, 9, 14]  # Pt
+VALENCE_STRUCTURE[79] = [1, 0, 10, 14]  # Au
+VALENCE_STRUCTURE[80] = [2, 0, 10, 14]  # Hg
+VALENCE_STRUCTURE[81] = [2, 1, 10, 14]  # Tl
+VALENCE_STRUCTURE[82] = [2, 2, 10, 14]  # Pb
+VALENCE_STRUCTURE[83] = [2, 3, 10, 14]  # Bi
+VALENCE_STRUCTURE[84] = [2, 4, 10, 14]  # Po
+VALENCE_STRUCTURE[85] = [2, 5, 10, 14]  # At
+VALENCE_STRUCTURE[86] = [2, 6, 10, 14]  # Rn
 ###################### vs vp  vd  vf
 
-VALENCE_ELECTRONS=[0]*len(PERIODIC_TABLE)
-VALENCE_ELECTRONS[1]=1
-VALENCE_ELECTRONS[2]=2
-VALENCE_ELECTRONS[3]=1
-VALENCE_ELECTRONS[4]=2
-VALENCE_ELECTRONS[5]=3
-VALENCE_ELECTRONS[6]=4
-VALENCE_ELECTRONS[7]=5
-VALENCE_ELECTRONS[8]=6
-VALENCE_ELECTRONS[9]=7
-VALENCE_ELECTRONS[10]=8
-VALENCE_ELECTRONS[11]=1
-VALENCE_ELECTRONS[12]=2
-VALENCE_ELECTRONS[13]=3
-VALENCE_ELECTRONS[14]=4
-VALENCE_ELECTRONS[15]=5
-VALENCE_ELECTRONS[16]=6
-VALENCE_ELECTRONS[17]=7
-VALENCE_ELECTRONS[18]=8
-VALENCE_ELECTRONS[19]=1
-VALENCE_ELECTRONS[20]=2
-VALENCE_ELECTRONS[21]=3
-VALENCE_ELECTRONS[22]=4
-VALENCE_ELECTRONS[23]=5
-VALENCE_ELECTRONS[24]=6
-VALENCE_ELECTRONS[25]=7
-VALENCE_ELECTRONS[26]=8
-VALENCE_ELECTRONS[27]=9
-VALENCE_ELECTRONS[28]=10
-VALENCE_ELECTRONS[29]=11
-VALENCE_ELECTRONS[30]=12
-VALENCE_ELECTRONS[31]=13
-VALENCE_ELECTRONS[32]=14
-VALENCE_ELECTRONS[33]=15
-VALENCE_ELECTRONS[34]=16
-VALENCE_ELECTRONS[35]=17
-VALENCE_ELECTRONS[36]=18
-VALENCE_ELECTRONS[37]=1
-VALENCE_ELECTRONS[38]=2
-VALENCE_ELECTRONS[39]=3
-VALENCE_ELECTRONS[40]=4
-VALENCE_ELECTRONS[41]=5
-VALENCE_ELECTRONS[42]=6
-VALENCE_ELECTRONS[43]=7
-VALENCE_ELECTRONS[44]=8
-VALENCE_ELECTRONS[45]=9
-VALENCE_ELECTRONS[46]=10
-VALENCE_ELECTRONS[47]=11
-VALENCE_ELECTRONS[48]=12
-VALENCE_ELECTRONS[49]=13
-VALENCE_ELECTRONS[50]=14
-VALENCE_ELECTRONS[51]=15
-VALENCE_ELECTRONS[52]=16
-VALENCE_ELECTRONS[53]=17
-VALENCE_ELECTRONS[54]=18
+VALENCE_ELECTRONS = [ sum(e) for e in VALENCE_STRUCTURE ]
 
 # ATOMIC ELECTRONEGATIVITIES FROM
 # A generally applicable atomic-charge dependent London dispersion correction (SI)
@@ -458,7 +491,7 @@ D3_ELECTRONEGATIVITIES = (
 )
 
 D3_HARDNESSES = (
-    [1.e3]
+    [1.0e3]
     + [
         -0.35015861,
         1.04121227,
@@ -547,7 +580,7 @@ D3_HARDNESSES = (
         0.08715453,
         0.10500484,
     ]
-    + [1.e3]
+    + [1.0e3]
 )
 
 D3_KAPPA = (
@@ -828,384 +861,523 @@ D3_COV_RADII = (
     ]
     + [1.0]
 )
-D3_COV_RADII = [x/au.BOHR for x in D3_COV_RADII]
+D3_COV_RADII = [x / au.BOHR for x in D3_COV_RADII]
 
-#free atom vdw radii in bohr from Tkatchenko-Scheffler
+# free atom vdw radii in bohr from Tkatchenko-Scheffler
 VDW_RADII = [
-  1.0,    # Dummy 
-  3.1,    # H
-  2.65,   #He
-  4.16,   #Li
-  4.17,   #Be
-  3.89,   # B
-  3.59,   # C
-  3.34,   # N
-  3.19,   # O
-  3.04,   # F
-  2.91,   #Ne
-  3.73,   #Na
-  4.27,   #Mg
-  4.33,   #Al
-  4.2,    #Si
-  4.01,   # P
-  3.86,   # S
-  3.71,   #Cl
-  3.55,   #Ar
-  3.71,   # K
-  4.65,   #Ca
-  4.59,   #Sc
-  4.51,   #Ti
-  4.44,   # V
-  3.99,   #Cr
-  3.97,   #Mn
-  4.23,   #Fe
-  4.18,   #Co
-  3.82,   #Ni
-  3.76,   #Cu
-  4.02,   #Zn
-  4.19,   #Ga
-  4.2,    #Ge
-  4.11,   #As
-  4.04,   #Se
-  3.93,   #Br
-  3.82,   #Kr
-  3.72,   #Rb
-  4.54,   #Sr
-  4.8151, # Y
-  4.53,   #Zr
-  4.2365, #Nb
-  4.099,  #Mo
-  4.076,  #Tc
-  3.9953, #Ru
-  3.95,   #Rh
-  3.66,   #Pd
-  3.82,   #Ag
-  3.99,   #Cd
-  4.23198,#In
-  4.303,  #Sn
-  4.276,  #Sb
-  4.22,   #Te
-  4.17,   # I
-  4.08,   #Xe
-  3.78,   #Cs
-  4.77,   #Ba
-  3.14,   #La
-  3.26,   #Ce
-  3.28,   #Pr
-  3.3,    #Nd
-  3.27,   #Pm
-  3.32,   #Sm
-  3.4,    #Eu
-  3.62,   #Gd
-  3.42,   #Tb
-  3.26,   #Dy
-  3.24,   #Ho
-  3.3,    #Er
-  3.26,   #Tm
-  3.22,   #Yb
-  3.2,    #Lu
-  4.21,   #Hf
-  4.15,   #Ta
-  4.08,   # W
-  4.02,   #Re
-  3.84,   #Os
-  4.0,    #Ir
-  3.92,   #Pt
-  3.86,   #Au
-  3.98,   #Hg
-  3.91,   #Tl
-  4.31,   #Pb
-  4.32,   #Bi
-  4.097,  #Po
-  4.07,   #At
-  4.23,   #Rn
-  3.9,    #Fr
-  4.98,   #Ra
-  2.75,   #Ac
-  2.85,   #Th
-  2.71,   #Pa
-  3.0,    # U
-  3.28,   #Np
-  3.45,   #Pu
-  3.51,   #Am
-  3.47,   #Cm
-  3.56,   #Bk
-  3.55,   #Cf
-  3.76,   #Es
-  3.89,   #Fm
-  3.93,   #Md
-  3.78,   #No
-  1.0,    #Dummy 
+    1.0,  # Dummy
+    3.1,  # H
+    2.65,  # He
+    4.16,  # Li
+    4.17,  # Be
+    3.89,  # B
+    3.59,  # C
+    3.34,  # N
+    3.19,  # O
+    3.04,  # F
+    2.91,  # Ne
+    3.73,  # Na
+    4.27,  # Mg
+    4.33,  # Al
+    4.2,  # Si
+    4.01,  # P
+    3.86,  # S
+    3.71,  # Cl
+    3.55,  # Ar
+    3.71,  # K
+    4.65,  # Ca
+    4.59,  # Sc
+    4.51,  # Ti
+    4.44,  # V
+    3.99,  # Cr
+    3.97,  # Mn
+    4.23,  # Fe
+    4.18,  # Co
+    3.82,  # Ni
+    3.76,  # Cu
+    4.02,  # Zn
+    4.19,  # Ga
+    4.2,  # Ge
+    4.11,  # As
+    4.04,  # Se
+    3.93,  # Br
+    3.82,  # Kr
+    3.72,  # Rb
+    4.54,  # Sr
+    4.8151,  # Y
+    4.53,  # Zr
+    4.2365,  # Nb
+    4.099,  # Mo
+    4.076,  # Tc
+    3.9953,  # Ru
+    3.95,  # Rh
+    3.66,  # Pd
+    3.82,  # Ag
+    3.99,  # Cd
+    4.23198,  # In
+    4.303,  # Sn
+    4.276,  # Sb
+    4.22,  # Te
+    4.17,  # I
+    4.08,  # Xe
+    3.78,  # Cs
+    4.77,  # Ba
+    3.14,  # La
+    3.26,  # Ce
+    3.28,  # Pr
+    3.3,  # Nd
+    3.27,  # Pm
+    3.32,  # Sm
+    3.4,  # Eu
+    3.62,  # Gd
+    3.42,  # Tb
+    3.26,  # Dy
+    3.24,  # Ho
+    3.3,  # Er
+    3.26,  # Tm
+    3.22,  # Yb
+    3.2,  # Lu
+    4.21,  # Hf
+    4.15,  # Ta
+    4.08,  # W
+    4.02,  # Re
+    3.84,  # Os
+    4.0,  # Ir
+    3.92,  # Pt
+    3.86,  # Au
+    3.98,  # Hg
+    3.91,  # Tl
+    4.31,  # Pb
+    4.32,  # Bi
+    4.097,  # Po
+    4.07,  # At
+    4.23,  # Rn
+    3.9,  # Fr
+    4.98,  # Ra
+    2.75,  # Ac
+    2.85,  # Th
+    2.71,  # Pa
+    3.0,  # U
+    3.28,  # Np
+    3.45,  # Pu
+    3.51,  # Am
+    3.47,  # Cm
+    3.56,  # Bk
+    3.55,  # Cf
+    3.76,  # Es
+    3.89,  # Fm
+    3.93,  # Md
+    3.78,  # No
+    1.0,  # Dummy
 ]
 
-#free atom C6 coefficients in hartree*bohr**6
+# free atom C6 coefficients in hartree*bohr**6
 C6_FREE = [
-  0.0,     # Dummy   
-  6.5,     # H
-  1.46,    #He
-  1387.0,  #Li
-  214.0,   #Be
-  99.5,    # B
-  46.6,    # C
-  24.2,    # N
-  15.6,    # O
-  9.52,    # F
-  6.38,    #Ne
-  1556.0,  #Na
-  627.0,   #Mg
-  528.0,   #Al
-  305.0,   #Si
-  185.0,   # P
-  134.0,   # S
-  94.6,    #Cl
-  64.3,    #Ar
-  3897.0,  # K
-  2221.0,  #Ca
-  1383.0,  #Sc
-  1044.0,  #Ti
-  832.0,   # V
-  602.0,   #Cr
-  552.0,   #Mn
-  482.0,   #Fe
-  408.0,   #Co
-  373.0,   #Ni
-  253.0,   #Cu
-  284.0,   #Zn
-  498.0,   #Ga
-  354.0,   #Ge
-  246.0,   #As
-  210.0,   #Se
-  162.0,   #Br
-  129.6,   #Kr
-  4691.0,  #Rb
-  3170.0,  #Sr
-  1968.58, # Y
-  1677.91, #Zr
-  1263.61, #Nb
-  1028.73, #Mo
-  1390.87, #Tc
-  609.754, #Ru
-  469.0,   #Rh
-  157.5,   #Pd
-  339.0,   #Ag
-  452.0,   #Cd
-  707.046, #In
-  587.417, #Sn
-  459.322, #Sb
-  396.0,   #Te
-  385.0,   # I
-  285.9,   #Xe
-  6582.08, #Cs
-  5727.0,  #Ba
-  3884.5,  #La
-  3708.33, #Ce
-  3911.84, #Pr
-  3908.75, #Nd
-  3847.68, #Pm
-  3708.69, #Sm
-  3511.71, #Eu
-  2781.53, #Gd
-  3124.41, #Tb
-  2984.29, #Dy
-  2839.95, #Ho
-  2724.12, #Er
-  2576.78, #Tm
-  2387.53, #Yb
-  2371.8,  #Lu
-  1274.8,  #Hf
-  1019.92, #Ta
-  847.93,  # W
-  710.2,   #Re
-  596.67,  #Os
-  359.1,   #Ir
-  347.1,   #Pt
-  298.0,   #Au
-  392.0,   #Hg
-  717.44,  #Tl
-  697.0,   #Pb
-  571.0,   #Bi
-  530.92,  #Po
-  457.53,  #At
-  420.6, #390.63,  #Rn
-  4224.44, #Fr
-  4851.32, #Ra
-  3604.41, #Ac
-  4047.54, #Th
-  2367.42, #Pa
-  1877.1,  # U
-  2507.88, #Np
-  2117.27, #Pu
-  2110.98, #Am
-  2403.22, #Cm
-  1985.82, #Bk
-  1891.92, #Cf
-  1851.1,  #Es
-  1787.07, #Fm
-  1701.0,  #Md
-  1578.18, #No
-  0.0,     #Dummy          
+    0.0,  # Dummy
+    6.5,  # H
+    1.46,  # He
+    1387.0,  # Li
+    214.0,  # Be
+    99.5,  # B
+    46.6,  # C
+    24.2,  # N
+    15.6,  # O
+    9.52,  # F
+    6.38,  # Ne
+    1556.0,  # Na
+    627.0,  # Mg
+    528.0,  # Al
+    305.0,  # Si
+    185.0,  # P
+    134.0,  # S
+    94.6,  # Cl
+    64.3,  # Ar
+    3897.0,  # K
+    2221.0,  # Ca
+    1383.0,  # Sc
+    1044.0,  # Ti
+    832.0,  # V
+    602.0,  # Cr
+    552.0,  # Mn
+    482.0,  # Fe
+    408.0,  # Co
+    373.0,  # Ni
+    253.0,  # Cu
+    284.0,  # Zn
+    498.0,  # Ga
+    354.0,  # Ge
+    246.0,  # As
+    210.0,  # Se
+    162.0,  # Br
+    129.6,  # Kr
+    4691.0,  # Rb
+    3170.0,  # Sr
+    1968.58,  # Y
+    1677.91,  # Zr
+    1263.61,  # Nb
+    1028.73,  # Mo
+    1390.87,  # Tc
+    609.754,  # Ru
+    469.0,  # Rh
+    157.5,  # Pd
+    339.0,  # Ag
+    452.0,  # Cd
+    707.046,  # In
+    587.417,  # Sn
+    459.322,  # Sb
+    396.0,  # Te
+    385.0,  # I
+    285.9,  # Xe
+    6582.08,  # Cs
+    5727.0,  # Ba
+    3884.5,  # La
+    3708.33,  # Ce
+    3911.84,  # Pr
+    3908.75,  # Nd
+    3847.68,  # Pm
+    3708.69,  # Sm
+    3511.71,  # Eu
+    2781.53,  # Gd
+    3124.41,  # Tb
+    2984.29,  # Dy
+    2839.95,  # Ho
+    2724.12,  # Er
+    2576.78,  # Tm
+    2387.53,  # Yb
+    2371.8,  # Lu
+    1274.8,  # Hf
+    1019.92,  # Ta
+    847.93,  # W
+    710.2,  # Re
+    596.67,  # Os
+    359.1,  # Ir
+    347.1,  # Pt
+    298.0,  # Au
+    392.0,  # Hg
+    717.44,  # Tl
+    697.0,  # Pb
+    571.0,  # Bi
+    530.92,  # Po
+    457.53,  # At
+    420.6,  # 390.63,  #Rn
+    4224.44,  # Fr
+    4851.32,  # Ra
+    3604.41,  # Ac
+    4047.54,  # Th
+    2367.42,  # Pa
+    1877.1,  # U
+    2507.88,  # Np
+    2117.27,  # Pu
+    2110.98,  # Am
+    2403.22,  # Cm
+    1985.82,  # Bk
+    1891.92,  # Cf
+    1851.1,  # Es
+    1787.07,  # Fm
+    1701.0,  # Md
+    1578.18,  # No
+    0.0,  # Dummy
 ]
 
-#free atom polarizabilities in bohr**3  
-POLARIZABILITIES=[
-  1.e-6,       # Dummy
-  4.5,       # H
-  1.38,      #He
-  164.2,     #Li
-  38.0,      #Be
-  21.0,      # B
-  12.0,      # C
-  7.4,       # N
-  5.4,       # O
-  3.8,       # F
-  2.67,      #Ne
-  162.7,     #Na
-  71.0,      #Mg
-  60.0,      #Al
-  37.0,      #Si
-  25.0,      # P
-  19.6,      # S
-  15.0,      #Cl
-  11.1,      #Ar
-  292.9,     # K
-  160.0,     #Ca
-  120.0,     #Sc
-  98.0,      #Ti
-  84.0,      # V
-  78.0,      #Cr
-  63.0,      #Mn
-  56.0,      #Fe
-  50.0,      #Co
-  48.0,      #Ni
-  42.0,      #Cu
-  40.0,      #Zn
-  60.0,      #Ga
-  41.0,      #Ge
-  29.0,      #As
-  25.0,      #Se
-  20.0,      #Br
-  16.8,      #Kr
-  319.2,     #Rb
-  199.0,     #Sr
-  126.737,   # Y
-  119.97,    #Zr
-  101.603,   #Nb
-  88.4225785,#Mo
-  80.083,    #Tc
-  65.895,    #Ru
-  56.1,      #Rh
-  23.68,     #Pd
-  50.6,      #Ag
-  39.7,      #Cd
-  70.22,     #In
-  55.95,     #Sn
-  43.67197,  #Sb
-  37.65,     #Te
-  35.0,      # I
-  27.3,      #Xe
-  427.12,    #Cs
-  275.0,     #Ba
-  213.7,     #La
-  204.7,     #Ce
-  215.8,     #Pr
-  208.4,     #Nd
-  200.2,     #Pm
-  192.1,     #Sm
-  184.2,     #Eu
-  158.3,     #Gd
-  169.5,     #Tb
-  164.64,    #Dy
-  156.3,     #Ho
-  150.2,     #Er
-  144.3,     #Tm
-  138.9,     #Yb
-  137.2,     #Lu
-  99.52,     #Hf
-  82.53,     #Ta
-  71.041,    # W
-  63.04,     #Re
-  55.055,    #Os
-  42.51,     #Ir
-  39.68,     #Pt
-  36.5,      #Au
-  33.9,      #Hg
-  69.92,     #Tl
-  61.8,      #Pb
-  49.02,     #Bi
-  45.013,    #Po
-  38.93,     #At
-  33.54,     #Rn
-  317.8,     #Fr
-  246.2,     #Ra
-  203.3,     #Ac
-  217.0,     #Th
-  154.4,     #Pa
-  127.8,     # U
-  150.5,     #Np
-  132.2,     #Pu
-  131.2,     #Am
-  143.6,     #Cm
-  125.3,     #Bk
-  121.5,     #Cf
-  117.5,     #Es
-  113.4,     #Fm
-  109.4,     #Md
-  105.4,     #No
-  1.e-6,        #Dummy
+# free atom polarizabilities in bohr**3
+POLARIZABILITIES = [
+    1.0e-6,  # Dummy
+    4.5,  # H
+    1.38,  # He
+    164.2,  # Li
+    38.0,  # Be
+    21.0,  # B
+    12.0,  # C
+    7.4,  # N
+    5.4,  # O
+    3.8,  # F
+    2.67,  # Ne
+    162.7,  # Na
+    71.0,  # Mg
+    60.0,  # Al
+    37.0,  # Si
+    25.0,  # P
+    19.6,  # S
+    15.0,  # Cl
+    11.1,  # Ar
+    292.9,  # K
+    160.0,  # Ca
+    120.0,  # Sc
+    98.0,  # Ti
+    84.0,  # V
+    78.0,  # Cr
+    63.0,  # Mn
+    56.0,  # Fe
+    50.0,  # Co
+    48.0,  # Ni
+    42.0,  # Cu
+    40.0,  # Zn
+    60.0,  # Ga
+    41.0,  # Ge
+    29.0,  # As
+    25.0,  # Se
+    20.0,  # Br
+    16.8,  # Kr
+    319.2,  # Rb
+    199.0,  # Sr
+    126.737,  # Y
+    119.97,  # Zr
+    101.603,  # Nb
+    88.4225785,  # Mo
+    80.083,  # Tc
+    65.895,  # Ru
+    56.1,  # Rh
+    23.68,  # Pd
+    50.6,  # Ag
+    39.7,  # Cd
+    70.22,  # In
+    55.95,  # Sn
+    43.67197,  # Sb
+    37.65,  # Te
+    35.0,  # I
+    27.3,  # Xe
+    427.12,  # Cs
+    275.0,  # Ba
+    213.7,  # La
+    204.7,  # Ce
+    215.8,  # Pr
+    208.4,  # Nd
+    200.2,  # Pm
+    192.1,  # Sm
+    184.2,  # Eu
+    158.3,  # Gd
+    169.5,  # Tb
+    164.64,  # Dy
+    156.3,  # Ho
+    150.2,  # Er
+    144.3,  # Tm
+    138.9,  # Yb
+    137.2,  # Lu
+    99.52,  # Hf
+    82.53,  # Ta
+    71.041,  # W
+    63.04,  # Re
+    55.055,  # Os
+    42.51,  # Ir
+    39.68,  # Pt
+    36.5,  # Au
+    33.9,  # Hg
+    69.92,  # Tl
+    61.8,  # Pb
+    49.02,  # Bi
+    45.013,  # Po
+    38.93,  # At
+    33.54,  # Rn
+    317.8,  # Fr
+    246.2,  # Ra
+    203.3,  # Ac
+    217.0,  # Th
+    154.4,  # Pa
+    127.8,  # U
+    150.5,  # Np
+    132.2,  # Pu
+    131.2,  # Am
+    143.6,  # Cm
+    125.3,  # Bk
+    121.5,  # Cf
+    117.5,  # Es
+    113.4,  # Fm
+    109.4,  # Md
+    105.4,  # No
+    1.0e-6,  # Dummy
 ]
 
-PAULING_ELECTRONEGATIVITY=[0.]*len(PERIODIC_TABLE)
-PAULING_ELECTRONEGATIVITY[1]=2.20
-PAULING_ELECTRONEGATIVITY[2]=4.42 #-1. organov
-PAULING_ELECTRONEGATIVITY[3]=0.98
-PAULING_ELECTRONEGATIVITY[4]=1.57
-PAULING_ELECTRONEGATIVITY[5]=2.04
-PAULING_ELECTRONEGATIVITY[6]=2.55
-PAULING_ELECTRONEGATIVITY[7]=3.04
-PAULING_ELECTRONEGATIVITY[8]=3.44
-PAULING_ELECTRONEGATIVITY[9]=3.98
-PAULING_ELECTRONEGATIVITY[10]=4.44 #-1 organov
-PAULING_ELECTRONEGATIVITY[11]=0.93
-PAULING_ELECTRONEGATIVITY[12]=1.31
-PAULING_ELECTRONEGATIVITY[13]=1.61
-PAULING_ELECTRONEGATIVITY[14]=1.90
-PAULING_ELECTRONEGATIVITY[15]=2.19
-PAULING_ELECTRONEGATIVITY[16]=2.58
-PAULING_ELECTRONEGATIVITY[17]=3.16
-PAULING_ELECTRONEGATIVITY[18]=3.57 #-1 organov
-PAULING_ELECTRONEGATIVITY[19]=0.82
-PAULING_ELECTRONEGATIVITY[20]=1.00
-PAULING_ELECTRONEGATIVITY[21]=1.36
-PAULING_ELECTRONEGATIVITY[22]=1.54
-PAULING_ELECTRONEGATIVITY[23]=1.63
-PAULING_ELECTRONEGATIVITY[24]=1.66
-PAULING_ELECTRONEGATIVITY[25]=1.55
-PAULING_ELECTRONEGATIVITY[26]=1.83
-PAULING_ELECTRONEGATIVITY[27]=1.88
-PAULING_ELECTRONEGATIVITY[28]=1.91
-PAULING_ELECTRONEGATIVITY[29]=1.90
-PAULING_ELECTRONEGATIVITY[30]=1.65
-PAULING_ELECTRONEGATIVITY[31]=1.81
-PAULING_ELECTRONEGATIVITY[32]=2.01
-PAULING_ELECTRONEGATIVITY[33]=2.18
-PAULING_ELECTRONEGATIVITY[34]=2.55
-PAULING_ELECTRONEGATIVITY[35]=2.96
-PAULING_ELECTRONEGATIVITY[36]=3.37 #-1 organov
-PAULING_ELECTRONEGATIVITY[37]=0.82
-PAULING_ELECTRONEGATIVITY[38]=0.95
-PAULING_ELECTRONEGATIVITY[39]=1.22
-PAULING_ELECTRONEGATIVITY[40]=1.33
-PAULING_ELECTRONEGATIVITY[41]=1.60
-PAULING_ELECTRONEGATIVITY[42]=2.16
-PAULING_ELECTRONEGATIVITY[43]=1.90
-PAULING_ELECTRONEGATIVITY[44]=2.20
-PAULING_ELECTRONEGATIVITY[45]=2.28
-PAULING_ELECTRONEGATIVITY[46]=2.20
-PAULING_ELECTRONEGATIVITY[47]=1.93
-PAULING_ELECTRONEGATIVITY[48]=1.69
-PAULING_ELECTRONEGATIVITY[49]=1.78
-PAULING_ELECTRONEGATIVITY[50]=1.96
-PAULING_ELECTRONEGATIVITY[51]=2.05
-PAULING_ELECTRONEGATIVITY[52]=2.10
-PAULING_ELECTRONEGATIVITY[53]=2.66
-PAULING_ELECTRONEGATIVITY[54]=3.12 #-1 organov
+PAULING_ELECTRONEGATIVITY = [0.0] * len(PERIODIC_TABLE)
+PAULING_ELECTRONEGATIVITY[1] = 2.20
+PAULING_ELECTRONEGATIVITY[2] = 4.42  # -1. organov
+PAULING_ELECTRONEGATIVITY[3] = 0.98
+PAULING_ELECTRONEGATIVITY[4] = 1.57
+PAULING_ELECTRONEGATIVITY[5] = 2.04
+PAULING_ELECTRONEGATIVITY[6] = 2.55
+PAULING_ELECTRONEGATIVITY[7] = 3.04
+PAULING_ELECTRONEGATIVITY[8] = 3.44
+PAULING_ELECTRONEGATIVITY[9] = 3.98
+PAULING_ELECTRONEGATIVITY[10] = 4.44  # -1 organov
+PAULING_ELECTRONEGATIVITY[11] = 0.93
+PAULING_ELECTRONEGATIVITY[12] = 1.31
+PAULING_ELECTRONEGATIVITY[13] = 1.61
+PAULING_ELECTRONEGATIVITY[14] = 1.90
+PAULING_ELECTRONEGATIVITY[15] = 2.19
+PAULING_ELECTRONEGATIVITY[16] = 2.58
+PAULING_ELECTRONEGATIVITY[17] = 3.16
+PAULING_ELECTRONEGATIVITY[18] = 3.57  # -1 organov
+PAULING_ELECTRONEGATIVITY[19] = 0.82
+PAULING_ELECTRONEGATIVITY[20] = 1.00
+PAULING_ELECTRONEGATIVITY[21] = 1.36
+PAULING_ELECTRONEGATIVITY[22] = 1.54
+PAULING_ELECTRONEGATIVITY[23] = 1.63
+PAULING_ELECTRONEGATIVITY[24] = 1.66
+PAULING_ELECTRONEGATIVITY[25] = 1.55
+PAULING_ELECTRONEGATIVITY[26] = 1.83
+PAULING_ELECTRONEGATIVITY[27] = 1.88
+PAULING_ELECTRONEGATIVITY[28] = 1.91
+PAULING_ELECTRONEGATIVITY[29] = 1.90
+PAULING_ELECTRONEGATIVITY[30] = 1.65
+PAULING_ELECTRONEGATIVITY[31] = 1.81
+PAULING_ELECTRONEGATIVITY[32] = 2.01
+PAULING_ELECTRONEGATIVITY[33] = 2.18
+PAULING_ELECTRONEGATIVITY[34] = 2.55
+PAULING_ELECTRONEGATIVITY[35] = 2.96
+PAULING_ELECTRONEGATIVITY[36] = 3.37  # -1 organov
+PAULING_ELECTRONEGATIVITY[37] = 0.82
+PAULING_ELECTRONEGATIVITY[38] = 0.95
+PAULING_ELECTRONEGATIVITY[39] = 1.22
+PAULING_ELECTRONEGATIVITY[40] = 1.33
+PAULING_ELECTRONEGATIVITY[41] = 1.60
+PAULING_ELECTRONEGATIVITY[42] = 2.16
+PAULING_ELECTRONEGATIVITY[43] = 1.90
+PAULING_ELECTRONEGATIVITY[44] = 2.20
+PAULING_ELECTRONEGATIVITY[45] = 2.28
+PAULING_ELECTRONEGATIVITY[46] = 2.20
+PAULING_ELECTRONEGATIVITY[47] = 1.93
+PAULING_ELECTRONEGATIVITY[48] = 1.69
+PAULING_ELECTRONEGATIVITY[49] = 1.78
+PAULING_ELECTRONEGATIVITY[50] = 1.96
+PAULING_ELECTRONEGATIVITY[51] = 2.05
+PAULING_ELECTRONEGATIVITY[52] = 2.10
+PAULING_ELECTRONEGATIVITY[53] = 2.66
+PAULING_ELECTRONEGATIVITY[54] = 3.12  # -1 organov
+
+SJS_COORDINATES = [[0] * 4] * len(PERIODIC_TABLE)
+SJS_COORDINATES[1] = [0, 1, 1, 0]
+SJS_COORDINATES[2] = [0, 1, -1, 0]
+SJS_COORDINATES[3] = [0, 2, 1, 0]
+SJS_COORDINATES[4] = [0, 2, -1, 0]
+SJS_COORDINATES[5] = [1, 3, 1, -1]
+SJS_COORDINATES[6] = [1, 3, 2, 0]
+SJS_COORDINATES[7] = [1, 3, 1, 1]
+SJS_COORDINATES[8] = [1, 3, -1, -1]
+SJS_COORDINATES[9] = [1, 3, -2, 0]
+SJS_COORDINATES[10] = [1, 3, -1, 1]
+SJS_COORDINATES[11] = [0, 3, 1, 0]
+SJS_COORDINATES[12] = [0, 3, -1, 0]
+SJS_COORDINATES[13] = [1, 4, 1, -1]
+SJS_COORDINATES[14] = [1, 4, 2, 0]
+SJS_COORDINATES[15] = [1, 4, 1, 1]
+SJS_COORDINATES[16] = [1, 4, -1, -1]
+SJS_COORDINATES[17] = [1, 4, -2, 0]
+SJS_COORDINATES[18] = [1, 4, -1, 1]
+SJS_COORDINATES[19] = [0, 4, 1, 0]
+SJS_COORDINATES[20] = [0, 4, -1, 0]
+SJS_COORDINATES[21] = [2, 5, 1, -2]
+SJS_COORDINATES[22] = [2, 5, 2, -1]
+SJS_COORDINATES[23] = [2, 5, 3, 0]
+SJS_COORDINATES[24] = [2, 5, 2, 1]
+SJS_COORDINATES[25] = [2, 5, 1, 2]
+SJS_COORDINATES[26] = [2, 5, -1, -2]
+SJS_COORDINATES[27] = [2, 5, -2, -1]
+SJS_COORDINATES[28] = [2, 5, -3, 0]
+SJS_COORDINATES[29] = [2, 5, -2, 1]
+SJS_COORDINATES[30] = [2, 5, -1, 2]
+SJS_COORDINATES[31] = [1, 5, 1, -1]
+SJS_COORDINATES[32] = [1, 5, 2, 0]
+SJS_COORDINATES[33] = [1, 5, 1, 1]
+SJS_COORDINATES[34] = [1, 5, -1, -1]
+SJS_COORDINATES[35] = [1, 5, -2, 0]
+SJS_COORDINATES[36] = [1, 5, -1, 1]
+SJS_COORDINATES[37] = [0, 5, 1, 0]
+SJS_COORDINATES[38] = [0, 5, -1, 0]
+SJS_COORDINATES[39] = [2, 6, 1, -2]
+SJS_COORDINATES[40] = [2, 6, 2, -1]
+SJS_COORDINATES[41] = [2, 6, 3, 0]
+SJS_COORDINATES[42] = [2, 6, 2, 1]
+SJS_COORDINATES[43] = [2, 6, 1, 2]
+SJS_COORDINATES[44] = [2, 6, -1, -2]
+SJS_COORDINATES[45] = [2, 6, -2, -1]
+SJS_COORDINATES[46] = [2, 6, -3, 0]
+SJS_COORDINATES[47] = [2, 6, -2, 1]
+SJS_COORDINATES[48] = [2, 6, -1, 2]
+SJS_COORDINATES[49] = [1, 6, 1, -1]
+SJS_COORDINATES[50] = [1, 6, 2, 0]
+SJS_COORDINATES[51] = [1, 6, 1, 1]
+SJS_COORDINATES[52] = [1, 6, -1, -1]
+SJS_COORDINATES[53] = [1, 6, -2, 0]
+SJS_COORDINATES[54] = [1, 6, -1, 1]
+SJS_COORDINATES[55] = [0, 6, 1, 0]
+SJS_COORDINATES[56] = [0, 6, -1, 0]
+SJS_COORDINATES[57] = [2, 7, 1, -2]
+SJS_COORDINATES[58] = [3, 7, 1, -3]
+SJS_COORDINATES[59] = [3, 7, 2, -2]
+SJS_COORDINATES[60] = [3, 7, 3, -1]
+SJS_COORDINATES[61] = [3, 7, 4, 0]
+SJS_COORDINATES[62] = [3, 7, 3, 1]
+SJS_COORDINATES[63] = [3, 7, 2, 2]
+SJS_COORDINATES[64] = [3, 7, 1, 3]
+SJS_COORDINATES[65] = [3, 7, -1, -3]
+SJS_COORDINATES[66] = [3, 7, -2, -2]
+SJS_COORDINATES[67] = [3, 7, -3, -1]
+SJS_COORDINATES[68] = [3, 7, -4, 0]
+SJS_COORDINATES[69] = [3, 7, -3, 1]
+SJS_COORDINATES[70] = [3, 7, -2, 2]
+SJS_COORDINATES[71] = [3, 7, -1, 3]
+SJS_COORDINATES[72] = [2, 7, 2, -1]
+SJS_COORDINATES[73] = [2, 7, 3, 0]
+SJS_COORDINATES[74] = [2, 7, 2, 1]
+SJS_COORDINATES[75] = [2, 7, 1, 2]
+SJS_COORDINATES[76] = [2, 7, -1, -2]
+SJS_COORDINATES[77] = [2, 7, -2, -1]
+SJS_COORDINATES[78] = [2, 7, -3, 0]
+SJS_COORDINATES[79] = [2, 7, -2, 1]
+SJS_COORDINATES[80] = [2, 7, -1, 2]
+SJS_COORDINATES[81] = [1, 7, 1, -1]
+SJS_COORDINATES[82] = [1, 7, 2, 0]
+SJS_COORDINATES[83] = [1, 7, 1, 1]
+SJS_COORDINATES[84] = [1, 7, -1, -1]
+SJS_COORDINATES[85] = [1, 7, -2, 0]
+SJS_COORDINATES[86] = [1, 7, -1, 1]
+SJS_COORDINATES[87] = [0, 7, 1, 0]
+SJS_COORDINATES[88] = [0, 7, -1, 0]
+SJS_COORDINATES[89] = [2, 8, 1, -2]
+SJS_COORDINATES[90] = [3, 8, 1, -3]
+SJS_COORDINATES[91] = [3, 8, 2, -2]
+SJS_COORDINATES[92] = [3, 8, 3, -1]
+SJS_COORDINATES[93] = [3, 8, 4, 0]
+SJS_COORDINATES[94] = [3, 8, 3, 1]
+SJS_COORDINATES[95] = [3, 8, 2, 2]
+SJS_COORDINATES[96] = [3, 8, 1, 3]
+SJS_COORDINATES[97] = [3, 8, -1, -3]
+SJS_COORDINATES[98] = [3, 8, -2, -2]
+SJS_COORDINATES[99] = [3, 8, -3, -1]
+SJS_COORDINATES[100] = [3, 8, -4, 0]
+SJS_COORDINATES[101] = [3, 8, -3, 1]
+SJS_COORDINATES[102] = [3, 8, -2, 2]
+SJS_COORDINATES[103] = [3, 8, -1, 3]
+SJS_COORDINATES[104] = [2, 8, 2, -1]
+SJS_COORDINATES[105] = [2, 8, 3, 0]
+SJS_COORDINATES[106] = [2, 8, 2, 1]
+SJS_COORDINATES[107] = [2, 8, 1, 2]
+SJS_COORDINATES[108] = [2, 8, -1, -2]
+SJS_COORDINATES[109] = [2, 8, -2, -1]
+SJS_COORDINATES[110] = [2, 8, -3, 0]
+SJS_COORDINATES[111] = [2, 8, -2, 1]
+SJS_COORDINATES[112] = [2, 8, -1, 2]
+SJS_COORDINATES[113] = [1, 8, 1, -1]
+SJS_COORDINATES[114] = [1, 8, 2, 0]
+SJS_COORDINATES[115] = [1, 8, 1, 1]
+SJS_COORDINATES[116] = [1, 8, -1, -1]
+SJS_COORDINATES[117] = [1, 8, -2, 0]
+SJS_COORDINATES[118] = [1, 8, -1, 1]
+
+
+CHEMICAL_PROPERTIES = {
+    "ATOMIC_NUMBER": [i for i in range(len(PERIODIC_TABLE))],
+    "ATOMIC_MASSES": ATOMIC_MASSES,
+    "ELECTRONIC_STRUCTURE": ELECTRONIC_STRUCTURE,
+    "VALENCE_STRUCTURE": VALENCE_STRUCTURE,
+    "VALENCE_ELECTRONS": VALENCE_ELECTRONS,
+    "D3_ELECTRONEGATIVITIES": D3_ELECTRONEGATIVITIES,
+    "D3_HARDNESSES": D3_HARDNESSES,
+    "D3_KAPPA": D3_KAPPA,
+    "D3_VDW_RADII": D3_VDW_RADII,
+    "D3_COV_RADII": D3_COV_RADII,
+    "VDW_RADII": VDW_RADII,
+    "C6_FREE": C6_FREE,
+    "POLARIZABILITIES": POLARIZABILITIES,
+    "PAULING_ELECTRONEGATIVITY": PAULING_ELECTRONEGATIVITY,
+    "SJS_COORDINATES": SJS_COORDINATES,
+}
