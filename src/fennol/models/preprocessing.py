@@ -5,12 +5,19 @@ import jax
 import numpy as np
 from typing import Optional, Tuple
 import numba
+import dataclasses
+
+from .misc import SwitchFunction
 from ..utils.nblist import (
     compute_nblist_flatbatch,
     angular_nblist,
     compute_nblist_fixed,
     compute_nblist_flatbatch_minimage,
+    compute_nblist_flatbatch_fullpbc,
     compute_nblist_fixed_minimage,
+    get_reciprocal_space_parameters,
+    compute_nblist_ase,
+    compute_nblist_ase_pbc,
 )
 
 
@@ -22,7 +29,10 @@ class GraphGenerator(nn.Module):
     cutoff: float
     mult_size: float = 1.1
     graph_key: str = "graph"
-    switch_start: float = 0.0
+    switch_params: dict = dataclasses.field(default_factory=dict)
+    kmax: int = 30
+    kthr: float = 1e-6
+    k_space: bool = False
 
     @nn.compact
     def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:
@@ -37,14 +47,14 @@ class GraphGenerator(nn.Module):
         mult_size = float(inputs.get("nblist_mult_size", self.mult_size))
 
         coords = np.array(inputs["coordinates"])
-        isys = np.array(inputs["isys"])
+        batch_index = np.array(inputs["batch_index"])
         natoms = np.array(inputs["natoms"])
         padding_value = coords.shape[0]
         if "true_atoms" in inputs:
             true_atoms = np.array(inputs["true_atoms"], dtype=bool)
             true_sys = np.array(inputs["true_sys"], dtype=bool)
             coords = coords[true_atoms]
-            isys = isys[true_atoms]
+            batch_index = batch_index[true_atoms]
             natoms = natoms[true_sys]
 
         prev_nblist_size = self.variable(
@@ -52,21 +62,30 @@ class GraphGenerator(nn.Module):
             f"{self.graph_key}_prev_nblist_size",
             lambda: 0,
         )
+        ase_nblist = inputs.get("ase_nblist", False)
         if "cells" in inputs:
-            cells = np.array(inputs["cells"])
+            cells = np.array(inputs["cells"], dtype=coords.dtype)
             if cells.ndim == 2:
                 cells = cells[None, :, :]
             reciprocal_cells = np.linalg.inv(cells)
+            minimage = inputs.get("minimum_image", False)
+            if ase_nblist:
+                compute_nblist = compute_nblist_ase_pbc
+            elif minimage:
+                compute_nblist = compute_nblist_flatbatch_minimage
+            else:
+                compute_nblist = compute_nblist_flatbatch_fullpbc
+
             (
                 edge_src,
                 edge_dst,
                 d12,
                 pbc_shifts,
                 prev_nblist_size_,
-            ) = compute_nblist_flatbatch_minimage(
+            ) = compute_nblist(
                 coords,
                 cutoff,
-                isys,
+                batch_index,
                 natoms,
                 mult_size,
                 cells,
@@ -75,10 +94,14 @@ class GraphGenerator(nn.Module):
                 padding_value=padding_value,
             )
         else:
-            edge_src, edge_dst, d12, prev_nblist_size_ = compute_nblist_flatbatch(
+            if ase_nblist:
+                compute_nblist = compute_nblist_ase
+            else:
+                compute_nblist = compute_nblist_flatbatch
+            edge_src, edge_dst, d12, prev_nblist_size_ = compute_nblist(
                 coords,
                 cutoff,
-                isys,
+                batch_index,
                 natoms,
                 mult_size,
                 prev_nblist_size.value,
@@ -89,7 +112,7 @@ class GraphGenerator(nn.Module):
         if not self.is_initializing():
             prev_nblist_size.value = prev_nblist_size_
 
-        return {
+        out = {
             **inputs,
             self.graph_key: {
                 "edge_src": edge_src,
@@ -99,12 +122,28 @@ class GraphGenerator(nn.Module):
                 "pbc_shifts": pbc_shifts,
             },
         }
+        if "cells" in inputs:
+            out["cells"] = cells
+            out["reciprocal_cells"] = reciprocal_cells
+            if self.k_space:
+                in_graph = inputs.get(self.graph_key, {})
+                if "k_points" in in_graph:
+                    ks = in_graph["k_points"]
+                    bewald = in_graph["b_ewald"]
+                else:
+                    ks, _, _, bewald = get_reciprocal_space_parameters(
+                        reciprocal_cells, cutoff, self.kmax, self.kthr
+                    )
+                out[self.graph_key]["k_points"] = ks
+                out[self.graph_key]["b_ewald"] = bewald
+
+        return out
 
     def get_processor(self) -> Tuple[nn.Module, Dict]:
         return GraphProcessor, {
             "cutoff": self.cutoff,
             "graph_key": self.graph_key,
-            "switch_start": self.switch_start,
+            "switch_params": self.switch_params,
             "name": f"{self.graph_key}_Processor",
         }
 
@@ -116,7 +155,10 @@ class GraphGeneratorFixed(nn.Module):
     cutoff: float
     mult_size: float = 1.1
     graph_key: str = "graph"
-    switch_start: float = 0.0
+    switch_params: dict = dataclasses.field(default_factory=dict)
+    kmax: int = 30
+    kthr: float = 1e-6
+    k_space: bool = False
 
     @nn.compact
     def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:
@@ -131,14 +173,14 @@ class GraphGeneratorFixed(nn.Module):
         mult_size = float(inputs.get("nblist_mult_size", self.mult_size))
 
         coords = inputs["coordinates"]
-        isys = inputs["isys"]
+        batch_index = inputs["batch_index"]
         natoms = inputs["natoms"]
         padding_value = coords.shape[0]
         if "true_atoms" in inputs:
             true_atoms = inputs["true_atoms"]
             true_sys = inputs["true_sys"]
             coords = coords[true_atoms]
-            isys = isys[true_atoms]
+            batch_index = batch_index[true_atoms]
             natoms = natoms[true_sys]
 
         prev_nblist_size = self.variable(
@@ -150,23 +192,36 @@ class GraphGeneratorFixed(nn.Module):
         max_nat = int(np.max(natoms))
 
         if "cells" in inputs:
-            cells = np.asarray(inputs["cells"])
+            cells = np.asarray(inputs["cells"], dtype=coords.dtype)
             if cells.ndim == 2:
                 cells = cells[None, :, :]
+            reciprocal_cells = np.linalg.inv(cells)
+
+            minimage = inputs.get("minimum_image", True)
+            assert minimage, "Fixed nblist only works with minimum image convention"
+
             edge_src, edge_dst, d12, pbc_shifts, npairs = compute_nblist_fixed_minimage(
                 coords,
                 cutoff,
-                isys,
+                batch_index,
                 natoms,
                 max_nat,
                 prev_nblist_size_,
                 padding_value,
                 cells,
+                reciprocal_cells,
             )
         else:
             edge_src, edge_dst, d12, npairs = compute_nblist_fixed(
-                coords, cutoff, isys, natoms, max_nat, prev_nblist_size_, padding_value
+                coords,
+                cutoff,
+                batch_index,
+                natoms,
+                max_nat,
+                prev_nblist_size_,
+                padding_value,
             )
+
         if npairs > prev_nblist_size.value:
             prev_nblist_size_ = int(mult_size * npairs) + 1
             if "cells" in inputs:
@@ -179,18 +234,19 @@ class GraphGeneratorFixed(nn.Module):
                 ) = compute_nblist_fixed_minimage(
                     coords,
                     cutoff,
-                    isys,
+                    batch_index,
                     natoms,
                     max_nat,
                     prev_nblist_size_,
                     padding_value,
                     cells,
+                    reciprocal_cells,
                 )
             else:
                 edge_src, edge_dst, d12, npairs = compute_nblist_fixed(
                     coords,
                     cutoff,
-                    isys,
+                    batch_index,
                     natoms,
                     max_nat,
                     prev_nblist_size_,
@@ -209,7 +265,7 @@ class GraphGeneratorFixed(nn.Module):
         if not self.is_initializing():
             prev_nblist_size.value = prev_nblist_size_
 
-        return {
+        out = {
             **inputs,
             self.graph_key: {
                 "edge_src": edge_src,
@@ -219,12 +275,29 @@ class GraphGeneratorFixed(nn.Module):
                 "pbc_shifts": pbc_shifts,
             },
         }
+        if "cells" in inputs:
+            out["cells"] = cells
+            out["reciprocal_cells"] = reciprocal_cells
+            if self.k_space:
+                in_graph = inputs.get(self.graph_key, {})
+                if "k_points" in in_graph:
+                    ks = in_graph["k_points"]
+                    bewald = in_graph["b_ewald"]
+                else:
+                    print("Computing k-points", cutoff, self.kmax, self.kthr)
+                    ks, _, _, bewald = get_reciprocal_space_parameters(
+                        reciprocal_cells, cutoff, self.kmax, self.kthr
+                    )
+                    print("n k-points", ks.shape)
+                out[self.graph_key]["k_points"] = ks
+                out[self.graph_key]["b_ewald"] = bewald
+        return out
 
     def get_processor(self) -> Tuple[nn.Module, Dict]:
         return GraphProcessor, {
             "cutoff": self.cutoff,
             "graph_key": self.graph_key,
-            "switch_start": self.switch_start,
+            "switch_params": self.switch_params,
             "name": f"{self.graph_key}_Processor",
         }
 
@@ -235,7 +308,7 @@ class GraphGeneratorFixed(nn.Module):
 class GraphProcessor(nn.Module):
     cutoff: float
     graph_key: str = "graph"
-    switch_start: float = 0.0
+    switch_params: dict = dataclasses.field(default_factory=dict)
 
     @nn.compact
     def __call__(self, inputs: Union[dict, Tuple[jax.Array, dict]]):
@@ -247,30 +320,18 @@ class GraphProcessor(nn.Module):
             edge_src
         ].get(mode="fill", fill_value=0.0)
         if "cells" in inputs:
-            isysvec = inputs["isys"][edge_src]
-            cells = inputs["cells"][isysvec]
-            vec = vec + jnp.einsum("sij,sj->si",cells,graph["pbc_shifts"])
+            batch_indexvec = (
+                inputs["batch_index"].at[edge_src].get(mode="fill", fill_value=-1)
+            )
+            cells = inputs["cells"][batch_indexvec]
+            vec = vec + jnp.einsum("sij,sj->si", cells, graph["pbc_shifts"])
             # vec = vec + graph["pbc_shifts"]
         distances = jnp.linalg.norm(vec, axis=-1)
-        edge_mask = distances < self.cutoff
+        # edge_mask = distances < self.cutoff
 
-        if self.switch_start > 1.e-5:
-            assert self.switch_start < 1.0, "switch_start is a proportion of cutoff and must be smaller than 1."
-            cutoff_in = self.switch_start * self.cutoff
-            x = distances - cutoff_in
-            switch = jnp.where(
-                distances < cutoff_in,
-                1.0,
-                jnp.where(
-                    edge_mask,
-                    0.5 * jnp.cos(x * (jnp.pi / (self.cutoff - cutoff_in))) + 0.5,
-                    0.0,
-                ),
-            )
-        else:
-            switch = jnp.where(
-                edge_mask, 0.5 * jnp.cos(distances * (jnp.pi / self.cutoff)) + 0.5, 0.0
-            )
+        switch, edge_mask = SwitchFunction(
+            **{**self.switch_params, "cutoff": self.cutoff, "graph_key": None}
+        )(distances)
 
         graph_out = {
             **graph,
@@ -288,6 +349,10 @@ class GraphFilter(nn.Module):
     mult_size: float = 1.1
     graph_key: str = "graph"
     remove_hydrogens: int = False
+    switch_params: dict = dataclasses.field(default_factory=dict)
+    k_space: bool = False
+    kmax: int = 30
+    kthr: float = 1e-6
 
     @nn.compact
     def __call__(self, inputs: Dict):
@@ -348,7 +413,7 @@ class GraphFilter(nn.Module):
         if not self.is_initializing():
             prev_nblist_size.value = prev_nblist_size_
 
-        return {
+        out = {
             **inputs,
             self.graph_out: {
                 "edge_src": edge_src,
@@ -358,6 +423,20 @@ class GraphFilter(nn.Module):
                 "cutoff": self.cutoff,
             },
         }
+        if "cells" in inputs and self.k_space:
+            reciprocal_cells = np.array(inputs["reciprocal_cells"])
+            in_graph = inputs.get(self.graph_out, {})
+            if "k_points" in in_graph:
+                ks = in_graph["k_points"]
+                bewald = in_graph["b_ewald"]
+            else:
+                ks, _, _, bewald = get_reciprocal_space_parameters(
+                    reciprocal_cells, self.cutoff, self.kmax, self.kthr
+                )
+            out[self.graph_out]["k_points"] = ks
+            out[self.graph_out]["b_ewald"] = bewald
+
+        return out
 
     def get_processor(self) -> Tuple[nn.Module, Dict]:
         return GraphFilterProcessor, {
@@ -365,6 +444,7 @@ class GraphFilter(nn.Module):
             "graph_key": self.graph_key,
             "graph_out": self.graph_out,
             "name": f"{self.graph_out}_Filter_{self.graph_key}",
+            "switch_params": self.switch_params,
         }
 
     def get_graph_properties(self):
@@ -381,12 +461,12 @@ class GraphFilterProcessor(nn.Module):
     cutoff: float
     graph_out: str
     graph_key: str = "graph"
+    switch_params: dict = dataclasses.field(default_factory=dict)
 
     @nn.compact
     def __call__(self, inputs: Union[dict, Tuple[jax.Array, dict]]):
         graph_in = inputs[self.graph_key]
         graph = inputs[self.graph_out]
-        coords = inputs["coordinates"]
 
         filter_indices = graph["filter_indices"]
 
@@ -398,11 +478,14 @@ class GraphFilterProcessor(nn.Module):
             .at[filter_indices]
             .get(mode="fill", fill_value=self.cutoff)
         )
-        edge_mask = distances < self.cutoff
+        # edge_mask = distances < self.cutoff
 
-        switch = jnp.where(
-            edge_mask, 0.5 * jnp.cos(distances * (jnp.pi / self.cutoff)) + 0.5, 0.0
-        )
+        # switch = jnp.where(
+        #     edge_mask, 0.5 * jnp.cos(distances * (jnp.pi / self.cutoff)) + 0.5, 0.0
+        # )
+        switch, edge_mask = SwitchFunction(
+            **{**self.switch_params, "cutoff": self.cutoff, "graph_key": None}
+        )(distances)
 
         graph_out = {
             **graph,
@@ -424,6 +507,7 @@ class GraphAngularExtension(nn.Module):
 
         edge_src = np.array(graph["edge_src"])
         nattot = inputs["species"].shape[0]
+        # edge_src = edge_src[edge_src < nattot]
 
         central_atom_index, angle_src, angle_dst = angular_nblist(edge_src, nattot)
 
@@ -510,6 +594,69 @@ class GraphAngleProcessor(nn.Module):
         }
 
 
+# class GraphDenseExtension(nn.Module):
+#     mult_size: float = 1.1
+#     graph_key: str = "graph"
+
+#     @nn.compact
+#     def __call__(self, inputs: Dict) -> Union[dict, jax.Array]:
+#         graph = inputs[self.graph_key]
+
+#         edge_src = np.array(graph["edge_src"])
+#         edge_dst = np.array(graph["edge_dst"])
+#         natoms = inputs["species"].shape[0]
+#         # edge_src = edge_src[edge_src < natoms]
+#         # edge_dst = edge_dst[edge_src < natoms]
+#         Nedge = len(edge_src)
+
+#         counts = np.zeros(natoms + 1, dtype=int)
+#         np.add.at(counts, edge_src, 1)
+
+#         max_count = np.max(counts[:-1])
+#         prev_size = self.variable(
+#             "preprocessing",
+#             f"{self.graph_key}_prev_dense_size",
+#             lambda: 0,
+#         )
+#         prev_size_ = prev_size.value
+#         if max_count > prev_size_:
+#             prev_size_ = int(self.mult_size * max_count)
+
+#         offset = np.tile(np.arange(prev_size_), natoms)  # [:len(edge_src)]
+#         if len(offset) < Nedge:
+#             offset = np.append(
+#                 offset, np.zeros(Nedge - len(offset), dtype=offset.dtype)
+#             )
+#         else:
+#             offset = offset[:Nedge]
+#         offset[edge_src == natoms] = 0
+#         indices = edge_src * prev_size_ + offset
+#         dense_idx = natoms * np.ones(((natoms + 1) * prev_size_,), dtype=np.int32)
+#         dense_idx[indices] = edge_dst
+#         dense_idx = dense_idx.reshape(natoms, prev_size_)
+
+#         rev_indices = Nedge * np.ones_like(dense_idx)
+#         rev_indices[indices] = np.arange(Nedge)
+#         rev_indices[dense_idx == natoms] = Nedge
+
+#         return {
+#             **inputs,
+#             self.graph_key: {
+#                 **graph,
+#                 "dense_nblist": dense_idx,
+#                 "sparse2dense_indices": indices,
+#                 "dense2sparse_indices": rev_indices,
+#             },
+#         }
+
+#     def get_graph_properties(self):
+#         return {
+#             self.graph_key: {
+#                 "has_dense": True,
+#             }
+#         }
+
+
 class AtomPadding(nn.Module):
     mult_size: float = 1.2
 
@@ -532,7 +679,7 @@ class AtomPadding(nn.Module):
         add_atoms = prev_nat_ - nat
         output = {**inputs}
         if add_atoms > 0:
-            isys = inputs["isys"]
+            batch_index = inputs["batch_index"]
             for k, v in inputs.items():
                 if isinstance(v, np.ndarray):
                     if v.shape[0] == nat:
@@ -542,15 +689,22 @@ class AtomPadding(nn.Module):
                             axis=0,
                         )
                     elif v.shape[0] == nsys:
-                        output[k] = np.append(
-                            v, np.zeros((1, *v.shape[1:]), dtype=v.dtype), axis=0
-                        )
+                        if k == "cells":
+                            output[k] = np.append(
+                                v,
+                                np.eye(3, dtype=v.dtype)[None, :, :],
+                                axis=0,
+                            )
+                        else:
+                            output[k] = np.append(
+                                v, np.zeros((1, *v.shape[1:]), dtype=v.dtype), axis=0
+                            )
             output["natoms"] = np.append(inputs["natoms"], add_atoms)
             output["species"] = np.append(
                 species, -1 * np.ones(add_atoms, dtype=species.dtype)
             )
-            output["isys"] = np.append(
-                isys, np.array([nsys] * add_atoms, dtype=isys.dtype)
+            output["batch_index"] = np.append(
+                batch_index, np.array([nsys] * add_atoms, dtype=batch_index.dtype)
             )
 
         output["true_atoms"] = output["species"] > 0
@@ -592,8 +746,10 @@ def check_input(inputs):
     nat = inputs["species"].shape[0]
 
     natoms = inputs.get("natoms", np.array([nat], dtype=np.int64))
-    isys = inputs.get("isys", np.repeat(np.arange(len(natoms), dtype=np.int64), natoms))
-    return {**inputs, "natoms": natoms, "isys": isys}
+    batch_index = inputs.get(
+        "batch_index", np.repeat(np.arange(len(natoms), dtype=np.int64), natoms)
+    )
+    return {**inputs, "natoms": natoms, "batch_index": batch_index}
 
 
 class JaxConverter(nn.Module):
@@ -637,4 +793,5 @@ PREPROCESSING = {
     "GRAPH_FIXED": GraphGeneratorFixed,
     "GRAPH_FILTER": GraphFilter,
     "GRAPH_ANGULAR_EXTENSION": GraphAngularExtension,
+    # "GRAPH_DENSE_EXTENSION": GraphDenseExtension,
 }

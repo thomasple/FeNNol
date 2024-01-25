@@ -5,9 +5,12 @@ import jax
 import jax.numpy as jnp
 import math
 
+from ase.neighborlist import neighbor_list as ase_neighbor_list
+from ase import Atoms
+
 @numba.njit
 def compute_nblist_flatbatch(
-    coords, cutoff, isys, natoms, mult_size, prev_nblist_size=0,padding_value=None
+    coords, cutoff, batch_index, natoms, mult_size, prev_nblist_size=0,padding_value=None
 ):
     src, dst = [], []
     d12s = []
@@ -15,7 +18,7 @@ def compute_nblist_flatbatch(
     shifts = np.cumsum(natoms)
 
     for i in range(coords.shape[0]):
-        for j in range(i + 1, shifts[isys[i]]):
+        for j in range(i + 1, shifts[batch_index[i]]):
             vec = coords[j] - coords[i]
             d12 = np.sum(vec**2)
             if d12 < c2:
@@ -43,9 +46,93 @@ def compute_nblist_flatbatch(
     )
     return src, dst, d12s, prev_nblist_size
 
+def compute_nblist_ase(
+    coords, cutoff, batch_index, natoms, mult_size, prev_nblist_size=0,padding_value=None
+):
+    shifts = np.cumsum(natoms)
+    atoms = Atoms(positions=coords[:shifts[0]])
+    src,dst,d=ase_neighbor_list('ijd',atoms,cutoff=cutoff)
+    d12s = d**2
+    if len(shifts)>1:
+        src = [src]
+        dst = [dst]
+        d12s = [d12s]
+        for i in range(1,len(shifts)):
+            atoms = Atoms(positions=coords[shifts[i-1]:shifts[i]])
+            edge_src,edge_dst,d=ase_neighbor_list('ijd',atoms,cutoff=cutoff)
+            src.append(edge_src+shifts[i-1])
+            dst.append(edge_dst+shifts[i-1])
+            d12s.append(d**2)
+        src = np.concatenate(src,dtype=np.int64)
+        dst = np.concatenate(dst,dtype=np.int64)
+        d12s = np.concatenate(d12s,dtype=np.float32)
+    
+    nblist_size = src.shape[0]
+    if nblist_size > prev_nblist_size:
+        prev_nblist_size = int(mult_size * nblist_size)
+    
+    if padding_value is None:
+        padding_value = shifts[-1]
+    src = np.append(
+        src, padding_value * np.ones(prev_nblist_size - nblist_size, dtype=np.int64)
+    )
+    dst = np.append(
+        dst, padding_value * np.ones(prev_nblist_size - nblist_size, dtype=np.int64)
+    )
+    d12s = np.append(
+        d12s, cutoff**2 * np.ones(prev_nblist_size - nblist_size, dtype=np.float32)
+    )
+    return src, dst, d12s, prev_nblist_size
+
+def compute_nblist_ase_pbc(
+    coords, cutoff, batch_index, natoms, mult_size, cells, reciprocal_cells,prev_nblist_size=0,padding_value=None
+): 
+    shifts = np.cumsum(natoms)
+    atoms = Atoms(positions=coords[:shifts[0]],cell=cells[0],pbc=True)
+    src,dst,d,pbc_shifts=ase_neighbor_list('ijdS',atoms,cutoff=cutoff)
+    d12s = d**2
+    if len(shifts)>1:
+        src = [src]
+        dst = [dst]
+        d12s = [d12s]
+        pbc_shifts = [pbc_shifts]
+        for i in range(1,len(shifts)):
+            atoms = Atoms(positions=coords[shifts[i-1]:shifts[i]],cell=cells[i],pbc=True)
+            edge_src,edge_dst,d,pbc_shift=ase_neighbor_list('ijdS',atoms,cutoff=cutoff)
+            src.append(edge_src+shifts[i-1])
+            dst.append(edge_dst+shifts[i-1])
+            d12s.append(d**2)
+            pbc_shifts.append(pbc_shift)
+        src = np.concatenate(src,dtype=np.int64)
+        dst = np.concatenate(dst,dtype=np.int64)
+        d12s = np.concatenate(d12s,dtype=np.float32)
+        pbc_shifts = np.concatenate(pbc_shifts,axis=0,dtype=np.float32)
+    
+    nblist_size = src.shape[0]
+    if nblist_size > prev_nblist_size:
+        prev_nblist_size = int(mult_size * nblist_size)
+    
+    if padding_value is None:
+        padding_value = shifts[-1]
+    src = np.append(
+        src, padding_value * np.ones(prev_nblist_size - nblist_size, dtype=np.int64)
+    )
+    dst = np.append(
+        dst, padding_value * np.ones(prev_nblist_size - nblist_size, dtype=np.int64)
+    )
+    d12s = np.append(
+        d12s, cutoff**2 * np.ones(prev_nblist_size - nblist_size, dtype=np.float32)
+    )
+    pbc_shifts = np.append(
+        pbc_shifts, np.zeros((prev_nblist_size - nblist_size,3), dtype=np.float32)
+        ,axis=0
+    )
+    return src, dst, d12s, pbc_shifts,prev_nblist_size
+
+
 @numba.njit
 def compute_nblist_flatbatch_minimage(
-    coords, cutoff, isys, natoms, mult_size, cells, reciprocal_cells,prev_nblist_size=0,padding_value=None
+    coords, cutoff, batch_index, natoms, mult_size, cells, reciprocal_cells,prev_nblist_size=0,padding_value=None
 ):
     src, dst = [], []
     pbc_shifts = []
@@ -54,19 +141,19 @@ def compute_nblist_flatbatch_minimage(
     shifts = np.cumsum(natoms)
 
     for i in range(coords.shape[0]):
-        cell = cells[isys[i]]
-        reciprocal_cell = reciprocal_cells[isys[i]]
-        for j in range(i + 1, shifts[isys[i]]):
+        cell = cells[batch_index[i]]
+        reciprocal_cell = reciprocal_cells[batch_index[i]]
+        for j in range(i + 1, shifts[batch_index[i]]):
             vec = coords[j] - coords[i]
             vecpbc = np.dot(reciprocal_cell,vec)
-            shifts = -np.round(vecpbc)
-            vecpbc = np.dot(cell,vecpbc+shifts)
+            shift = -np.round(vecpbc)
+            vecpbc = np.dot(cell,vecpbc+shift)
             d12 = np.sum(vecpbc**2)
             if d12 < c2:
                 src.append(i)
                 dst.append(j)
                 d12s.append(d12)
-                pbc_shifts.append(list(shifts))
+                pbc_shifts.append(list(shift))
     nattot = shifts[-1]
     src, dst = np.array(src + dst,dtype=np.int64), np.array(dst + src,dtype=np.int64)
     d12s = np.array(d12s + d12s, dtype=np.float32)
@@ -94,16 +181,88 @@ def compute_nblist_flatbatch_minimage(
     )
     return src, dst, d12s, pbc_shifts,prev_nblist_size
 
-def hash_cell(cell_coords,isys,nel):
-    return (15823*cell_coords[...,0]+9737333*cell_coords[...,1]+95483*cell_coords[...,2] + 79411*isys)%nel
+@numba.njit
+def compute_nblist_flatbatch_fullpbc(
+    coords, cutoff, batch_index, natoms, mult_size, cells, reciprocal_cells,prev_nblist_size=0,padding_value=None
+):
+    src, dst = [], []
+    pbc_shifts = []
+    d12s = []
+    c2 = cutoff**2
+    shifts = np.cumsum(natoms)
 
-def compute_cell_list(coords,cutoff, isys, natoms, mult_size, prev_nblist_size=0,padding_value=None):
+    coordspbc = np.empty_like(coords)
+    at_shifts = np.empty_like(coords)
+    for i in range(coords.shape[0]):
+        ii = batch_index[i]
+        cell = cells[ii]
+        reciprocal_cell = reciprocal_cells[ii]
+        qi  = np.dot(reciprocal_cell,coords[i])
+        shifti = -np.floor(qi)
+        coordspbc[i,:] = np.dot(cell,qi+shifti)
+        at_shifts[i,:] = shifti
+        # coordspbc.append(coordsi)
+        # at_shifts.append(shifti)
+    # coordspbc = np.array(coordspbc,dtype=np.float32)
+    # at_shifts = np.array(at_shifts,dtype=np.float32)
+        
+    inv_distances = (np.sum(reciprocal_cells**2,axis=1))**0.5
+    num_repeats_all = np.ceil(cutoff*inv_distances).astype(np.int32)
+
+    for i in range(coords.shape[0]):
+        ii = batch_index[i]
+        cell = cells[ii]
+        num_repeats =num_repeats_all[ii]
+        for ix in range(-num_repeats[0],num_repeats[0]+1):
+            for iy in range(-num_repeats[1],num_repeats[1]+1):
+                for iz in range(-num_repeats[2],num_repeats[2]+1):
+                    shift = ix*cell[:,0]+iy*cell[:,1]+iz*cell[:,2]
+                    for j in range(i + 1, shifts[ii]):
+                        vec = coordspbc[j] - coordspbc[i] + shift
+                        d12 = np.sum(vec**2)
+                        if d12 < c2:
+                            src.append(i)
+                            dst.append(j)
+                            d12s.append(d12)
+                            pbc_shifts.append([ix,iy,iz])
+    nattot = shifts[-1]
+    pbc_shifts = np.array(pbc_shifts, dtype=np.float32) + at_shifts[np.array(dst,dtype=np.int64)] - at_shifts[np.array(src,dtype=np.int64)]
+    print(pbc_shifts.shape)
+    src, dst = np.array(src + dst,dtype=np.int64), np.array(dst + src,dtype=np.int64)
+    d12s = np.array(d12s + d12s, dtype=np.float32)
+    pbc_shifts = np.concatenate((pbc_shifts, -pbc_shifts),axis=0)
+
+    nblist_size = src.shape[0]
+    if nblist_size > prev_nblist_size:
+        prev_nblist_size = int(mult_size * nblist_size)
+    
+    if padding_value is None:
+        padding_value = nattot
+    src = np.append(
+        src, padding_value * np.ones(prev_nblist_size - nblist_size, dtype=np.int64)
+    )
+    dst = np.append(
+        dst, padding_value * np.ones(prev_nblist_size - nblist_size, dtype=np.int64)
+    )
+    d12s = np.append(
+        d12s, c2 * np.ones(prev_nblist_size - nblist_size, dtype=np.float32)
+    )
+    pbc_shifts = np.append(
+        pbc_shifts, np.zeros((prev_nblist_size - nblist_size,3), dtype=np.float32)
+        ,axis=0
+    )
+    return src, dst, d12s, pbc_shifts,prev_nblist_size
+
+def hash_cell(cell_coords,batch_index,nel):
+    return (15823*cell_coords[...,0]+9737333*cell_coords[...,1]+95483*cell_coords[...,2] + 79411*batch_index)%nel
+
+def compute_cell_list(coords,cutoff, batch_index, natoms, mult_size, prev_nblist_size=0,padding_value=None):
     """ NOT FUNCTIONAL YET !!! """
     cell_coords = np.floor(coords/cutoff).astype(int)
     # hash cell ids
     nattot = coords.shape[0]
     nel = max(1000,nattot)
-    spatial_lookup = hash_cell(cell_coords,isys,nel)
+    spatial_lookup = hash_cell(cell_coords,batch_index,nel)
     grid_count = np.zeros(nel,dtype=int)
     np.add.at(grid_count,spatial_lookup,1)
     max_count = np.max(grid_count)
@@ -131,13 +290,13 @@ def compute_cell_list(coords,cutoff, isys, natoms, mult_size, prev_nblist_size=0
                     [1,-1,-1],[1,-1,0],[1,-1,1],
                     [1,0,-1],[1,0,0],[1,0,1],
                     [1,1,-1],[1,1,0],[1,1,1]])
-    isysneigh=np.repeat(isys[:,None],cell_offsets.shape[0],axis=-1)
-    neigh_cells = hash_cell(cell_coords[:,None,:]+cell_offsets[None,:,:],isysneigh,nel)
+    batch_index_neigh=np.repeat(batch_index[:,None],cell_offsets.shape[0],axis=-1)
+    neigh_cells = hash_cell(cell_coords[:,None,:]+cell_offsets[None,:,:],batch_index_neigh,nel)
     neighbors = indices[neigh_cells].reshape(nattot,-1)
     neighbors = np.unique(neighbors,axis=1)
     edge_src = np.repeat(np.arange(nattot),neighbors.shape[1])
     neighbors = neighbors.flatten()
-    mask = np.logical_and(neighbors>=0,edge_src<neighbors,isys[edge_src]==isys[neighbors])
+    mask = np.logical_and(neighbors>=0,edge_src<neighbors,batch_index[edge_src]==batch_index[neighbors])
     edge_src,edge_dst = edge_src[mask],neighbors[mask]
 
     d12s = np.sum((coords[edge_dst]-coords[edge_src])**2,axis=-1)
@@ -196,13 +355,13 @@ def angular_nblist(edge_src, natoms):
     return central_atom_index, angle_src, angle_dst
 
 @partial(jax.jit, static_argnums=(1,4,5))
-def compute_cell_list_fixed(coords,cutoff,isys,natoms,max_occupancy,max_pairs,padding_value):
+def compute_cell_list_fixed(coords,cutoff,batch_index,natoms,max_occupancy,max_pairs,padding_value):
     """ NOT FUNCTIONAL YET !!! """
     cell_coords = jnp.floor(coords/cutoff).astype(int)
     # hash cell ids
     nattot = coords.shape[0]
     nel = max(1000,nattot)
-    spatial_lookup = hash_cell(cell_coords,isys,nel)
+    spatial_lookup = hash_cell(cell_coords,batch_index,nel)
     grid_count = jnp.zeros(nel,dtype=int).at[spatial_lookup].add(1)
     max_count = jnp.max(grid_count)
 
@@ -227,14 +386,14 @@ def compute_cell_list_fixed(coords,cutoff,isys,natoms,max_occupancy,max_pairs,pa
                     [1,-1,-1],[1,-1,0],[1,-1,1],
                     [1,0,-1],[1,0,0],[1,0,1],
                     [1,1,-1],[1,1,0],[1,1,1]])
-    isysneigh=jnp.repeat(isys[:,None],cell_offsets.shape[0],axis=-1)
-    neigh_cells = hash_cell(cell_coords[:,None,:]+cell_offsets[None,:,:],isysneigh,nel)
+    batch_index_neigh=jnp.repeat(batch_index[:,None],cell_offsets.shape[0],axis=-1)
+    neigh_cells = hash_cell(cell_coords[:,None,:]+cell_offsets[None,:,:],batch_index_neigh,nel)
     neighbors = indices[neigh_cells].reshape(nattot,-1)
     src = jnp.asarray(np.repeat(np.arange(nattot),neighbors.shape[1]))
     neighbors = neighbors.flatten()
 
     d12 = jnp.sum((coords[neighbors]-coords[src])**2,axis=-1)
-    mask = (d12<cutoff**2)*(neighbors>=0)*(isys[src]==isys[neighbors])
+    mask = (d12<cutoff**2)*(neighbors>=0)*(batch_index[src]==batch_index[neighbors])
     npairs=jnp.sum(mask)
     d12 = d12*mask + (cutoff**2)*(1-mask)
     src = src*mask + padding_value*(1-mask)
@@ -244,7 +403,7 @@ def compute_cell_list_fixed(coords,cutoff,isys,natoms,max_occupancy,max_pairs,pa
     return src[idx],neighbors[idx],d12[idx],max_count,npairs
 
 @partial(jax.jit, static_argnums=(1,4,5))
-def compute_nblist_fixed(coords,cutoff,isys,natoms,max_nat,max_pairs,padding_value):
+def compute_nblist_fixed(coords,cutoff,batch_index,natoms,max_nat,max_pairs,padding_value):
     p1,p2=jnp.triu_indices(max_nat, 1)
     mask = ((p1[None,:]<natoms[:,None])*(p2[None,:]<natoms[:,None])).flatten()
 
@@ -268,10 +427,9 @@ def compute_nblist_fixed(coords,cutoff,isys,natoms,max_nat,max_pairs,padding_val
     return edge_src,edge_dst,d12[idx],npairs
 
 @partial(jax.jit, static_argnums=(1,4,5))
-def compute_nblist_fixed_minimage(coords,cutoff,isys,natoms,max_nat,max_pairs,padding_value,cells):
+def compute_nblist_fixed_minimage(coords,cutoff,batch_index,natoms,max_nat,max_pairs,padding_value,cells,reciprocal_cells):
     p1,p2=jnp.triu_indices(max_nat, 1)
     mask = ((p1[None,:]<natoms[:,None])*(p2[None,:]<natoms[:,None])).flatten()
-    reciprocal_cells = jnp.linalg.inv(cells)
 
     if natoms.shape[0]==1:
         shift=jnp.array([0])
@@ -280,11 +438,11 @@ def compute_nblist_fixed_minimage(coords,cutoff,isys,natoms,max_nat,max_pairs,pa
 
     p1 = (p1[None,:]+shift[:,None]).flatten()*mask - (1-mask)
     p2 = (p2[None,:]+shift[:,None]).flatten()*mask - (1-mask)
-    isysvec=isys[p1]
+    batch_indexvec=batch_index[p1]
     vec = coords[p2]-coords[p1]
-    vecpbc = jnp.einsum("sij,sj->si",reciprocal_cells[isysvec],vec)
+    vecpbc = jnp.einsum("sij,sj->si",reciprocal_cells[batch_indexvec],vec)
     pbc_shifts = -jnp.round(vecpbc)
-    vecpbc = jnp.einsum("sij,sj->si",cells[isysvec],vecpbc+pbc_shifts) #jnp.dot(cells[isysvec],vecpbc.T).T
+    vecpbc = jnp.einsum("sij,sj->si",cells[batch_indexvec],vecpbc+pbc_shifts) #jnp.dot(cells[batch_indexvec],vecpbc.T).T
     d12=jnp.sum(vecpbc**2,axis=-1)
 
     mask = mask*(d12<cutoff**2)
@@ -297,6 +455,40 @@ def compute_nblist_fixed_minimage(coords,cutoff,isys,natoms,max_nat,max_pairs,pa
     edge_src,edge_dst = p1[idx],p2[idx]
     return edge_src,edge_dst,d12[idx],pbc_shifts[idx],npairs
 
+# @partial(jax.jit, static_argnums=(1,4,5))
+# def compute_nblist_fixed_fullpbc(coords,cutoff,batch_index,natoms,max_nat,max_pairs,padding_value,cells,reciprocal_cells):
+#     p1,p2=jnp.triu_indices(max_nat, 1)
+#     mask = ((p1[None,:]<natoms[:,None])*(p2[None,:]<natoms[:,None])).flatten()
+
+#     if natoms.shape[0]==1:
+#         shift=jnp.array([0])
+#     else:
+#         shift=jnp.concatenate((jnp.array([0]),jnp.cumsum(natoms[:-1])))
+
+#     qi = jnp.einsum("sij,sj->si",reciprocal_cells[batch_index],coords)
+#     at_shifts = -jnp.floor(qi)
+#     coordspbc = jnp.einsum("sij,sj->si",cells[batch_index],qi+at_shifts)
+
+
+
+#     p1 = (p1[None,:]+shift[:,None]).flatten()*mask - (1-mask)
+#     p2 = (p2[None,:]+shift[:,None]).flatten()*mask - (1-mask)
+#     batch_indexvec=batch_index[p1]
+#     vec = coords[p2]-coords[p1]
+#     vecpbc = jnp.einsum("sij,sj->si",reciprocal_cells[batch_indexvec],vec)
+#     pbc_shifts = -jnp.round(vecpbc)
+#     vecpbc = jnp.einsum("sij,sj->si",cells[batch_indexvec],vecpbc+pbc_shifts) #jnp.dot(cells[batch_indexvec],vecpbc.T).T
+#     d12=jnp.sum(vecpbc**2,axis=-1)
+
+#     mask = mask*(d12<cutoff**2)
+#     d12 = d12*mask + (cutoff**2)*(1-mask)
+#     p1 = p1*mask + padding_value*(1-mask)
+#     p2 = p2*mask + padding_value*(1-mask)
+#     npairs=jnp.sum(mask)
+#     idx = jnp.argsort(d12)[:max_pairs]
+
+#     edge_src,edge_dst = p1[idx],p2[idx]
+#     return edge_src,edge_dst,d12[idx],pbc_shifts[idx],npairs
 
 def get_reciprocal_space_parameters(reciprocal_cells,cutoff,kmax=30,kthr=1.e-6):
     # find optimal ewald parameters (preprocessing)
@@ -350,7 +542,7 @@ def get_reciprocal_space_parameters(reciprocal_cells,cutoff,kmax=30,kthr=1.e-6):
     expfacs = np.stack(expfacs,axis=0)
     nks = np.array(nks,dtype=np.int64)
     nk = np.max(nks)
-    return ks[:,:nk],expfacs[:,:nk],m2s[:,:nk],bewald
+    return ks[:,:nk,:],expfacs[:,:nk],m2s[:,:nk],bewald
     
 
     

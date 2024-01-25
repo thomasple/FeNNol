@@ -18,31 +18,40 @@ from ...utils.periodic_table import (
 )
 import math
 
-class EwaldReciprocal(nn.Module):
-    cutoff: float
-    kmax: int = 30
-    graph_key: str = "graph"
 
-    @nn.compact
-    def __call__(self,inputs):
+@jax.jit
+def ewald_reciprocal(q, cells, reciprocal_cells, coordinates, batch_index, k_points, bewald):
+    A = reciprocal_cells
+    ### Ewald reciprocal space
 
-        ### Ewald reciprocal space
-        A = pbc["cell_inv"]
-        s = jnp.einsum("ij,abj->abi", A, coords)
+    if A.shape[0] == 1:
+        s = jnp.einsum("ij,aj->ai", A[0], coordinates)
+        ks = 2j*jnp.pi*jnp.einsum("ai,ki-> ak",s,k_points[0]) # nat x nk
+        Sm = (q[:,None]*jnp.exp(ks)).sum(axis=0)[None,:] # nys x nk
+    else:
+        s = jnp.einsum("aij,aj->ai", A[batch_index], coordinates)
+        ks = 2j*jnp.pi*jnp.einsum("ai,aki-> ak",s,k_points[batch_index]) # nat x nk
+        Sm = jax.ops.segment_sum(q[:, None] * jnp.exp(ks), batch_index, k_points.shape[0]) # nsys x nk
 
-        ks = 2j * jnp.pi * (pbc["k"][None, None, :, :] * s[:, :, None, :]).sum(dim=-1)
-        Sm = (q[:, :, None] * jnp.exp(ks)).sum(dim=1)
-        # Sm=(q[:,:,None]*jnp.exp(-ks)).sum(dim=1)
+    m2 = jnp.sum(
+        jnp.einsum("sij,ski->skj", A, k_points) ** 2,
+        #(
+        #    k_points[:, :, 0, None] * A[:, None, 0, :]
+        #    + k_points[:, :, 1, None] * A[:, None, 1, :]
+        #    + k_points[:, :, 2, None] * A[:, None, 2, :]
+        #)**2,
+        axis=-1,
+    ) # nsys x nk
+    a2 = (jnp.pi / bewald) ** 2
+    expfac = Sm * jnp.exp(-a2 * m2) / m2 # nsys x nk
+    volume = jnp.linalg.det(cells) # nsys
 
-        ### compute reciprocal Coulomb potential (https://arxiv.org/abs/1805.10363)
-        phi = jnp.real((pbc["expfac"][None, None, :] * Sm * jnp.exp(-ks)).sum(dim=-1)) * (
-            au.BOHR / (jnp.pi * pbc["volume"])
-        ) - q * (2 * pbc["bewald"] * au.BOHR / jnp.pi**0.5)
+    ### compute reciprocal Coulomb potential (https://arxiv.org/abs/1805.10363)
+    phi = jnp.real((expfac[batch_index] * jnp.exp(-ks)).sum(axis=-1)) * (
+        (au.BOHR / jnp.pi) / volume[batch_index]
+    ) - q * (bewald * (2 * au.BOHR / jnp.pi**0.5))
 
-        # erec=jnp.real((pbc.expfac*Sp*Sm).sum(dim=-1))*(au.BOHR/(2*torch.pi*pbc.volume))
-        # eself=q.pow(2).sum(dim=1)*(pbc.bewald*au.BOHR/torch.pi**0.5)
-
-        return 0.5 * q * phi, phi
+    return 0.5 * q * phi, phi
 
 
 class Coulomb(nn.Module):
@@ -82,8 +91,27 @@ class Coulomb(nn.Module):
 
         damp_style = self.damp_style.upper() if self.damp_style is not None else None
 
+        if "k_points" in graph:
+            k_points = graph["k_points"]
+            bewald = graph["b_ewald"]
+            cells = inputs["cells"]
+            reciprocal_cells = inputs["reciprocal_cells"]
+            batch_index = inputs["batch_index"]
+            erec, _ = ewald_reciprocal(
+                q,
+                cells,
+                reciprocal_cells,
+                inputs["coordinates"],
+                batch_index,
+                k_points,
+                bewald,
+            )
+            dirfact = jax.scipy.special.erfc(bewald * distances)
+        else:
+            dirfact = 1.0
+
         if damp_style is None:
-            Aij = switch / rij
+            Aij = switch * dirfact / rij
             eat = (
                 0.5
                 * q
@@ -111,13 +139,13 @@ class Coulomb(nn.Module):
 
             eBij = jnp.where(Bij < 20.0, jnp.exp(-Bij), 0.0)
 
-            Aij = (1.0 - eBij) / rij * switch
+            Aij = (dirfact - eBij) / rij * switch
             eat = (
                 0.5
                 * q
                 * jax.ops.segment_sum(Aij * q[edge_dst], edge_src, species.shape[0])
             )
-            
+
         elif damp_style == "OQDO":
             ratiovol_key = self.damp_params.get("ratiovol_key", None)
             alpha = jnp.asarray(POLARIZABILITIES)[species]
@@ -126,7 +154,7 @@ class Coulomb(nn.Module):
                 if ratiovol.shape[-1] == 1:
                     ratiovol = jnp.squeeze(ratiovol, axis=-1)
                 alpha = alpha * ratiovol
-                
+
             alphaij = 0.5 * (alpha[edge_src] + alpha[edge_dst])
             Re = (alphaij * (128.0 / au.FSC ** (4.0 / 3.0))) ** (1.0 / 7.0)
             Re2 = Re**2
@@ -147,7 +175,7 @@ class Coulomb(nn.Module):
 
             eBij = jnp.where(Bij < 20.0, jnp.exp(-Bij), 0.0)
 
-            Aij = (1.0 - eBij) / rij * switch
+            Aij = (dirfact - eBij) / rij * switch
             eat = (
                 0.5
                 * q
@@ -155,17 +183,48 @@ class Coulomb(nn.Module):
             )
 
         elif damp_style == "D3":
-            if self.trainable:
-                rvdw = jnp.abs(
-                    self.param("rvdw", lambda key: jnp.asarray(D3_VDW_RADII))
-                )[species]
+            ratiovol_key = self.damp_params.get("ratiovol_key", None)
+            if ratiovol_key is not None:
+                ratiovol = inputs[ratiovol_key]
+                if ratiovol.shape[-1] == 1:
+                    ratiovol = jnp.squeeze(ratiovol, axis=-1)
             else:
-                rvdw = jnp.asarray(D3_VDW_RADII)[species]
+                ratiovol = 1.0
 
-            ai2 = rvdw**2
-            gamma_ij = (ai2[edge_src] + ai2[edge_dst] + 1.0e-3) ** (-0.5)
+            gamma_scheme = self.damp_params.get("gamma_scheme", "D3")
+            if gamma_scheme == "D3":
+                if self.trainable:
+                    rvdw = jnp.abs(
+                        self.param("rvdw", lambda key: jnp.asarray(VDW_RADII))
+                    )[species]
+                else:
+                    rvdw = jnp.asarray(VDW_RADII)[species]
+                rvdw = rvdw * ratiovol ** (1.0 / 3.0)
+                ai2 = rvdw**2
+                gamma_ij = (ai2[edge_src] + ai2[edge_dst] + 1.0e-3) ** (-0.5)
 
-            Aij = jax.scipy.special.erf(gamma_ij * rij) / rij * switch
+            elif gamma_scheme == "QDO":
+                gscale = self.damp_params.get("gamma_scale", 2.0)
+                if self.trainable:
+                    gscale = jnp.abs(
+                        self.param("gamma_scale", lambda key: jnp.asarray(gscale))
+                    )
+                    alpha = jnp.abs(
+                        self.param("alpha", lambda key: jnp.asarray(POLARIZABILITIES))
+                    )[species]
+                else:
+                    alpha = jnp.asarray(POLARIZABILITIES)[species]
+                alpha = alpha * ratiovol
+                alphaij = 0.5 * (alpha[edge_src] + alpha[edge_dst])
+                rvdwij = (alphaij * (128.0 / au.FSC ** (4.0 / 3.0))) ** (1.0 / 7.0)
+                gamma_ij = gscale / rvdwij
+            else:
+                raise NotImplementedError(
+                    f"gamma_scheme {gamma_scheme} not implemented"
+                )
+
+            Aij = (dirfact - jax.scipy.special.erfc(gamma_ij * rij)) / rij * switch
+
             eat = (
                 0.5
                 * q
@@ -178,11 +237,15 @@ class Coulomb(nn.Module):
             r_off = self.damp_params.get("r_off", 0.75) * shortrange_cutoff
             x1 = (distances - r_on) / (r_off - r_on)
             x2 = 1.0 - x1
-            s1 = jnp.where(x1 < 0.0, 0.0, jnp.exp(-1.0 / x1))
-            s2 = jnp.where(x2 < 0.0, 0.0, jnp.exp(-1.0 / x2))
+            mask1 = x1 <= 1.0e-6
+            mask2 = x2 <= 1.0e-6
+            x1 = jnp.where(mask1, 1.0, x1)
+            x2 = jnp.where(mask2, 1.0, x2)
+            s1 = jnp.where(mask1, 0.0, jnp.exp(-1.0 / x1))
+            s2 = jnp.where(mask2, 0.0, jnp.exp(-1.0 / x2))
             Bij = s2 / (s1 + s2)
 
-            Aij = Bij / (rij**2 + 1) ** 0.5 + (1 - Bij) / rij * switch
+            Aij = Bij / (rij**2 + 1) ** 0.5 + (dirfact - Bij) / rij * switch
             eat = (
                 0.5
                 * q
@@ -192,10 +255,7 @@ class Coulomb(nn.Module):
         elif damp_style == "CP":
             cpA = self.damp_params.get("cpA", 4.42)
             cpB = self.damp_params.get("cpB", 4.12)
-            gamma = self.damp_params.get("gamma", 0.1)
-
-            ai2 = jnp.asarray(D3_VDW_RADII)[species] ** 2
-            gamma_ij = (ai2[edge_src] + ai2[edge_dst] + 1.0e-3) ** (-0.5)
+            gamma = self.damp_params.get("gamma", 0.5)
 
             if self.trainable:
                 cpA = jnp.abs(self.param("cpA", lambda key: jnp.asarray(cpA)))
@@ -221,26 +281,42 @@ class Coulomb(nn.Module):
             eBj = jnp.exp(-cpB * rij / rvdwj)
             eBij = eBi * eBj - eBi - eBj
 
-            epair = (
-                # (1-jnp.exp(-gamma * distances**4))*
-                (
-                    Zi * Zj * (eAi + eAj + eBij)
-                    - qi * Zj * (eAi + eBij)
-                    - qj * Zi * (eAj + eBij)
-                    + qi * qj * (1 + eBij)
-                )
-                * switch
-                / rij
+            Bshort = jnp.exp(-gamma * distances**4)
+            Dshort = 1.0 - Bshort
+            ecp = Dshort * (
+                Zi * Zj * (eAi + eAj + eBij)
+                - qi * Zj * (eAi + eBij)
+                - qj * Zi * (eAj + eBij)
             )
+
+            # eq = qi * qj * (1 + eBij) * (1 - Bshort)
+            eqq = qi * qj * (dirfact - Bshort + eBij * Dshort)
+
+            epair = (ecp + eqq) * switch / rij
+
+            # epair = (
+            #     (1 - Bshort)
+            #     * (
+            #         Zi * Zj * (eAi + eAj + eBij)
+            #         - qi * Zj * (eAi + eBij)
+            #         - qj * Zi * (eAj + eBij)
+            #         + qi * qj * (1 + eBij)
+            #     )
+            #     * switch
+            #     / rij
+            # )
             eat = 0.5 * jax.ops.segment_sum(epair, edge_src, species.shape[0])
 
         elif damp_style == "KEY":
             damp_key = self.damp_params["key"]
             damp = inputs[damp_key]
-            epair = (1 - damp) * switch / rij
+            epair = (dirfact - damp) * switch / rij
             eat = 0.5 * jax.ops.segment_sum(epair, edge_src, species.shape[0])
         else:
             raise NotImplementedError(f"damp_style {self.damp_style} not implemented")
+
+        if "k_points" in graph:
+            eat = eat + erec
 
         if self.scale is not None:
             if self.trainable:
@@ -252,7 +328,10 @@ class Coulomb(nn.Module):
             eat = eat * scale
 
         energy_key = self.energy_key if self.energy_key is not None else self.name
-        return {**inputs, energy_key: eat}
+        out =  {**inputs, energy_key: eat}
+        if "k_points" in graph:
+            out[energy_key+"_reciprocal"] = erec
+        return out
 
 
 class QeqD4(nn.Module):
@@ -260,8 +339,8 @@ class QeqD4(nn.Module):
     trainable: bool = False
     charges_key: str = "charges"
     energy_key: Optional[str] = None
-    ridge: float = 1.0e-6
-    chi_key: str = None
+    ridge: Optional[float] = None
+    chi_key: Optional[str] = None
 
     @nn.compact
     def __call__(self, inputs):
@@ -300,38 +379,52 @@ class QeqD4(nn.Module):
             k1 = 7.5
 
         ai2 = ai**2
-        rcij = rci[edge_src] + rci[edge_dst] + 1.e-3
+        rcij = (
+            rci.at[edge_src].get(mode="fill", fill_value=1.0)
+            + rci.at[edge_dst].get(mode="fill", fill_value=1.0)
+            + 1.0e-3
+        )
         mCNij = (0.5 + 0.5 * jax.scipy.special.erf(-k1 * (rij / rcij - 1))) * switch
         mCNi = jax.ops.segment_sum(mCNij, edge_src, species.shape[0])
         chi = ENi - kappai * (mCNi + 1.0e-3) ** 0.5
         if self.chi_key is not None:
             chi = chi + inputs[self.chi_key]
 
-        gamma_ij = (ai2[edge_src] + ai2[edge_dst] + 1.0e-3) ** (-0.5)
+        gamma_ij = (
+            ai2.at[edge_src].get(mode="fill", fill_value=1.0)
+            + ai2.at[edge_dst].get(mode="fill", fill_value=1.0)
+            + 1.0e-3
+        ) ** (-0.5)
 
         Aii = Jii + ((2.0 / np.pi) ** 0.5) / ai
         Aij = jax.scipy.special.erf(gamma_ij * rij) / rij * switch
 
         nsys = inputs["natoms"].shape[0]
-        isys = inputs["isys"]
+        batch_index = inputs["batch_index"]
 
         def matvec(x):
-            l = x[:nsys]
-            q = x[nsys:]
+            l, q = jnp.split(x, (nsys,))
             Aq_self = Aii * q
-            Aq_pair = jax.ops.segment_sum(Aij * q[edge_dst], edge_src, species.shape[0])
-            Aq = Aq_self + Aq_pair + l[isys]
-            Al = jax.ops.segment_sum(q, isys, nsys)
-            return jnp.concatenate([Al, Aq])
+            qdest = q.at[edge_dst].get(mode="fill", fill_value=0.0)
+            Aq_pair = jax.ops.segment_sum(Aij * qdest, edge_src, species.shape[0])
+            Aq = Aq_self + Aq_pair + l.at[batch_index].get(mode="fill", fill_value=0.0)
+            Al = jax.ops.segment_sum(q, batch_index, nsys)
+            return jnp.concatenate((Al, Aq))
 
         Qtot = inputs["total_charge"] if "total_charge" in inputs else jnp.zeros(nsys)
         b = jnp.concatenate([Qtot, -chi])
-        x = solve_cg(matvec, b, ridge=self.ridge)
+        # x = solve_cg(matvec, b, ridge=self.ridge)
+        # x = jax.lax.custom_linear_solve(matvec, b, solve_cg, symmetric=True)
+        # x,_ = jax.lax.custom_linear_solve(matvec,b,jax.scipy.sparse.linalg.cg,symmetric=True,has_aux=True)
+        x = jax.scipy.sparse.linalg.cg(matvec, b)[0]
 
         q = x[nsys:]
-        eself = 0.5 * Aii * q**2 + chi * q
+        q_ = jax.lax.stop_gradient(q)
+        eself = 0.5 * Aii * q_**2 + chi * q_
         epair = (
-            0.5 * q * jax.ops.segment_sum(Aij * q[edge_dst], edge_src, species.shape[0])
+            0.5
+            * q_
+            * jax.ops.segment_sum(Aij * q_[edge_dst], edge_src, species.shape[0])
         )
 
         energy = eself + epair
@@ -340,10 +433,8 @@ class QeqD4(nn.Module):
 
         return {
             **inputs,
-            self.charges_key: q,
+            self.charges_key: q_,
             energy_key: energy,
-            "chi": chi,
-            "coordination": 2 * mCNi,
         }
 
 
@@ -357,12 +448,12 @@ class ChargeCorrection(nn.Module):
     @nn.compact
     def __call__(self, inputs) -> Any:
         species = inputs["species"]
-        isys = inputs["isys"]
+        batch_index = inputs["batch_index"]
         nsys = inputs["natoms"].shape[0]
         q = inputs[self.key]
         if q.shape[-1] == 1:
             q = jnp.squeeze(q, axis=-1)
-        qtot = jax.ops.segment_sum(q, isys, nsys)
+        qtot = jax.ops.segment_sum(q, batch_index, nsys)
         Qtot = (
             inputs["total_charge"]
             if "total_charge" in inputs
@@ -370,10 +461,13 @@ class ChargeCorrection(nn.Module):
         )
         dq = Qtot - qtot
 
+        Jii = D3_HARDNESSES
+        ai = D3_VDW_RADII
+        eta = [jii + (2.0 / np.pi) ** 0.5 / aii for jii, aii in zip(Jii, ai)]
         if self.trainable:
-            eta = self.param("eta", lambda key: jnp.asarray(D3_HARDNESSES))[species]
+            eta = self.param("eta", lambda key: jnp.asarray(eta))[species]
         else:
-            eta = jnp.asarray(D3_HARDNESSES)[species]
+            eta = jnp.asarray(eta)[species]
 
         if self.ratioeta_key is not None:
             ratioeta = inputs[self.ratioeta_key]
@@ -381,10 +475,17 @@ class ChargeCorrection(nn.Module):
                 ratioeta = jnp.squeeze(ratioeta, axis=-1)
             eta = eta * ratioeta
 
-        s = (1.0e-6 + 2 * eta) ** (-1)
+        s = (1.0e-6 + 2 * jnp.abs(eta)) ** (-1)
 
-        f = dq / jax.ops.segment_sum(s, isys, nsys)
+        f = dq / jax.ops.segment_sum(s, batch_index, nsys)
 
-        q = q + s * f[isys]
+        qf = q + s * f[batch_index]
+
+        ecorr = 0.5 * eta * (qf - q) ** 2
         output_key = self.output_key if self.output_key is not None else self.key
-        return {**inputs, output_key: q, self.dq_key: dq}
+        return {
+            **inputs,
+            output_key: qf,
+            self.dq_key: dq,
+            "charge_correction_energy": ecorr,
+        }
