@@ -6,8 +6,10 @@ from .newtonnet import NewtonNetEmbedding
 from .painn import PAINNEmbedding
 from .eeacsf import EEACSF
 from .caiman import CaimanEmbedding
-
-
+from .spookynet import SpookyNetEmbedding
+from .foam import FOAMEmbedding
+from .chgnet import CHGNetEmbedding
+from .deeppot import DeepPotEmbedding,DeepPotE3Embedding
 EMBEDDINGS={
     "GAUSSIAN_MOMENTS_EMBEDDING": GaussianMomentsEmbedding,
     "ANI_AEV": ANIAEV,
@@ -16,6 +18,11 @@ EMBEDDINGS={
     "HIPNN": HIPNNEmbedding,
     "NEWTONNET": NewtonNetEmbedding,
     "PAINN": PAINNEmbedding,
+    "SPOOKYNET": SpookyNetEmbedding,
     "EEACSF": EEACSF,
     "CAIMAN": CaimanEmbedding,
+    "FOAM": FOAMEmbedding,
+    "CHGNET": CHGNetEmbedding,
+    "DEEPPOT": DeepPotEmbedding,
+    "DEEPPOT_E3": DeepPotE3Embedding,
 }
