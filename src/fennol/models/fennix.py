@@ -16,6 +16,7 @@ from .nets import NETWORKS
 from .misc import MISC
 from .physics import PHYSICS
 from .e3 import E3MODULES
+from .uncertainty import UNCERTAINY_MODULES
 from .preprocessing import (
     GraphGenerator,
     GraphGeneratorFixed,
@@ -27,7 +28,15 @@ from .preprocessing import (
 from ..utils import deep_update
 
 
-_MODULES = {**EMBEDDINGS, **ENCODINGS, **NETWORKS, **MISC, **PHYSICS, **E3MODULES}
+_MODULES = {
+    **EMBEDDINGS,
+    **ENCODINGS,
+    **NETWORKS,
+    **MISC,
+    **PHYSICS,
+    **E3MODULES,
+    **UNCERTAINY_MODULES,
+}
 
 
 class FENNIXModules(nn.Module):
@@ -98,6 +107,7 @@ class FENNIX:
         energy_terms=["energy"],
         use_atom_padding: bool = False,
         fixed_preprocessing: bool = False,
+        graph_config: Dict = {},
     ) -> None:
         self._input_args = {
             "cutoff": cutoff,
@@ -117,7 +127,8 @@ class FENNIX:
                 **graph_params,
                 **preprocessing.pop("graph"),
             }
-            
+        graph_params = {**graph_params, **graph_config}
+
         if fixed_preprocessing:
             preprocessing_modules = [
                 GraphGeneratorFixed(**graph_params),
@@ -201,7 +212,7 @@ class FENNIX:
             out["atomic_energies"] = atomic_energies
 
             energies = jax.ops.segment_sum(
-                atomic_energies, data["isys"], num_segments=len(data["natoms"])
+                atomic_energies, data["batch_index"], num_segments=len(data["natoms"])
             )
             out["total_energy"] = energies
             return energies, out
@@ -225,16 +236,18 @@ class FENNIX:
         def energy_and_forces_and_virial(variables, data):
             assert "cells" in data
             cells = data["cells"]
-            isys = data["isys"]
-            x=data["coordinates"]
+            batch_index = data["batch_index"]
+            x = data["coordinates"]
 
             def _etot(variables, coordinates, cells):
+                reciprocal_cells = jnp.linalg.inv(cells)
                 energy, out = total_energy(
                     variables,
                     {
                         **data,
                         "coordinates": coordinates,
                         "cells": cells,
+                        "reciprocal_cells": reciprocal_cells,
                     },
                 )
                 return energy.sum(), out
@@ -242,11 +255,15 @@ class FENNIX:
             (dedx, dedcells), out = jax.grad(_etot, argnums=(1, 2), has_aux=True)(
                 variables, x, cells
             )
-            # dedx = jnp.einsum("sij,si->sj", reciprocal_cells[isys], deds)
+            # dedx = jnp.einsum("sij,si->sj", reciprocal_cells[batch_index], deds)
             out["forces"] = -dedx
-            fx = jax.ops.segment_sum(dedx[:,:,None]*x[:,None,:], isys, num_segments=len(data["natoms"]))
+            fx = jax.ops.segment_sum(
+                dedx[:, :, None] * x[:, None, :], batch_index, num_segments=len(data["natoms"])
+            )
 
-            out["virial_tensor"] = jnp.einsum("sik,sjk->sij", dedcells, cells[isys]) + fx
+            out["virial_tensor"] = (
+                jnp.einsum("sik,sjk->sij", dedcells, cells[batch_index]) + fx
+            )
 
             return out["total_energy"], out["forces"], out["virial_tensor"], out
 
@@ -371,13 +388,13 @@ class FENNIX:
             jax.random.uniform(rng_key, (n_atoms, 3), maxval=box_size)
         )
         species = np.ones((n_atoms,), dtype=np.int32)
-        isys = np.zeros((n_atoms,), dtype=np.int32)
+        batch_index = np.zeros((n_atoms,), dtype=np.int32)
         natoms = np.array([n_atoms], dtype=np.int32)
         return {
             "species": species,
             "coordinates": coordinates,
             # "graph": graph,
-            "isys": isys,
+            "batch_index": batch_index,
             "natoms": natoms,
         }
 
@@ -412,13 +429,20 @@ class FENNIX:
             f.write(serialization.msgpack_serialize(state_dict))
 
     @classmethod
-    def load(cls, filename, use_atom_padding=False, fixed_preprocessing=False):
+    def load(
+        cls,
+        filename,
+        use_atom_padding=False,
+        fixed_preprocessing=False,
+        graph_config={},
+    ):
         with open(filename, "rb") as f:
             state_dict = serialization.msgpack_restore(f.read())
         state_dict["preprocessing"] = {k: v for k, v in state_dict["preprocessing"]}
         state_dict["modules"] = {k: v for k, v in state_dict["modules"]}
         return cls(
             **state_dict,
+            graph_config=graph_config,
             use_atom_padding=use_atom_padding,
             fixed_preprocessing=fixed_preprocessing,
         )

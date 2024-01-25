@@ -69,9 +69,16 @@ def dynamic(simulation_parameters, device, fprec):
     if not model_file.exists():
         raise FileNotFoundError(f"model file {model_file} not found")
     else:
-        model = FENNIX.load(model_file, fixed_preprocessing=True)  # \
+        graph_config = simulation_parameters.get("graph_config", {})
+        model = FENNIX.load(
+            model_file, fixed_preprocessing=True, graph_config=graph_config
+        )  # \
         print(f"model_file: {model_file}")
         # .train(False).requires_grad_(False).to(prec)
+
+    if "energy_terms" in simulation_parameters:
+        model.set_energy_terms(simulation_parameters["energy_terms"])
+        print(model.energy_terms)
 
     ### Get the coordinates and species from the xyz file
     system_name = str(simulation_parameters.get("system", "system")).strip()
@@ -177,16 +184,14 @@ def dynamic(simulation_parameters, device, fprec):
     ### Set the thermostat
     rng_key, t_key = jax.random.split(rng_key)
     thermostat_name = str(simulation_parameters.get("thermostat", "NONE")).upper()
-    qtb_parameters = simulation_parameters.get("qtb", {})
-    assert isinstance(qtb_parameters, dict), "qtb must be a dictionary"
-    thermostat, thermostat_post, state["thermostat"] = get_thermostat(
+    thermostat, thermostat_post, state["thermostat"], vel = get_thermostat(
         thermostat_name,
         rng_key=t_key,
         dt=dt,
         mass=mass,
         gamma=gamma,
         kT=kT,
-        qtb_parameters=qtb_parameters,
+        simulation_parameters=simulation_parameters,
         species=species,
     )
 
@@ -247,20 +252,21 @@ def dynamic(simulation_parameters, device, fprec):
         system = model.preprocess(
             species=species, coordinates=coordinates, cells=cell[None, :, :]
         )
-    if simulation_parameters.get("print_model_summary", False):
+    if simulation_parameters.get("print_model", False):
         print(model.summarize(example_data=system))
     # initial energy and forces
     print("Computing initial energy and forces")
     e, f, system = model._energy_and_forces(model.variables, system)
     print(f"Initial energy: {e}")
+    minmaxone(jnp.abs(f), "forces")
 
     rng_key, v_key = jax.random.split(rng_key)
-    v = (
-        jax.random.normal(v_key, coordinates.shape) * (kT / mass[:, None]) ** 0.5
-    ).astype(fprec)
-    ek = 0.5 * jnp.sum(mass[:, None] * v**2)
+    # vel = (
+    #     jax.random.normal(v_key, coordinates.shape) * (kT / mass[:, None]) ** 0.5
+    # ).astype(fprec)
+    ek = 0.5 * jnp.sum(mass[:, None] * vel**2)
     system["nwin_avg"] = 0
-    system["vel"] = v
+    system["vel"] = vel.astype(fprec)
     system["ek"] = ek
     system["nblist_skin"] = nblist_skin
     if "nblist_mult_size" in simulation_parameters:
@@ -333,14 +339,16 @@ def dynamic(simulation_parameters, device, fprec):
             nsperday = (24 * 60 * 60 / tperstep) * dt * au.PS / 1000
             if do_wrap_box:
                 force_preprocess = True
-                system["coordinates"]=wrapbox(system["coordinates"], cell, reciprocal_cell)
+                system["coordinates"] = wrapbox(
+                    system["coordinates"], cell, reciprocal_cell
+                )
                 print("Wrap atoms into box")
             print("Write XYZ frame")
             write_arc_frame(fout, symbols, np.asarray(system["coordinates"]))
             print("ns/day: ", nsperday)
             print(header)
             t0dump = time.time()
-            
+
             # model.reinitialize_preprocessing()
 
         if istep % nprint == 0:
@@ -354,10 +362,11 @@ def dynamic(simulation_parameters, device, fprec):
             nsperday = (24 * 60 * 60 / tperstep) * dt * au.PS / 1000
             ek = state["window_avg"]["ek"]
             e = state["window_avg"]["epot"]
-            
+
             line = f"{istep:10} {(start_time+istep*dt)*au.PS:10.3f} {ek+e:10.3f} {e:10.3f} {ek:10.3f} {2*ek/(3.*nat)*au.KELVIN:10.3f} {nsperday:10.3f} {1./tperstep:10.3f}"
             if estimate_pressure:
                 line += f' {state["window_avg"]["pressure"]:10.3f}'
+
             print(line)
 
             if print_timings:

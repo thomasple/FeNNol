@@ -158,26 +158,24 @@ def pimd(simulation_parameters, device, fprec):
     eigx = np.zeros_like(coordinates)
     eigx[0] = coordinates[0]
     coordinates = coordinates.reshape(nbeads * nat, 3)
-    isys = np.arange(nbeads, dtype=np.int32).repeat(nat)
+    bead_index = np.arange(nbeads, dtype=np.int32).repeat(nat)
     natoms = np.array([nat] * nbeads, dtype=np.int32)
     species_ = np.tile(species, nbeads)
 
     ### Set the thermostat
     rng_key, t_key = jax.random.split(rng_key)
     thermostat_name = str(simulation_parameters.get("thermostat", "NONE")).upper()
-    qtb_parameters = simulation_parameters.get("qtb", {})
-    assert isinstance(qtb_parameters, dict), "qtb must be a dictionary"
     trpmd_lambda = simulation_parameters.get("trpmd_lambda", 1.0)
     gammak = np.maximum(trpmd_lambda * omk, gamma)
 
-    thermostat, thermostat_post, state = get_thermostat(
+    thermostat, thermostat_post, state, eigv = get_thermostat(
         thermostat_name,
         rng_key=t_key,
         dt=dt,
         mass=mass,
         gamma=gammak,
         kT=kT,
-        qtb_parameters=None,
+        simulation_parameters=simulation_parameters,
         species=species,
         nbeads=nbeads,
     )
@@ -243,14 +241,14 @@ def pimd(simulation_parameters, device, fprec):
     #     return jax.lax.fori_loop(0,nsteps,step,system)
     if cell is None:
         system = model.preprocess(
-            species=species_, coordinates=coordinates, isys=isys, natoms=natoms
+            species=species_, coordinates=coordinates, batch_index=bead_index, natoms=natoms
         )
     else:
         system = model.preprocess(
             species=species_,
             coordinates=coordinates,
             cells=cell[None, :, :],
-            isys=isys,
+            batch_index=bead_index,
             natoms=natoms,
         )
 
@@ -264,12 +262,12 @@ def pimd(simulation_parameters, device, fprec):
     )
     print(f"Initial energy: {np.mean(np.array(e))}")
 
-    rng_key, v_key = jax.random.split(rng_key)
-    eigv = (
-        jax.random.normal(v_key, eigx.shape) * (kT / mass[None, :, None]) ** 0.5
-    ).astype(fprec)
+    # rng_key, v_key = jax.random.split(rng_key)
+    # eigv = (
+    #     jax.random.normal(v_key, eigx.shape) * (kT / mass[None, :, None]) ** 0.5
+    # ).astype(fprec)
     ek = 0.5 * jnp.sum(mass[:, None] * eigv[0] ** 2)
-    system["eigv"] = jnp.asarray(eigv, dtype=fprec)
+    system["eigv"] = eigv.astype(fprec)
     system["eigx"] = eigx
     system["ek"] = ek
     system["nblist_skin"] = nblist_skin

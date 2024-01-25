@@ -7,17 +7,21 @@ import optax
 
 from ..utils.atomic_units import AtomicUnits as au  # CM1,THZ,BOHR,MPROT
 from ..utils import Counter
-from ..utils.deconvolution import deconvolute_spectrum, kernel_lorentz_pot, kernel_lorentz
+from ..utils.deconvolution import (
+    deconvolute_spectrum,
+    kernel_lorentz_pot,
+    kernel_lorentz,
+)
 
 
 def get_thermostat(
     thermostat_name,
+    simulation_parameters,
     dt,
     mass,
     gamma=None,
     kT=None,
     species=None,
-    qtb_parameters=None,
     rng_key=None,
     nbeads=None,
 ):
@@ -29,16 +33,27 @@ def get_thermostat(
         assert rng_key is not None, "rng_key must be provided for QTB thermostat"
         assert kT is not None, "kT must be specified for QTB thermostat"
         assert gamma is not None, "gamma must be specified for QTB thermostat"
+        rng_key, v_key = jax.random.split(rng_key)
         if nbeads is None:
             a1 = math.exp(-gamma * dt)
             a2 = jnp.asarray(((1 - a1 * a1) * kT / mass[:, None]) ** 0.5)
+            vel = (
+                jax.random.normal(v_key, (mass.shape[0], 3))
+                * (kT / mass[:, None]) ** 0.5
+            )
         else:
             if isinstance(gamma, float):
                 gamma = np.array([gamma] * nbeads)
-            assert isinstance(gamma, np.ndarray), "gamma must be a float or a numpy array"
+            assert isinstance(
+                gamma, np.ndarray
+            ), "gamma must be a float or a numpy array"
             assert gamma.shape[0] == nbeads, "gamma must have the same length as nbeads"
-            a1 = np.exp(-gamma * dt)[:,None,None]
-            a2 = jnp.asarray(((1 - a1 * a1) * kT / mass[None,:, None]) ** 0.5)
+            a1 = np.exp(-gamma * dt)[:, None, None]
+            a2 = jnp.asarray(((1 - a1 * a1) * kT / mass[None, :, None]) ** 0.5)
+            vel = (
+                jax.random.normal(v_key, (nbeads, mass.shape[0], 3))
+                * (kT / mass[:, None]) ** 0.5
+            )
 
         state["rng_key"] = rng_key
 
@@ -58,13 +73,23 @@ def get_thermostat(
         assert nbeads is None, "Gradient descent is not compatible with PIMD"
         a1 = math.exp(-gamma * dt)
 
+        if nbeads is None:
+            vel = jnp.zeros((mass.shape[0], 3))
+        else:
+            vel = jnp.zeros((nbeads, mass.shape[0], 3))
+
         def thermostat(vel, state):
             return a1 * vel, state
 
     elif thermostat_name in ["NVE", "NONE"]:
+        if nbeads is None:
+            vel = jnp.zeros((mass.shape[0], 3))
+        else:
+            vel = jnp.zeros((nbeads, mass.shape[0], 3))
         thermostat = lambda x, s: (x, s)
-    elif thermostat_name in ["QTB","ADQTB"]:
+    elif thermostat_name in ["QTB", "ADQTB"]:
         assert nbeads is None, "QTB is not compatible with PIMD"
+        qtb_parameters = simulation_parameters.get("qtb", None)
         assert (
             qtb_parameters is not None
         ), "qtb_parameters must be provided for QTB thermostat"
@@ -72,6 +97,9 @@ def get_thermostat(
         assert kT is not None, "kT must be specified for QTB thermostat"
         assert gamma is not None, "gamma must be specified for QTB thermostat"
         assert species is not None, "species must be provided for QTB thermostat"
+        rng_key, v_key = jax.random.split(rng_key)
+        vel = jax.random.normal(v_key, (mass.shape[0], 3)) * (kT / mass[:, None]) ** 0.5
+
         thermostat, postprocess, state = initialize_qtb(
             qtb_parameters,
             dt=dt,
@@ -80,15 +108,82 @@ def get_thermostat(
             kT=kT,
             species=species,
             rng_key=rng_key,
-            adaptive = thermostat_name.startswith("AD"),
+            adaptive=thermostat_name.startswith("AD"),
         )
+    elif thermostat_name in ["ANNEAL", "ANNEALING"]:
+        assert rng_key is not None, "rng_key must be provided for QTB thermostat"
+        assert kT is not None, "kT must be specified for QTB thermostat"
+        assert gamma is not None, "gamma must be specified for QTB thermostat"
+        assert nbeads is None, "ANNEAL is not compatible with PIMD"
+        a1 = math.exp(-gamma * dt)
+        a2 = jnp.asarray(((1 - a1 * a1) * kT / mass[:, None]) ** 0.5)
+
+        anneal_parameters = simulation_parameters.get("annealing", {})
+        init_factor = anneal_parameters.get("init_factor", 1.0 / 25.0)
+        assert init_factor > 0.0, "init_factor must be positive"
+        final_factor = anneal_parameters.get("final_factor", 1.0 / 10000.0)
+        assert final_factor > 0.0, "final_factor must be positive"
+        nsteps = simulation_parameters.get("nsteps")
+        anneal_steps = anneal_parameters.get("anneal_steps", 1.0)
+        assert (
+            anneal_steps < 1.0 and anneal_steps > 0.0
+        ), "warmup_steps must be between 0 and nsteps"
+        pct_start = anneal_parameters.get("warmup_steps", 0.3)
+        assert (
+            pct_start < 1.0 and pct_start > 0.0
+        ), "warmup_steps must be between 0 and nsteps"
+
+        anneal_type = anneal_parameters.get("type", "cosine").lower()
+        if anneal_type == "linear":
+            schedule = optax.linear_onecycle_schedule(
+                peak_value=1.0,
+                div_factor=1.0 / init_factor,
+                final_div_factor=1.0 / final_factor,
+                transition_steps=int(anneal_steps * nsteps),
+                pct_start=pct_start,
+                pct_final=1.0,
+            )
+        elif anneal_type == "cosine_onecycle":
+            schedule = optax.cosine_onecycle_schedule(
+                peak_value=1.0,
+                div_factor=1.0 / init_factor,
+                final_div_factor=1.0 / final_factor,
+                transition_steps=int(anneal_steps * nsteps),
+                pct_start=pct_start,
+            )
+        else:
+            raise ValueError(f"Unknown anneal_type {anneal_type}")
+
+        state["rng_key"] = rng_key
+        state["istep_anneal"] = 0
+
+        rng_key, v_key = jax.random.split(rng_key)
+        Tscale = schedule(0)
+        print(f"ANNEAL: initial temperature = {Tscale*kT*au.KELVIN:.3e} K")
+        vel = (
+            jax.random.normal(v_key, (mass.shape[0], 3))
+            * (kT * Tscale / mass[:, None]) ** 0.5
+        )
+
+        def thermostat(vel, state):
+            rng_key, noise_key = jax.random.split(state["rng_key"])
+            noise = jax.random.normal(noise_key, vel.shape, dtype=vel.dtype)
+
+            Tscale = schedule(state["istep_anneal"]) ** 0.5
+            vel = a1 * vel + a2 * Tscale * noise
+            return vel, {
+                **state,
+                "rng_key": rng_key,
+                "istep_anneal": state["istep_anneal"] + 1,
+            }
+
     else:
         raise ValueError(f"Unknown thermostat {thermostat_name}")
 
-    return thermostat, postprocess, state
+    return thermostat, postprocess, state, vel
 
 
-def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key,adaptive):
+def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adaptive):
     state = {}
     verbose = qtb_parameters.get("verbose", False)
 
@@ -181,128 +276,174 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key,adaptiv
         state["Cvfg_avg"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
         state["Cff_avg"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
 
-    
     # adaptation parameters
     if adaptive:
         skipseg = qtb_parameters.get("skipseg", 1)
 
-        adaptation_method = str(qtb_parameters.get("adaptation_method", "ADABELIEF")).upper().strip()
-        authorized_methods = ["SIMPLE","RATIO","ADABELIEF"]
-        assert adaptation_method in authorized_methods, f"adaptation_method must be one of {authorized_methods}"
+        adaptation_method = (
+            str(qtb_parameters.get("adaptation_method", "ADABELIEF")).upper().strip()
+        )
+        authorized_methods = ["SIMPLE", "RATIO", "ADABELIEF"]
+        assert (
+            adaptation_method in authorized_methods
+        ), f"adaptation_method must be one of {authorized_methods}"
         if adaptation_method == "SIMPLE":
-            agamma = qtb_parameters.get("agamma", 1.e-3)
-            assert agamma>0, "agamma must be positive"
-            a1_ad = agamma  * Tseg #  * gamma
+            agamma = qtb_parameters.get("agamma", 1.0e-3)
+            assert agamma > 0, "agamma must be positive"
+            a1_ad = agamma * Tseg  #  * gamma
             print(f"ADQTB SIMPLE: agamma = {agamma:.3f}")
+
             def update_gammar(state):
                 g = state["dFDT"]
-                gammar = state["gammar"] - a1_ad*g
-                gammar = jnp.maximum(gammar_min,gammar)
+                gammar = state["gammar"] - a1_ad * g
+                gammar = jnp.maximum(gammar_min, gammar)
                 return {**state, "gammar": gammar}
+
         elif adaptation_method == "RATIO":
-            tau_ad = qtb_parameters.get("tau_ad", 5./au.PS)
-            tau_s = qtb_parameters.get("tau_s", 10*tau_ad)
-            assert tau_ad>0, "tau_ad must be positive"
-            print(f"ADQTB RATIO: tau_ad = {tau_ad*au.PS:.2f} ps, tau_s = {tau_s*au.PS:.2f} ps")
-            b1 = np.exp(-Tseg/tau_ad)
-            b2 = np.exp(-Tseg/tau_s)
+            tau_ad = qtb_parameters.get("tau_ad", 5.0 / au.PS)
+            tau_s = qtb_parameters.get("tau_s", 10 * tau_ad)
+            assert tau_ad > 0, "tau_ad must be positive"
+            print(
+                f"ADQTB RATIO: tau_ad = {tau_ad*au.PS:.2f} ps, tau_s = {tau_s*au.PS:.2f} ps"
+            )
+            b1 = np.exp(-Tseg / tau_ad)
+            b2 = np.exp(-Tseg / tau_s)
             state["mCvv_m"] = jnp.zeros((nspecies, nom), dtype=np.float32)
             state["Cvf_m"] = jnp.zeros((nspecies, nom), dtype=np.float32)
             state["n_adabelief"] = 0
+
             def update_gammar(state):
                 n_adabelief = state["n_adabelief"] + 1
-                mCvv_m = state["mCvv_m"]*b1 + state["mCvv"]*(1.-b1)
-                Cvf_m = state["Cvf_m"]*b2 + state["Cvf"]*(1.-b2)
-                mCvv = mCvv_m/(1.-b1**n_adabelief)
-                Cvf = Cvf_m/(1.-b2**n_adabelief)
+                mCvv_m = state["mCvv_m"] * b1 + state["mCvv"] * (1.0 - b1)
+                Cvf_m = state["Cvf_m"] * b2 + state["Cvf"] * (1.0 - b2)
+                mCvv = mCvv_m / (1.0 - b1**n_adabelief)
+                Cvf = Cvf_m / (1.0 - b2**n_adabelief)
                 # g = Cvf/(mCvv+1.e-8)-state["gammar"]
-                gammar = Cvf/(mCvv+1.e-8)
-                gammar = jnp.maximum(gammar_min,gammar)
-                return {**state, "gammar": gammar,"mCvv_m":mCvv_m,"Cvf_m":Cvf_m,"n_adabelief":n_adabelief}
-            
-        elif adaptation_method == "ADABELIEF":
-            agamma = qtb_parameters.get("agamma", 1.e-2)
-            tau_ad = qtb_parameters.get("tau_ad", 1./au.PS)
-            tau_s = qtb_parameters.get("tau_s", 100*tau_ad)
-            assert tau_ad>0, "tau_ad must be positive"
-            assert tau_s>0, "tau_s must be positive"
-            assert agamma>0, "agamma must be positive"
-            print(f"ADQTB ADABELIEF: agamma = {agamma:.3f}, tau_ad = {tau_ad*au.PS:.2f} ps, tau_s = {tau_s*au.PS:.2f} ps")
+                gammar = Cvf / (mCvv + 1.0e-8)
+                gammar = jnp.maximum(gammar_min, gammar)
+                return {
+                    **state,
+                    "gammar": gammar,
+                    "mCvv_m": mCvv_m,
+                    "Cvf_m": Cvf_m,
+                    "n_adabelief": n_adabelief,
+                }
 
-            a1_ad = agamma #* Tseg #* gamma
-            b1 = np.exp(-Tseg/tau_ad)
-            b2 = np.exp(-Tseg/tau_s)
+        elif adaptation_method == "ADABELIEF":
+            agamma = qtb_parameters.get("agamma", 1.0e-2)
+            tau_ad = qtb_parameters.get("tau_ad", 1.0 / au.PS)
+            tau_s = qtb_parameters.get("tau_s", 100 * tau_ad)
+            assert tau_ad > 0, "tau_ad must be positive"
+            assert tau_s > 0, "tau_s must be positive"
+            assert agamma > 0, "agamma must be positive"
+            print(
+                f"ADQTB ADABELIEF: agamma = {agamma:.3f}, tau_ad = {tau_ad*au.PS:.2f} ps, tau_s = {tau_s*au.PS:.2f} ps"
+            )
+
+            a1_ad = agamma  # * Tseg #* gamma
+            b1 = np.exp(-Tseg / tau_ad)
+            b2 = np.exp(-Tseg / tau_s)
             state["dFDT_m"] = jnp.zeros((nspecies, nom), dtype=np.float32)
             state["dFDT_s"] = jnp.zeros((nspecies, nom), dtype=np.float32)
             state["n_adabelief"] = 0
+
             def update_gammar(state):
                 n_adabelief = state["n_adabelief"] + 1
                 dFDT = state["dFDT"]
-                dFDT_m = state["dFDT_m"]*b1 + dFDT*(1.-b1)
-                dFDT_s = state["dFDT_s"]*b2 + (dFDT-dFDT_m)**2*(1.-b2) + 1.e-8
-                #bias correction
-                mt = dFDT_m/(1.-b1**n_adabelief)
-                st = dFDT_s/(1.-b2**n_adabelief)
-                gammar = state["gammar"] - a1_ad* mt/(st**0.5 + 1.e-8)
-                gammar = jnp.maximum(gammar_min,gammar)
-                return {**state, "gammar": gammar,"dFDT_m":dFDT_m,"n_adabelief":n_adabelief,"dFDT_s":dFDT_s} 
-
+                dFDT_m = state["dFDT_m"] * b1 + dFDT * (1.0 - b1)
+                dFDT_s = (
+                    state["dFDT_s"] * b2 + (dFDT - dFDT_m) ** 2 * (1.0 - b2) + 1.0e-8
+                )
+                # bias correction
+                mt = dFDT_m / (1.0 - b1**n_adabelief)
+                st = dFDT_s / (1.0 - b2**n_adabelief)
+                gammar = state["gammar"] - a1_ad * mt / (st**0.5 + 1.0e-8)
+                gammar = jnp.maximum(gammar_min, gammar)
+                return {
+                    **state,
+                    "gammar": gammar,
+                    "dFDT_m": dFDT_m,
+                    "n_adabelief": n_adabelief,
+                    "dFDT_s": dFDT_s,
+                }
 
     else:
         update_gammar = lambda x: x
 
-    
-    
-    def compute_corr_pot(niter=20,verbose=False):
-        if classical_kernel or hbar==0:
+    def compute_corr_pot(niter=20, verbose=False):
+        if classical_kernel or hbar == 0:
             return np.ones(nom)
-        
-        s_0=np.array((theta/kT*cutoff)[:nom])
-        s_out,s_rec,_=deconvolute_spectrum(s_0,omega[:nom]
-                ,gamma,niter,kernel=kernel_lorentz_pot,trans=True
-                ,symmetrize=True,verbose=verbose)
-        corr_pot=1.+(s_out-s_0)/s_0
-        columns=np.column_stack((omega[:nom]*au.CM1
-                                    ,corr_pot-1.
-                                    ,s_0,s_out,s_rec)
-                    )
-        np.savetxt('corr_pot.dat',columns,header='omega(cm-1) corr_pot s_0 s_out s_rec')
+
+        s_0 = np.array((theta / kT * cutoff)[:nom])
+        s_out, s_rec, _ = deconvolute_spectrum(
+            s_0,
+            omega[:nom],
+            gamma,
+            niter,
+            kernel=kernel_lorentz_pot,
+            trans=True,
+            symmetrize=True,
+            verbose=verbose,
+        )
+        corr_pot = 1.0 + (s_out - s_0) / s_0
+        columns = np.column_stack(
+            (omega[:nom] * au.CM1, corr_pot - 1.0, s_0, s_out, s_rec)
+        )
+        np.savetxt(
+            "corr_pot.dat", columns, header="omega(cm-1) corr_pot s_0 s_out s_rec"
+        )
         return corr_pot
-    
-    def compute_corr_kin(state,niter=7,verbose=False):
+
+    def compute_corr_kin(state, niter=7, verbose=False):
         if not state["do_corr_kin"]:
             return state
-        if classical_kernel or hbar==0:
-            return 1.
-        
-        K_D = state.get("K_D",None)
-        mCvv=(state["mCvv_avg"][:,:nom]*n_of_type[:,None]).sum(axis=0)/nat
-        s_0=np.array(mCvv*kT/theta[:nom]/state["corr_pot"])
-        s_out,s_rec,K_D=deconvolute_spectrum(s_0,omega[:nom]
-                    ,gamma,niter,kernel=kernel_lorentz,trans=False
-                    ,symmetrize=True,verbose=verbose,K_D=K_D)
-        s_out=s_out*theta[:nom]/kT
-        s_rec=s_rec*theta[:nom]/kT*state["corr_pot"]
+        if classical_kernel or hbar == 0:
+            return 1.0
+
+        K_D = state.get("K_D", None)
+        mCvv = (state["mCvv_avg"][:, :nom] * n_of_type[:, None]).sum(axis=0) / nat
+        s_0 = np.array(mCvv * kT / theta[:nom] / state["corr_pot"])
+        s_out, s_rec, K_D = deconvolute_spectrum(
+            s_0,
+            omega[:nom],
+            gamma,
+            niter,
+            kernel=kernel_lorentz,
+            trans=False,
+            symmetrize=True,
+            verbose=verbose,
+            K_D=K_D,
+        )
+        s_out = s_out * theta[:nom] / kT
+        s_rec = s_rec * theta[:nom] / kT * state["corr_pot"]
         mCvvsum = mCvv.sum()
-        rec_ratio=mCvvsum/s_rec.sum()
-        if rec_ratio<0.95 or rec_ratio>1.05:
+        rec_ratio = mCvvsum / s_rec.sum()
+        if rec_ratio < 0.95 or rec_ratio > 1.05:
             print("WARNING: reconvolution error is too high, corr_kin was not updated")
             return
-        
-        corr_kin = mCvvsum/s_out.sum()
-        if np.abs(corr_kin - state["corr_kin_prev"]) < 1.e-4:
-            isame_kin = state["isame_kin"]+1
+
+        corr_kin = mCvvsum / s_out.sum()
+        if np.abs(corr_kin - state["corr_kin_prev"]) < 1.0e-4:
+            isame_kin = state["isame_kin"] + 1
         else:
             isame_kin = 0
-        
+
         print("corr_kin: ", corr_kin)
         do_corr_kin = state["do_corr_kin"]
         if isame_kin > 10:
-            print("INFO: corr_kin is converged (it did not change for 10 consecutive segments)")
+            print(
+                "INFO: corr_kin is converged (it did not change for 10 consecutive segments)"
+            )
             do_corr_kin = False
-        
-        return {**state, "corr_kin": corr_kin, "corr_kin_prev": corr_kin, "isame_kin": isame_kin, "do_corr_kin": do_corr_kin,"K_D":K_D}
 
+        return {
+            **state,
+            "corr_kin": corr_kin,
+            "corr_kin_prev": corr_kin,
+            "isame_kin": isame_kin,
+            "do_corr_kin": do_corr_kin,
+            "K_D": K_D,
+        }
 
     @jax.jit
     def ff_kernel(state):
@@ -336,7 +477,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key,adaptiv
 
     @jax.jit
     def compute_spectra(state):
-        sf = jnp.fft.rfft(state["force"]/gamma, 3 * nseg, axis=0, norm="ortho")
+        sf = jnp.fft.rfft(state["force"] / gamma, 3 * nseg, axis=0, norm="ortho")
         sv = jnp.fft.rfft(state["vel"], 3 * nseg, axis=0, norm="ortho")
         Cvv = jnp.sum(jnp.abs(sv[:nom]) ** 2, axis=-1).T
         Cff = jnp.sum(jnp.abs(sf[:nom]) ** 2, axis=-1).T
@@ -364,7 +505,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key,adaptiv
         b1 = 1.0 - nsinv
         dFDT_avg = state["dFDT_avg"] * b1 + dFDT * nsinv
         mCvv_avg = state["mCvv_avg"] * b1 + mCvv * nsinv
-        Cvfg_avg = state["Cvfg_avg"] * b1 + Cvf/state["gammar"] * nsinv
+        Cvfg_avg = state["Cvfg_avg"] * b1 + Cvf / state["gammar"] * nsinv
         Cff_avg = state["Cff_avg"] * b1 + Cff * nsinv
 
         return {
@@ -382,7 +523,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key,adaptiv
     def write_spectra_to_file(state):
         mCvv_avg = np.array(state["mCvv_avg"])
         Cvfg_avg = np.array(state["Cvfg_avg"])
-        Cff_avg = np.array(state["Cff_avg"])*3./dt/(gamma**2)
+        Cff_avg = np.array(state["Cff_avg"]) * 3.0 / dt / (gamma**2)
         dFDT_avg = np.array(state["dFDT_avg"])
         gammar = np.array(state["gammar"])
         Cff_theo = np.array(ff_kernel(state))[:nom].T
@@ -394,7 +535,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key,adaptiv
                     mCvv_avg[i],
                     Cvfg_avg[i],
                     dFDT_avg[i],
-                    gammar[i] *gamma* au.THZ,
+                    gammar[i] * gamma * au.THZ,
                     Cff_avg[i] * ff_scale,
                     Cff_theo[i] * ff_scale,
                 )
@@ -426,7 +567,9 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key,adaptiv
         if do_compute_spectra:
             state = compute_spectra(state)
         if adaptive:
-            state = jax.lax.cond(state["nadapt"]>skipseg,update_gammar,lambda x:x,state)
+            state = jax.lax.cond(
+                state["nadapt"] > skipseg, update_gammar, lambda x: x, state
+            )
         state = refresh_force(state)
         return state
 
