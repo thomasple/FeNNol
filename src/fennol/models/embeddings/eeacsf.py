@@ -6,136 +6,140 @@ import numpy as np
 import dataclasses
 
 from ...utils.periodic_table import PERIODIC_TABLE, VALENCE_STRUCTURE
-from ..encodings import SpeciesEncoding
+from ..encodings import SpeciesEncoding, RadialBasis
 
 
 class EEACSF(nn.Module):
-    """
-    Computes the Atomic Environment Vector (AEV) for a given molecular system using the ANI model.
-
-    Args:
-        species_order (Sequence[str]): The atomic species which are considered by the model.
-        graph_angle_key (str): The key in the input dictionary that corresponds to the angular graph.
-        cutoff (float, optional): The radial cutoff distance in Angstroms. Default is 5.2.
-        angular_cutoff (float, optional): The angular cutoff distance in Angstroms. Default is 3.5.
-        radial_eta (float, optional): The radial eta hyperparameter. Default is 16.0.
-        angular_eta (float, optional): The angular eta hyperparameter. Default is 8.0.
-        radial_dist_divisions (int, optional): The number of radial distance divisions. Default is 16.
-        angular_dist_divisions (int, optional): The number of angular distance divisions. Default is 4.
-        zeta (float, optional): The zeta hyperparameter. Default is 32.0.
-        angle_sections (int, optional): The number of angular sections. Default is 4.
-        radial_start (float, optional): The starting radial distance. Default is 0.8.
-        angular_start (float, optional): The starting angular distance. Default is 0.8.
-        embedding_key (str, optional): The key to use for the output embedding in the returned dictionary. Default is "embedding".
-        graph_key (str, optional): The key in the input dictionary that corresponds to the radial graph. Default is "graph".
-    """
 
     _graphs_properties: Dict
     graph_angle_key: str
-    radial_eta: float = 16.0
-    angular_eta: float = 8.0
-    radial_dist_divisions: int = 16
-    angular_dist_divisions: int = 4
-    zeta: float = 32.0
-    angle_sections: int = 4
-    radial_start: float = 0.8
-    angular_start: float = 0.8
+    nmax_angle: int = 4
     embedding_key: str = "embedding"
     graph_key: str = "graph"
     species_encoding: dict = dataclasses.field(default_factory=dict)
+    radial_basis: dict = dataclasses.field(default_factory=dict)
+    radial_basis_angle: dict = dataclasses.field(default_factory=dict)
+    angle_combine_pairs: bool = False
 
     @nn.compact
     def __call__(self, inputs):
         species = inputs["species"]
-        rev_idx = {s: k for k, s in enumerate(PERIODIC_TABLE)}
-        maxidx = max(rev_idx.values())
+
+        # species encoding
+        
+        onehot = SpeciesEncoding(**self.species_encoding, name="SpeciesEncoding")(
+            species
+        )
 
         # Radial graph
         graph = inputs[self.graph_key]
         distances = graph["distances"]
-        switch = graph["switch"]
+        switch = graph["switch"][:,None]
         edge_src = graph["edge_src"]
         edge_dst = graph["edge_dst"]
 
-        # convert species to valence structure
-        valence_structure = np.array(VALENCE_STRUCTURE,dtype=np.float64)
-        valence_structure[:, 0] /= 2.0
-        valence_structure[:, 1] /= 6.0
-        valence_structure[:, 2] /= 10.0
-        valence_structure[:, 3] /= 14.0
-        valence_structure[valence_structure[:, 2] > 0][:, [0, 1]] = 0
-        valence_structure[valence_structure[:, 3] > 0][:, [0, 1]] = 0
-        valence = jnp.asarray(valence_structure,dtype=distances.dtype)[species]
-
-
-        # Radial AEV
+        # Radial BASIS
         cutoff = self._graphs_properties[self.graph_key]["cutoff"]
-        shiftR = jnp.asarray(
-            np.linspace(self.radial_start, cutoff, self.radial_dist_divisions + 1)[
-                None, :-1
-            ],
-            dtype=distances.dtype,
+        radial_terms = (
+            RadialBasis(
+                **{
+                    **self.radial_basis,
+                    "end": cutoff,
+                    "name": f"RadialBasis",
+                }
+            )(distances)*switch
         )
-        x2 = self.radial_eta * (distances[:, None] - shiftR) ** 2
-        radial_terms = 0.25 * jnp.exp(-x2) * switch[:, None]
-
         # aggregate radial AEV
         radial_aev = jax.ops.segment_sum(
-            radial_terms[:, :, None] * valence[edge_dst, None, :],
+            radial_terms[:, :, None] * onehot[edge_dst, None, :],
             edge_src,
             species.shape[0],
         ).reshape(species.shape[0], -1)
 
         # Angular graph
-        graph = inputs[self.graph_angle_key]
-        angles = graph["angles"]
-        distances = graph["distances"]
-        central_atom = graph["central_atom"]
-        angle_src, angle_dst = graph["angle_src"], graph["angle_dst"]
-        switch = graph["switch"]
-        d12 = 0.5 * (distances[angle_src] + distances[angle_dst])[:, None]
+        graph_angle = inputs[self.graph_angle_key]     
+        angles = graph_angle["angles"]
+        dang = graph_angle["distances"]
+        central_atom = graph_angle["central_atom"]
+        angle_src, angle_dst = graph_angle["angle_src"], graph_angle["angle_dst"]
+        switch_angles = graph_angle["switch"][:, None]
+        angular_cutoff = self._graphs_properties[self.graph_angle_key]["cutoff"]
+        edge_dst_ang = graph_angle["edge_dst"]
+
+
+        radial_basis_angle = (
+            self.radial_basis_angle
+            if self.radial_basis_angle is not None
+            else self.radial_basis
+        )
 
         # Angular AEV parameters
-        angular_cutoff = self._graphs_properties[self.graph_angle_key]["cutoff"]
-        angle_start = np.pi / (2 * self.angle_sections)
-        shiftZ = jnp.asarray(
-            (np.linspace(0, np.pi, self.angle_sections + 1) + angle_start)[None, :-1],
-            dtype=distances.dtype,
-        )
-        shiftA = jnp.asarray(
-            np.linspace(
-                self.angular_start, angular_cutoff, self.angular_dist_divisions + 1
-            )[None, :-1],
-            dtype=distances.dtype,
-        )
+        if self.angle_combine_pairs:
+            factor2 = RadialBasis(
+                **{
+                    **radial_basis_angle,
+                    "end": angular_cutoff,
+                    "name": f"RadialBasisAng",
+                }
+            )(dang)*switch_angles
+            radial_ang = (factor2[:, :, None] * onehot[edge_dst_ang, None, :]).reshape(-1, onehot.shape[1]*factor2.shape[1])
 
-        # Angular AEV
-        factor1 = (0.5 + 0.5 * jnp.cos(angles[:, None] - shiftZ)) ** self.zeta
-        factor2 = jnp.exp(-self.angular_eta * (d12 - shiftA) ** 2)
-        angular_terms = (
-            (factor1[:, None, :] * factor2[:, :, None]).reshape(
-                -1, self.angle_sections * self.angular_dist_divisions
+            radial_aev_ang = radial_ang[angle_src]*radial_ang[angle_dst]
+
+            # Angular AEV
+            nangles = jnp.asarray(
+                np.arange(self.nmax_angle + 1)[None, :], dtype=angles.dtype
             )
-            * 2
-            * (switch[angle_src] * switch[angle_dst])[:, None]
-        )
+            factor1 = jnp.cos(nangles * angles[:, None])
 
-        valence_dst = valence[graph["edge_dst"]]
-        valence_ang_p = valence_dst[angle_src] + valence_dst[angle_dst]
-        valence_ang_m = valence_dst[angle_src] * valence_dst[angle_dst]
-        valence_ang = (valence_ang_p[:, :, None] * valence_ang_m[:, None, :]).reshape(
-            -1, valence_ang_p.shape[1] * valence_ang_m.shape[1]
-        )
+            angular_aev = jax.ops.segment_sum(
+                factor1[:, None, :] * radial_aev_ang[:, :, None],
+                central_atom,
+                species.shape[0],
+            ).reshape(species.shape[0], -1)
 
-        angular_aev = jax.ops.segment_sum(
-            angular_terms[:, :, None] * valence_ang[:, None, :],
-            central_atom,
-            species.shape[0],
-        ).reshape(species.shape[0], -1)
+        else:
+            valence = SpeciesEncoding(
+                encoding="sjs_coordinates", name="SJSEncoding", trainable=False
+            )(species)
+            d12 = 0.5 * (dang[angle_src] + dang[angle_dst])
+            switch12 = switch_angles[angle_src] * switch_angles[angle_dst]
 
-        onehot = SpeciesEncoding(**self.species_encoding, name="SpeciesEncoding")(
-            species
-        )
+            
+            factor2 = RadialBasis(
+                **{
+                    **radial_basis_angle,
+                    "end": angular_cutoff,
+                    "name": f"RadialBasisAng",
+                }
+            )(d12)
+
+            # Angular AEV
+            nangles = jnp.asarray(
+                np.arange(self.nmax_angle + 1)[None, :], dtype=angles.dtype
+            )
+            factor1 = jnp.cos(nangles * angles[:, None]) * switch12
+
+            angular_terms = (factor1[:, None, :] * factor2[:, :, None]).reshape(
+                -1, factor1.shape[1] * factor2.shape[1]
+            )
+
+            valence_dst = valence[edge_dst_ang]
+            vangsrc = valence_dst[angle_src]
+            vangdst = valence_dst[angle_dst]
+            valence_ang_p = vangsrc + vangdst
+            valence_ang_m = vangsrc * vangdst
+            valence_ang = (valence_ang_p[:, :, None] * valence_ang_m[:, None, :]).reshape(
+                -1, valence_ang_p.shape[1] * valence_ang_m.shape[1]
+            )
+
+            angular_aev = jax.ops.segment_sum(
+                angular_terms[:, :, None] * valence_ang[:, None, :],
+                central_atom,
+                species.shape[0],
+            ).reshape(species.shape[0], -1)
+
+        
         embedding = jnp.concatenate((onehot, radial_aev, angular_aev), axis=-1)
         if self.embedding_key is None:
             return embedding
