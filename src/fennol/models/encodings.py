@@ -1,9 +1,20 @@
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
-from typing import Optional, Union
+from typing import Optional, Union, List
 import math
 import numpy as np
+from ..utils import AtomicUnits as au
+from functools import partial
+from ..utils.periodic_table import (
+    PERIODIC_TABLE_REV_IDX,
+    PERIODIC_TABLE,
+    ELECTRONIC_STRUCTURE,
+    VALENCE_STRUCTURE,
+    XENONPY_PROPS,
+    SJS_COORDINATES,
+    PERIODIC_COORDINATES,
+)
 
 
 class SpeciesEncoding(nn.Module):
@@ -23,17 +34,114 @@ class SpeciesEncoding(nn.Module):
     dim: int = 16
     zmax: int = 50
     output_key: Optional[str] = None
+    encoding: str = "random"
+    species_order: Optional[List[str]] = None
+    trainable: bool = False
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
-        species = inputs["species"] if isinstance(inputs, dict) else inputs
 
+        zmax = self.zmax
+        if zmax <= 0 or zmax > len(PERIODIC_TABLE):
+            zmax = len(PERIODIC_TABLE)
+
+        zmaxpad = zmax + 2
+
+        encoding = self.encoding.lower().strip()
+        encodings = encoding.split("+")
         ############################
-        conv_tensor = self.param(
-            "conv_tensor",
-            lambda key, shape: jax.nn.standardize(jax.random.normal(key, shape)),
-            (self.zmax, self.dim),
-        )
+        conv_tensors = []
+
+        if "one_hot" in encodings or "onehot" in encodings:
+            if self.species_order is None:
+                conv_tensor = np.eye(zmax)
+                conv_tensor = np.concatenate(
+                    [np.zeros((1, zmax)), conv_tensor, np.zeros((1, zmax))], axis=0
+                )
+            else:
+                conv_tensor = np.zeros((zmaxpad, len(self.species_order)))
+                for i, s in enumerate(self.species_order):
+                    conv_tensor[PERIODIC_TABLE_REV_IDX[s], i] = 1
+
+            conv_tensors.append(conv_tensor)
+
+        if "occupation" in encodings:
+            conv_tensor = np.zeros((zmaxpad, (zmax + 1) // 2))
+            for i in range(1, zmax + 1):
+                conv_tensor[i, : i // 2] = 1
+                if i % 2 == 1:
+                    conv_tensor[i, i // 2] = 0.5
+
+            conv_tensors.append(conv_tensor)
+
+        if "electronic_structure" in encodings:
+            Z = np.arange(1, zmax + 1).reshape(-1, 1)
+            e_struct = np.array(ELECTRONIC_STRUCTURE[1 : zmax + 1])
+            v_struct = np.array(VALENCE_STRUCTURE[1 : zmax + 1])
+            conv_tensor = np.concatenate([Z, e_struct, v_struct], axis=1)
+            ref = np.array(
+                [zmax, 2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6] + [2, 6, 10, 14]
+            )
+            conv_tensor = conv_tensor / ref[None, :]
+            dim = conv_tensor.shape[1]
+            conv_tensor = np.concatenate(
+                [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
+            )
+
+            conv_tensors.append(conv_tensor)
+
+        if "properties" in encodings:
+            props = np.array(XENONPY_PROPS)[1:-1]
+            conv_tensor = props[1 : zmax + 1]
+            mean = np.mean(props, axis=0)
+            std = np.std(props, axis=0)
+            conv_tensor = (conv_tensor - mean[None, :]) / std[None, :]
+            dim = conv_tensor.shape[1]
+            conv_tensor = np.concatenate(
+                [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
+            )
+            conv_tensors.append(conv_tensor)
+
+        if "sjs_coordinates" in encodings:
+            coords = np.array(SJS_COORDINATES)[1:-1]
+            conv_tensor = coords[1 : zmax + 1]
+            mean = np.mean(coords, axis=0)
+            std = np.std(coords, axis=0)
+            conv_tensor = (conv_tensor - mean[None, :]) / std[None, :]
+            dim = conv_tensor.shape[1]
+            conv_tensor = np.concatenate(
+                [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
+            )
+            conv_tensors.append(conv_tensor)
+
+        if len(conv_tensors) > 0:
+            conv_tensor = np.concatenate(conv_tensors, axis=1)
+            if self.trainable:
+                conv_tensor = self.param(
+                    "conv_tensor",
+                    lambda key: jnp.asarray(conv_tensor, dtype=jnp.float32),
+                )
+            else:
+                conv_tensor = jnp.asarray(conv_tensor, dtype=jnp.float32)
+        else:
+            conv_tensor = None
+
+        if "random" in encodings:
+            rand_encoding = self.param(
+                "rand_encoding",
+                lambda key, shape: jax.nn.standardize(
+                    jax.random.normal(key, shape, dtype=jnp.float32)
+                ),
+                (zmaxpad, self.dim),
+            )
+            if conv_tensor is None:
+                conv_tensor = rand_encoding
+            else:
+                conv_tensor = jnp.concatenate([conv_tensor, rand_encoding], axis=1)
+
+        assert conv_tensor is not None, "No encoding selected."
+
+        species = inputs["species"] if isinstance(inputs, dict) else inputs
         out = conv_tensor[species]
         ############################
 
@@ -69,6 +177,7 @@ class RadialBasis(nn.Module):
     basis: str = "bessel"
     trainable: bool = False
     enforce_positive: bool = False
+    gamma: float = 1./(2*au.BOHR)
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -82,8 +191,8 @@ class RadialBasis(nn.Module):
         if basis == "bessel":
             c = self.end - self.start
             x = x[:, None] - self.start
-            if self.enforce_positive:
-                x=jax.nn.softplus(x)
+            # if self.enforce_positive:
+            #     x = jax.nn.softplus(x)
 
             if self.trainable:
                 bessel_roots = self.param(
@@ -93,15 +202,20 @@ class RadialBasis(nn.Module):
                     ),
                     self.dim,
                 )
-                norm = 1./jnp.max(bessel_roots) # (2.0 / c) ** 0.5 /jnp.max(bessel_roots)
+                norm = 1.0 / jnp.max(
+                    bessel_roots
+                )  # (2.0 / c) ** 0.5 /jnp.max(bessel_roots)
             else:
                 bessel_roots = jnp.asarray(
                     np.arange(1, self.dim + 1, dtype=x.dtype)[None, :] * (math.pi / c)
                 )
-                norm = 1./(self.dim*math.pi/c) #(2.0 / c) ** 0.5/(self.dim*math.pi/c)
+                norm = 1.0 / (
+                    self.dim * math.pi / c
+                )  # (2.0 / c) ** 0.5/(self.dim*math.pi/c)
 
-
-            out =  norm * jnp.sin(x * bessel_roots) / x
+            out = norm * jnp.sin(x * bessel_roots) / x
+            if self.enforce_positive:
+                out = jnp.where(x>0, out*(1.-jnp.exp(-x**2)), 0.0)
 
         elif basis == "gaussian":
             if self.trainable:
@@ -136,8 +250,11 @@ class RadialBasis(nn.Module):
                     dtype=x.dtype,
                 )
 
-            x2 = (eta * (x[:, None] - roots)) ** 2
+            x=x[:,None]
+            x2 = (eta * (x - roots)) ** 2
             out = jnp.exp(-x2)
+            if self.enforce_positive:
+                out = jnp.where(x>self.start, out*(1.-jnp.exp(-10*(x-self.start)**2)), 0.0)
 
         elif basis == "gaussian_rinv":
             rinv_high = 1.0 / max(self.start, 0.1)
@@ -176,9 +293,9 @@ class RadialBasis(nn.Module):
                     dtype=x.dtype,
                 )
 
-            rinv = 1.0 / x
+            rinv = 1.0 / x[:, None]
 
-            out = jnp.exp(-((rinv[..., None] - roots) ** 2) / sigmas**2)
+            out = jnp.exp(-((rinv - roots) ** 2) / sigmas**2)
 
         elif basis == "fourier":
             if self.trainable:
@@ -191,30 +308,57 @@ class RadialBasis(nn.Module):
                 roots = jnp.asarray(
                     np.arange(self.dim)[None, :] * math.pi, dtype=x.dtype
                 )
-            c = (self.end - self.start)
-            x = (x[:, None] - self.start) 
-            if self.enforce_positive:
-                x=jax.nn.softplus(x)
+            c = self.end - self.start
+            x = x[:, None] - self.start
+            # if self.enforce_positive:
+            #     x = jax.nn.softplus(x)
             norm = 1.0 / (0.25 + 0.5 * self.dim) ** 0.5
-            out = norm * jnp.cos(x * roots/c)
+            out = norm * jnp.cos(x * roots / c)
+            if self.enforce_positive:
+                out = jnp.where(x>0, out, norm)
+            
 
         elif basis == "spooky":
-            norms = []
-            for k in range(self.dim):
-                norms.append(math.comb(self.dim - 1, k))
-            norms = jnp.asarray(np.array(norms)[None, :], dtype=x.dtype)
-            gamma = 0.5 / self.end
+            
+            gamma = self.gamma
             if self.trainable:
                 gamma = jnp.abs(
                     self.param("gamma", lambda key: jnp.asarray(gamma, dtype=x.dtype))
                 )
-            x= x[:, None] - self.start
+                
             if self.enforce_positive:
-                x=jax.nn.softplus(x)
+                x = jnp.where(x>self.start, x-self.start, 0.0)[:,None]
+                dim = self.dim
+            else:
+                x = x[:, None] - self.start
+                dim = self.dim - 1
+            
+            norms = []
+            for k in range(self.dim):
+                norms.append(math.comb(dim , k))
+            norms = jnp.asarray(np.array(norms)[None, :], dtype=x.dtype)
+
             e = jnp.exp(-gamma * x)
             k = jnp.asarray(np.arange(self.dim, dtype=x.dtype)[None, :])
-            b = e**k * (1 - e) ** (self.dim - 1 - k)
-            out = b * norms
+            b = e**k * (1 - e) ** (dim  - k)
+            out = b*e * norms
+            # logfac = np.zeros(self.dim)
+            # for i in range(2, self.dim):
+            #     logfac[i] = logfac[i - 1] + np.log(i)
+            # k = np.arange(self.dim)
+            # n = self.dim - 1 - k
+            # logbin = jnp.asarray((logfac[-1] - logfac[k] - logfac[n])[None,:], dtype=x.dtype)
+            # n = jnp.asarray(n[None,:], dtype=x.dtype)
+            # k = jnp.asarray(k[None,:], dtype=x.dtype)
+
+            # gamma = 1.0 / (2 * au.BOHR)
+            # if self.trainable:
+            #     gamma = jnp.abs(
+            #         self.param("gamma", lambda key: jnp.asarray(gamma, dtype=x.dtype))
+            #     )
+            # gammar = (-gamma * x)[:,None]
+            # x = logbin + n * gammar + k * jnp.log(-jnp.expm1(gammar))
+            # out = jnp.exp(x)*jnp.exp(gammar)
         else:
             raise NotImplementedError(f"Unknown radial basis {basis}.")
         ############################
@@ -225,7 +369,21 @@ class RadialBasis(nn.Module):
         return out
 
 
+@partial(jax.jit, static_argnums=(1,2))
+def positional_encoding(t,d:int,n:float=10000.):
+    if d%2==0:
+        k=np.arange(d//2)
+    else:
+        k=np.arange((d+1)//2)
+    wk = jnp.asarray(1.0/(n**(2*k/d)))
+    wkt = wk[None,:]*t[:,None]
+    out = jnp.concatenate([jnp.cos(wkt),jnp.sin(wkt)],axis=-1)
+    if d%2==1:
+        out = out[:,:-1]
+    return out
+    
+
 ENCODINGS = {
-    "RADIAL_ENCODING": RadialBasis,
+    "RADIAL_BASIS": RadialBasis,
     "SPECIES_ENCODING": SpeciesEncoding,
 }
