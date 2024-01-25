@@ -6,7 +6,8 @@ import jax
 import numpy as np
 from functools import partial
 from typing import Optional, Tuple
-from ..utils.activations import activation_from_str
+from ..utils.activations import activation_from_str, TrainableSiLU
+from ..utils.initializers import initializer_from_str, scaled_orthogonal
 
 
 class FullyConnectedNet(nn.Module):
@@ -27,6 +28,7 @@ class FullyConnectedNet(nn.Module):
     input_key: Optional[str] = None
     output_key: Optional[str] = None
     squeeze: bool = False
+    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -52,12 +54,22 @@ class FullyConnectedNet(nn.Module):
             if isinstance(self.activation, str)
             else self.activation
         )
+        kernel_init = (
+            initializer_from_str(self.kernel_init)
+            if isinstance(self.kernel_init, str)
+            else self.kernel_init
+        )
         ############################
         for i, d in enumerate(self.neurons[:-1]):
-            x = nn.Dense(d, use_bias=self.use_bias, name=f"Layer_{i+1}")(x)
+            x = nn.Dense(
+                d, use_bias=self.use_bias, name=f"Layer_{i+1}", kernel_init=kernel_init
+            )(x)
             x = activation(x)
         x = nn.Dense(
-            self.neurons[-1], use_bias=self.use_bias, name=f"Layer_{len(self.neurons)}"
+            self.neurons[-1],
+            use_bias=self.use_bias,
+            name=f"Layer_{len(self.neurons)}",
+            kernel_init=kernel_init,
         )(x)
         if self.squeeze and x.shape[-1] == 1:
             x = jnp.squeeze(x, axis=-1)
@@ -68,16 +80,17 @@ class FullyConnectedNet(nn.Module):
             return {**inputs, output_key: x} if output_key is not None else x
         return x
 
+
 class ResMLP(nn.Module):
     """
-        Residual neural network as defined in SpookyNet paper
+    Residual neural network as defined in SpookyNet paper
     """
-    output_dim: int
-    activation: Union[Callable, str] = nn.silu
+
     use_bias: bool = True
     input_key: Optional[str] = None
     output_key: Optional[str] = None
-    squeeze: bool = False
+    kernel_init: Union[str, Callable] = scaled_orthogonal(mode="fan_avg")
+    res_only: bool = False
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -89,25 +102,29 @@ class ResMLP(nn.Module):
         else:
             x = inputs[self.input_key]
 
-        activation = (
-            activation_from_str(self.activation)
-            if isinstance(self.activation, str)
-            else self.activation
+        kernel_init = (
+            initializer_from_str(self.kernel_init)
+            if isinstance(self.kernel_init, str)
+            else self.kernel_init
         )
         ############################
-        y = nn.Dense(x.shape[-1],use_bias=self.use_bias)(activation(x))
-        y = activation(x + nn.Dense(x.shape[-1],use_bias=self.use_bias)(activation(y)))
-        x = nn.Dense(
-            self.output_dim, use_bias=self.use_bias
-        )(y)
-        if self.squeeze and x.shape[-1] == 1:
-            x = jnp.squeeze(x, axis=-1)
+        out = nn.Dense(x.shape[-1], use_bias=self.use_bias, kernel_init=kernel_init)(
+            TrainableSiLU()(x)
+        )
+        out = x + nn.Dense(
+            x.shape[-1], use_bias=self.use_bias, kernel_init=nn.initializers.zeros
+        )(TrainableSiLU()(out))
+
+        if not self.res_only:
+            out = nn.Dense(
+                x.shape[-1], use_bias=self.use_bias, kernel_init=kernel_init
+            )(TrainableSiLU()(out))
         ############################
 
         if self.input_key is not None:
             output_key = self.name if self.output_key is None else self.output_key
-            return {**inputs, output_key: x} if output_key is not None else x
-        return x
+            return {**inputs, output_key: out} if output_key is not None else out
+        return out
 
 
 class FullyResidualNet(nn.Module):
@@ -123,13 +140,14 @@ class FullyResidualNet(nn.Module):
     """
 
     dim: int
-    output_dim:int
+    output_dim: int
     nlayers: int
     activation: Union[Callable, str] = nn.silu
     use_bias: bool = True
     input_key: Optional[str] = None
     output_key: Optional[str] = None
     squeeze: bool = False
+    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -155,16 +173,34 @@ class FullyResidualNet(nn.Module):
             if isinstance(self.activation, str)
             else self.activation
         )
+        kernel_init = (
+            initializer_from_str(self.kernel_init)
+            if isinstance(self.kernel_init, str)
+            else self.kernel_init
+        )
         ############################
         if x.shape[-1] != self.dim:
-            x = nn.Dense(self.dim, use_bias=self.use_bias, name=f"Reshape")(x)
+            x = nn.Dense(
+                self.dim,
+                use_bias=self.use_bias,
+                name=f"Reshape",
+                kernel_init=kernel_init,
+            )(x)
 
         for i in range(self.nlayers - 1):
             x = x + activation(
-                nn.Dense(self.dim, use_bias=self.use_bias, name=f"Layer_{i+1}")(x)
+                nn.Dense(
+                    self.dim,
+                    use_bias=self.use_bias,
+                    name=f"Layer_{i+1}",
+                    kernel_init=kernel_init,
+                )(x)
             )
         x = nn.Dense(
-            self.output_dim, use_bias=self.use_bias, name=f"Layer_{self.nlayers}"
+            self.output_dim,
+            use_bias=self.use_bias,
+            name=f"Layer_{self.nlayers}",
+            kernel_init=kernel_init,
         )(x)
         if self.squeeze and x.shape[-1] == 1:
             x = jnp.squeeze(x, axis=-1)
@@ -188,6 +224,7 @@ class HierarchicalNet(nn.Module):
     output_key: Optional[str] = None
     decay: float = 0.01
     squeeze: bool = False
+    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -206,6 +243,7 @@ class HierarchicalNet(nn.Module):
             split_rngs={"params": True},
             in_axes=-2,
             out_axes=-2,
+            kenel_init=self.kernel_init,
         )(self.neurons, self.activation, self.use_bias)
 
         out = networks(x)
@@ -248,6 +286,7 @@ class ChemicalNetHet(nn.Module):
     input_key: Optional[str] = None
     output_key: Optional[str] = None
     squeeze: bool = False
+    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
 
     def setup(self):
         idx_map = {s: i for i, s in enumerate(PERIODIC_TABLE)}
@@ -257,7 +296,11 @@ class ChemicalNetHet(nn.Module):
             neurons = self.neurons
         self.networks = {
             idx_map[k]: FullyConnectedNet(
-                neurons[k], self.activation, self.use_bias, name=k
+                neurons[k],
+                self.activation,
+                self.use_bias,
+                name=k,
+                kernel_init=self.kernel_init,
             )
             for k in self.species_order
         }
@@ -316,6 +359,7 @@ class ChemicalNet(nn.Module):
     input_key: Optional[str] = None
     output_key: Optional[str] = None
     squeeze: bool = False
+    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
 
     @nn.compact
     def __call__(
@@ -347,7 +391,7 @@ class ChemicalNet(nn.Module):
             variable_axes={"params": 0},
             split_rngs={"params": True},
             in_axes=0,
-        )(self.neurons, self.activation, self.use_bias)
+        )(self.neurons, self.activation, self.use_bias, kernel_init=self.kernel_init)
         # repeat input along a new axis to compute for all species at once
         x = jnp.repeat(embedding[None, :, :], len(self.species_order), axis=0)
 
@@ -367,6 +411,102 @@ class ChemicalNet(nn.Module):
         return out
 
 
+class MOENet(nn.Module):
+    neurons: Sequence[int]
+    num_networks: int
+    activation: Union[Callable, str] = nn.silu
+    use_bias: bool = True
+    input_key: Optional[str] = None
+    output_key: Optional[str] = None
+    squeeze: bool = False
+    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+    router_key: Optional[str] = None
+
+    @nn.compact
+    def __call__(
+        self, inputs: Union[dict, Tuple[jax.Array, jax.Array]]
+    ) -> Union[dict, jax.Array]:
+        if self.input_key is None:
+            assert not isinstance(
+                inputs, dict
+            ), "input key must be provided if inputs is a dictionary"
+            if isinstance(inputs, tuple):
+                embedding,router = inputs
+            else:
+                embedding = router = inputs
+        else:
+            embedding = inputs[self.input_key]
+            router = inputs[self.router_key] if self.router_key is not None else embedding
+
+        ############################
+        # build shape-sharing networks using vmap
+        networks = nn.vmap(
+            FullyConnectedNet,
+            variable_axes={"params": 0},
+            split_rngs={"params": True},
+            in_axes=0,
+            out_axes=0,
+        )(self.neurons, self.activation, self.use_bias, kernel_init=self.kernel_init)
+        # repeat input along a new axis to compute for all species at once
+        x = jnp.repeat(embedding[None, :, :], self.num_networks, axis=0)
+
+        w = nn.softmax(nn.Dense(self.num_networks, name="router")(router), axis=-1)
+
+        out = (networks(x) * w.T[:, :, None]).sum(axis=0)
+
+        if self.squeeze and out.shape[-1] == 1:
+            out = jnp.squeeze(out, axis=-1)
+        ############################
+
+        if self.input_key is not None:
+            output_key = self.name if self.output_key is None else self.output_key
+            return {**inputs, output_key: out} if output_key is not None else out
+        return out
+
+class GatedPerceptron(nn.Module):
+    dim: int
+    use_bias: bool = True
+    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+    activation: Union[Callable, str] = nn.silu
+    input_key: Optional[str] = None
+    output_key: Optional[str] = None
+    squeeze: bool = False
+
+
+    @nn.compact
+    def __call__(self, inputs):
+        if self.input_key is None:
+            assert not isinstance(
+                inputs, dict
+            ), "input key must be provided if inputs is a dictionary"
+            x = inputs
+        else:
+            x = inputs[self.input_key]
+
+        activation = (
+            activation_from_str(self.activation)
+            if isinstance(self.activation, str)
+            else self.activation
+        )
+        kernel_init = (
+            initializer_from_str(self.kernel_init)
+            if isinstance(self.kernel_init, str)
+            else self.kernel_init
+        )
+        ############################
+        gate = jax.nn.sigmoid(nn.Dense(self.dim, use_bias=self.use_bias, kernel_init=kernel_init)(x))
+        x = gate * activation(nn.Dense(self.dim, use_bias=self.use_bias, kernel_init=kernel_init)(x))
+
+        if self.squeeze and out.shape[-1] == 1:
+            out = jnp.squeeze(out, axis=-1)
+        ############################
+
+        if self.input_key is not None:
+            output_key = self.name if self.output_key is None else self.output_key
+            return {**inputs, output_key: x} if output_key is not None else x
+        return x
+
+
 NETWORKS = {
     "NEURAL_NET": FullyConnectedNet,
     "SKIP_NET": FullyResidualNet,
@@ -374,4 +514,6 @@ NETWORKS = {
     "CHEMICAL_NET": ChemicalNet,
     "CHEMICAL_NET_HET": ChemicalNetHet,
     "RES_MLP": ResMLP,
+    "MOE_NET": MOENet,
+    "GATED_PERCEPTRON": GatedPerceptron,
 }
