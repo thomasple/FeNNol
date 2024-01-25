@@ -96,10 +96,10 @@ class HIPNNEmbedding(nn.Module):
                 )(jnp.concatenate([zi[edge_dst], s], axis=-1))
 
             if self.lmax == 0:
-                zi = act(zself.at[edge_src].add(mij * switch))
+                zi = act(zself.at[edge_src].add(mij * switch,mode="drop"))
             else:
                 if filtered_l:
-                    zself = zself.at[edge_src].add(mij * switch)
+                    zself = zself.at[edge_src].add(mij * switch,mode="drop")
                     filter_indices = graph_l["filter_indices"]
                     mij = mij[filter_indices]
 

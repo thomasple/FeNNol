@@ -2,9 +2,9 @@ from numpy import pi
 
 
 class AtomicUnits:
-    EV = 27.211  # Hartree to eV
-    KCALPERMOL = 627.509  # Hartree to kcal/mol
-    KJPERMOL = 2625.5  # Hartree to kJ/mol
+    EV = 27.211399  # Hartree to eV
+    KCALPERMOL = 627.5096080305927  # Hartree to kcal/mol
+    KJPERMOL = 2625.5002  # Hartree to kJ/mol
     BOHR = 0.52917721  # Bohr to Angstrom
     MPROT = 1836.15  # proton mass
     HBAR = 1.0  # Planck's constant

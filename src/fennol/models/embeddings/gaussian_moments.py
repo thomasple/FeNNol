@@ -69,7 +69,7 @@ class GaussianMomentsEmbedding(nn.Module):
         )
         rhoij = xij[:, :, None] * Yij[:, None, :]
 
-        rhoi = jnp.zeros((species.shape[0], *rhoij.shape[1:])).at[edge_src].add(rhoij)
+        rhoi = jax.ops.segment_sum(rhoij, edge_src, species.shape[0])
 
         xi0 = jax.lax.index_in_dim(rhoi, 0, axis=-1, keepdims=False)
 

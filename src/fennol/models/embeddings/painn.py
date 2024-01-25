@@ -46,8 +46,8 @@ class PAINNEmbedding(nn.Module):
 
         distances = graph["distances"]
         switch = graph["switch"][:, None]
-        dirij = (graph["vec"] / distances[:, None])[:, None, :]
-        Vi = jnp.zeros((xi.shape[0], nchannels, 3), dtype=xi.dtype)
+        dirij = (graph["vec"] / distances[:, None])[:, :,None]
+        Vi = jnp.zeros((xi.shape[0], 3, nchannels), dtype=xi.dtype)
 
         radial_basis = RadialBasis(
             **{
@@ -79,30 +79,27 @@ class PAINNEmbedding(nn.Module):
                 phi[edge_dst] * w, [self.dim, self.dim + nchannels], axis=-1
             )
 
-            dvij = dirij * hvs[:, :, None]
+            dvij = dirij * hvs[:, None,:]
             if layer > 0:
-                dvij = dvij + Vi[edge_dst] * hvv[:, :, None]
+                dvij = dvij + Vi[edge_dst] * hvv[:, None,:]
 
             # aggregate messages
             v_message = Vi + jax.ops.segment_sum(dvij, edge_src, Vi.shape[0])
             x_message = xi + jax.ops.segment_sum(dxij, edge_src, xi.shape[0])
 
             # update
-            U = self.param(
-                f"U_{layer}",
-                nn.initializers.normal(stddev=1.0 / nchannels**0.5),
-                (nchannels, nchannels),
+            u,v = jnp.split(
+                nn.Dense(
+                    2 * self.nchannels,
+                    use_bias=False,
+                    name=f"UV_{layer}",
+                )(v_message),
+                2,
+                axis=-1,
             )
-            V = self.param(
-                f"V_{layer}",
-                nn.initializers.normal(stddev=1.0 / nchannels**0.5),
-                (nchannels, nchannels),
-            )
-            u = jnp.einsum("aik,ij->ajk", v_message, U)
-            v = jnp.einsum("aik,ij->ajk", v_message, V)
 
-            scals = (u * v).sum(axis=-1)
-            norms = tssr2(jnp.sum(v**2, axis=-1))
+            scals = (u * v).sum(axis=1)
+            norms = tssr2((v**2).sum(axis=1))
 
             A = FullyConnectedNet(
                 [*self.update_hidden, self.dim + 2 * nchannels],
@@ -117,7 +114,7 @@ class PAINNEmbedding(nn.Module):
                 axis=-1,
             )
 
-            Vi = Vi + u * avv[:, :, None]
+            Vi = Vi + u * avv[:, None,:]
             if self.dim != nchannels:
                 dxi = nn.Dense(self.dim, name=f"resize_{layer}", use_bias=False)(
                     scals * asv

@@ -81,12 +81,12 @@ class VdwOQDO(nn.Module):
             f8 = f6 - (1.0 / 24.0) * ez * z**4
             f10 = f8 - (1.0 / 120.0) * ez * z**5
             epair = (
-                -f6 * c6ij / rij**6 - f8 * c8ij / rij**8 - f10 * c10ij / rij**10
+                f6 * c6ij / rij**6 + f8 * c8ij / rij**8 + f10 * c10ij / rij**10
             )
         else:
-            epair = -c6ij / rij**6 - c8ij / rij**8 - c10ij / rij**10
+            epair = c6ij / rij**6 + c8ij / rij**8 + c10ij / rij**10
 
-        edisp = 0.5 * jax.ops.segment_sum(epair * switch, edge_src, species.shape[0])
+        edisp = -0.5 * jax.ops.segment_sum(epair * switch, edge_src, species.shape[0])
 
         output_key = self.name if self.energy_key is None else self.energy_key
 
