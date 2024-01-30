@@ -10,6 +10,7 @@ from .spookynet import SpookyNetEmbedding
 from .foam import FOAMEmbedding
 from .chgnet import CHGNetEmbedding
 from .deeppot import DeepPotEmbedding,DeepPotE3Embedding
+from .minimace import MiniMaceEmbedding
 EMBEDDINGS={
     "GAUSSIAN_MOMENTS_EMBEDDING": GaussianMomentsEmbedding,
     "ANI_AEV": ANIAEV,
@@ -25,4 +26,5 @@ EMBEDDINGS={
     "CHGNET": CHGNetEmbedding,
     "DEEPPOT": DeepPotEmbedding,
     "DEEPPOT_E3": DeepPotE3Embedding,
+    "MINIMACE": MiniMaceEmbedding,
 }
