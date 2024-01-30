@@ -26,6 +26,7 @@ class MiniMaceEmbedding(nn.Module):
     tensor_embedding_key: str = "tensor_embedding"
     species_encoding: dict = dataclasses.field(default_factory=dict)
     radial_basis: dict = dataclasses.field(default_factory=dict)
+    ignore_parity: bool = True
 
     @nn.compact
     def __call__(self, inputs):
@@ -111,7 +112,7 @@ class MiniMaceEmbedding(nn.Module):
                     self.lmax,
                     self.lmax,
                     name=f"TP_{layer}_{i}",
-                    ignore_parity=True,
+                    ignore_parity=self.ignore_parity,
                 )(Vi, Hi)
                 scals.append(jax.lax.index_in_dim(Li, 0, axis=-1, keepdims=False))
                 Vi = Vi + Li
