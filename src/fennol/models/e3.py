@@ -7,6 +7,15 @@ from functools import partial
 from typing import Optional, Tuple
 from ..utils.spherical_harmonics import CG_SO3, spherical_to_cartesian_tensor
 
+### e3nn version
+try:
+    import e3nn_jax as e3nn
+    E3NN_AVAILABLE = True
+    E3NN_EXCEPTION = None
+except Exception as e:
+    E3NN_AVAILABLE = False
+    E3NN_EXCEPTION = e
+
 
 class FullTensorProduct(nn.Module):
     """Tensor product of two spherical harmonics"""

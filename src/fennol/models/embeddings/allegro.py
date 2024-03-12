@@ -5,9 +5,9 @@ from ...utils.spherical_harmonics import generate_spherical_harmonics
 from ..encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
-from typing import Any, Dict, List, Union, Callable, Tuple, Sequence
+from typing import Any, Dict, List, Union, Callable, Tuple, Sequence,Optional
 from ..nets import FullyConnectedNet
-from ..e3 import FilteredTensorProduct, ChannelMixingE3, ChannelMixing
+from ..e3 import FilteredTensorProduct, ChannelMixingE3, ChannelMixing,E3NN_AVAILABLE,E3NN_EXCEPTION
 
 
 class AllegroEmbedding(nn.Module):
@@ -20,7 +20,7 @@ class AllegroEmbedding(nn.Module):
     nchannels: int = 16
     nlayers: int = 3
     lmax: int = 2
-    lmax_density: int = None
+    lmax_density: Optional[int] = None
     twobody_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
     embedding_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [])
     latent_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
@@ -66,7 +66,7 @@ class AllegroEmbedding(nn.Module):
             * switch
         )
 
-        lmax_density = self.lmax_density or self.lmax
+        lmax_density = self.lmax_density if self.lmax_density is not None else self.lmax
         assert lmax_density >= self.lmax
 
         Yij = generate_spherical_harmonics(lmax=lmax_density, normalize=False)(
@@ -91,7 +91,7 @@ class AllegroEmbedding(nn.Module):
                 jnp.zeros((species.shape[0], *rhoij.shape[1:])).at[edge_src].add(rhoij)
             )
 
-            Lij = FilteredTensorProduct(self.lmax, self.lmax_density)(
+            Lij = FilteredTensorProduct(self.lmax, lmax_density)(
                 Vij, density[edge_src]
             )
             scals = jax.lax.index_in_dim(Lij, 0, axis=-1, keepdims=False)
@@ -107,10 +107,10 @@ class AllegroEmbedding(nn.Module):
         return {**inputs, self.embedding_key: xij, self.tensor_embedding_key: Vij}
 
 
-### e3nn version
-try:
-    import e3nn_jax as e3nn
 
+if E3NN_AVAILABLE:
+    import e3nn_jax as e3nn
+    
     class AllegroE3NNEmbedding(nn.Module):
         """
         Allegro Embedding from ...
@@ -220,9 +220,9 @@ try:
             if self.embedding_key is None:
                 return xij, Vij
             return {**inputs, self.embedding_key: xij, self.tensor_embedding_key: Vij}
-
-except ImportError:
-
+else:
     class AllegroE3NNEmbedding(nn.Module):
         def __call__(self, *args, **kwargs) -> Any:
-            raise ImportError("e3nn_jax not installed, cannot use AllegroE3NNEmbedding")
+            raise E3NN_EXCEPTION
+
+
