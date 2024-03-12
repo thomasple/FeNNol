@@ -9,12 +9,13 @@ readme = "README.md"
 dependencies = [
    "numpy",
    "numba",
+   "h5py",
    "scipy",
    "sympy",
    "flax[all]",
-   "jaxopt",
    "tomlkit",
    "optax",
+   "ase",
 ]
 
 
