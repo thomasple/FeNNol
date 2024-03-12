@@ -8,6 +8,20 @@ import dataclasses
 from typing import Optional, Tuple, Dict, List, Union
 from ..utils.periodic_table import PERIODIC_TABLE
 
+class EnsembleStatistics(nn.Module):
+    key: str
+    axis: int = -1
+    output_key: Optional[str] = None
+
+    @nn.compact
+    def __call__(self, inputs) -> Any:
+        x = inputs[self.key]
+        mean = jnp.mean(x, axis=self.axis)
+        var = jnp.var(x, axis=self.axis,ddof=1)
+        output_key = self.key if self.output_key is None else self.output_key
+        return {**inputs, output_key+"_mean": mean, output_key+"_var": var}
+
+
 
 class ConstrainEvidence(nn.Module):
     key: str
@@ -123,4 +137,5 @@ class ConstrainEvidence(nn.Module):
 
 UNCERTAINY_MODULES = {
     "CONSTRAIN_EVIDENCE": ConstrainEvidence,
+    "ENSEMBLE_STAT": EnsembleStatistics,
 }
