@@ -2,7 +2,8 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 import numpy as np
-from jaxopt.linear_solve import solve_cg, solve_iterative_refinement, solve_gmres
+
+# from jaxopt.linear_solve import solve_cg, solve_iterative_refinement, solve_gmres
 from typing import Any, Dict, Union, Callable, Sequence, Optional
 from ...utils import AtomicUnits as au
 import dataclasses
@@ -20,31 +21,37 @@ import math
 
 
 @jax.jit
-def ewald_reciprocal(q, cells, reciprocal_cells, coordinates, batch_index, k_points, bewald):
+def ewald_reciprocal(
+    q, cells, reciprocal_cells, coordinates, batch_index, k_points, bewald
+):
     A = reciprocal_cells
     ### Ewald reciprocal space
 
     if A.shape[0] == 1:
         s = jnp.einsum("ij,aj->ai", A[0], coordinates)
-        ks = 2j*jnp.pi*jnp.einsum("ai,ki-> ak",s,k_points[0]) # nat x nk
-        Sm = (q[:,None]*jnp.exp(ks)).sum(axis=0)[None,:] # nys x nk
+        ks = 2j * jnp.pi * jnp.einsum("ai,ki-> ak", s, k_points[0])  # nat x nk
+        Sm = (q[:, None] * jnp.exp(ks)).sum(axis=0)[None, :]  # nys x nk
     else:
         s = jnp.einsum("aij,aj->ai", A[batch_index], coordinates)
-        ks = 2j*jnp.pi*jnp.einsum("ai,aki-> ak",s,k_points[batch_index]) # nat x nk
-        Sm = jax.ops.segment_sum(q[:, None] * jnp.exp(ks), batch_index, k_points.shape[0]) # nsys x nk
+        ks = (
+            2j * jnp.pi * jnp.einsum("ai,aki-> ak", s, k_points[batch_index])
+        )  # nat x nk
+        Sm = jax.ops.segment_sum(
+            q[:, None] * jnp.exp(ks), batch_index, k_points.shape[0]
+        )  # nsys x nk
 
     m2 = jnp.sum(
         jnp.einsum("sij,ski->skj", A, k_points) ** 2,
-        #(
+        # (
         #    k_points[:, :, 0, None] * A[:, None, 0, :]
         #    + k_points[:, :, 1, None] * A[:, None, 1, :]
         #    + k_points[:, :, 2, None] * A[:, None, 2, :]
-        #)**2,
+        # )**2,
         axis=-1,
-    ) # nsys x nk
+    )  # nsys x nk
     a2 = (jnp.pi / bewald) ** 2
-    expfac = Sm * jnp.exp(-a2 * m2) / m2 # nsys x nk
-    volume = jnp.linalg.det(cells) # nsys
+    expfac = Sm * jnp.exp(-a2 * m2) / m2  # nsys x nk
+    volume = jnp.linalg.det(cells)  # nsys
 
     ### compute reciprocal Coulomb potential (https://arxiv.org/abs/1805.10363)
     phi = jnp.real((expfac[batch_index] * jnp.exp(-ks)).sum(axis=-1)) * (
@@ -64,6 +71,7 @@ class Coulomb(nn.Module):
     charge_scale: Optional[float] = None
     damp_style: Optional[str] = None
     damp_params: Dict = dataclasses.field(default_factory=dict)
+    bscreen: float = -1.0
     trainable: bool = True
 
     @nn.compact
@@ -91,7 +99,12 @@ class Coulomb(nn.Module):
 
         damp_style = self.damp_style.upper() if self.damp_style is not None else None
 
-        if "k_points" in graph:
+        do_recip = self.bscreen <= 0.0 and "k_points" in graph
+
+        if self.bscreen > 0.0:
+            # dirfact = jax.scipy.special.erfc(self.bscreen * distances)
+            dirfact = jnp.exp(-((self.bscreen * distances) ** 2))
+        elif do_recip:
             k_points = graph["k_points"]
             bewald = graph["b_ewald"]
             cells = inputs["cells"]
@@ -315,7 +328,7 @@ class Coulomb(nn.Module):
         else:
             raise NotImplementedError(f"damp_style {self.damp_style} not implemented")
 
-        if "k_points" in graph:
+        if do_recip:
             eat = eat + erec
 
         if self.scale is not None:
@@ -328,9 +341,9 @@ class Coulomb(nn.Module):
             eat = eat * scale
 
         energy_key = self.energy_key if self.energy_key is not None else self.name
-        out =  {**inputs, energy_key: eat}
-        if "k_points" in graph:
-            out[energy_key+"_reciprocal"] = erec
+        out = {**inputs, energy_key: eat}
+        if do_recip:
+            out[energy_key + "_reciprocal"] = erec
         return out
 
 
@@ -341,6 +354,8 @@ class QeqD4(nn.Module):
     energy_key: Optional[str] = None
     ridge: Optional[float] = None
     chi_key: Optional[str] = None
+    c3_key: Optional[str] = None
+    c4_key: Optional[str] = None
 
     @nn.compact
     def __call__(self, inputs):
@@ -355,24 +370,48 @@ class QeqD4(nn.Module):
             raise NotImplementedError(
                 "QeqD3 does not support periodic boundary conditions"
             )
+        Jii = D3_HARDNESSES
+        ai = D3_VDW_RADII
+        ETA = [jii + (2.0 / np.pi) ** 0.5 / aii for jii, aii in zip(Jii, ai)]
 
         # D3 parameters
         if self.trainable:
             ENi = self.param("EN", lambda key: jnp.asarray(D3_ELECTRONEGATIVITIES))[
                 species
             ]
-            Jii = self.param("J", lambda key: jnp.asarray(D3_HARDNESSES))[species]
+            # Jii = self.param("J", lambda key: jnp.asarray(D3_HARDNESSES))[species]
+            eta = jnp.abs(self.param("eta", lambda key: jnp.asarray(ETA)))[species]
             ai = jnp.abs(self.param("a", lambda key: jnp.asarray(D3_VDW_RADII)))[
                 species
             ]
             rci = jnp.abs(self.param("rc", lambda key: jnp.asarray(D3_COV_RADII)))[
                 species
             ]
+            c3 = self.param("c3", lambda key: jnp.zeros(len(D3_ELECTRONEGATIVITIES)))[
+                species
+            ]
+            c4 = jnp.abs(
+                self.param("c4", lambda key: jnp.zeros(len(D3_ELECTRONEGATIVITIES)))[
+                    species
+                ]
+            )
             kappai = self.param("kappa", lambda key: jnp.asarray(D3_KAPPA))[species]
             k1 = jnp.abs(self.param("k1", lambda key: jnp.asarray(7.5)))
+            if "training_flag" in inputs:
+                regularization = (
+                    (ENi - jnp.asarray(D3_ELECTRONEGATIVITIES)[species]) ** 2
+                    + (eta - jnp.asarray(ETA)[species]) ** 2
+                    + (ai - jnp.asarray(D3_VDW_RADII)[species]) ** 2
+                    + (rci - jnp.asarray(D3_COV_RADII)[species]) ** 2
+                    + (kappai - jnp.asarray(D3_KAPPA)[species]) ** 2
+                    + (k1 - 7.5) ** 2
+                )
         else:
+            c3 = jnp.zeros_like(species, dtype=jnp.float32)
+            c4 = jnp.zeros_like(species, dtype=jnp.float32)
             ENi = jnp.asarray(D3_ELECTRONEGATIVITIES)[species]
-            Jii = jnp.asarray(D3_HARDNESSES)[species]
+            # Jii = jnp.asarray(D3_HARDNESSES)[species]
+            eta = jnp.asarray(eta)[species]
             ai = jnp.asarray(D3_VDW_RADII)[species]
             rci = jnp.asarray(D3_COV_RADII)[species]
             kappai = jnp.asarray(D3_KAPPA)[species]
@@ -384,8 +423,8 @@ class QeqD4(nn.Module):
             + rci.at[edge_dst].get(mode="fill", fill_value=1.0)
             + 1.0e-3
         )
-        mCNij = (0.5 + 0.5 * jax.scipy.special.erf(-k1 * (rij / rcij - 1))) * switch
-        mCNi = jax.ops.segment_sum(mCNij, edge_src, species.shape[0])
+        mCNij = 1.0 + jax.scipy.special.erf(-k1 * (rij / rcij - 1)) 
+        mCNi = 0.5 * jax.ops.segment_sum(mCNij*switch, edge_src, species.shape[0])
         chi = ENi - kappai * (mCNi + 1.0e-3) ** 0.5
         if self.chi_key is not None:
             chi = chi + inputs[self.chi_key]
@@ -396,46 +435,82 @@ class QeqD4(nn.Module):
             + 1.0e-3
         ) ** (-0.5)
 
-        Aii = Jii + ((2.0 / np.pi) ** 0.5) / ai
+        Aii = eta #Jii + ((2.0 / np.pi) ** 0.5) / ai
         Aij = jax.scipy.special.erf(gamma_ij * rij) / rij * switch
 
-        nsys = inputs["natoms"].shape[0]
-        batch_index = inputs["batch_index"]
+        if self.charges_key in inputs:
+            q = inputs[self.charges_key]
+            q_ = q
+        else:
+            nsys = inputs["natoms"].shape[0]
+            batch_index = inputs["batch_index"]
 
-        def matvec(x):
-            l, q = jnp.split(x, (nsys,))
-            Aq_self = Aii * q
-            qdest = q.at[edge_dst].get(mode="fill", fill_value=0.0)
-            Aq_pair = jax.ops.segment_sum(Aij * qdest, edge_src, species.shape[0])
-            Aq = Aq_self + Aq_pair + l.at[batch_index].get(mode="fill", fill_value=0.0)
-            Al = jax.ops.segment_sum(q, batch_index, nsys)
-            return jnp.concatenate((Al, Aq))
+            def matvec(x):
+                l, q = jnp.split(x, (nsys,))
+                Aq_self = Aii * q
+                qdest = q.at[edge_dst].get(mode="fill", fill_value=0.0)
+                Aq_pair = jax.ops.segment_sum(Aij * qdest, edge_src, species.shape[0])
+                Aq = (
+                    Aq_self
+                    + Aq_pair
+                    + l.at[batch_index].get(mode="fill", fill_value=0.0)
+                )
+                Al = jax.ops.segment_sum(q, batch_index, nsys)
+                return jnp.concatenate((Al, Aq))
 
-        Qtot = inputs["total_charge"] if "total_charge" in inputs else jnp.zeros(nsys)
-        b = jnp.concatenate([Qtot, -chi])
-        # x = solve_cg(matvec, b, ridge=self.ridge)
-        # x = jax.lax.custom_linear_solve(matvec, b, solve_cg, symmetric=True)
-        # x,_ = jax.lax.custom_linear_solve(matvec,b,jax.scipy.sparse.linalg.cg,symmetric=True,has_aux=True)
-        x = jax.scipy.sparse.linalg.cg(matvec, b)[0]
+            Qtot = (
+                inputs["total_charge"] if "total_charge" in inputs else jnp.zeros(nsys)
+            )
+            b = jnp.concatenate([Qtot, -chi])
+            # x = solve_cg(matvec, b, ridge=self.ridge)
+            # x = jax.lax.custom_linear_solve(matvec, b, solve_cg, symmetric=True)
+            # x,_ = jax.lax.custom_linear_solve(matvec,b,jax.scipy.sparse.linalg.cg,symmetric=True,has_aux=True)
+            x = jax.scipy.sparse.linalg.cg(matvec, b)[0]
 
-        q = x[nsys:]
-        q_ = jax.lax.stop_gradient(q)
+            q = x[nsys:]
+            q_ = jax.lax.stop_gradient(q)
+
         eself = 0.5 * Aii * q_**2 + chi * q_
-        epair = (
-            0.5
-            * q_
-            * jax.ops.segment_sum(Aij * q_[edge_dst], edge_src, species.shape[0])
-        )
+
+        phi = jax.ops.segment_sum(Aij * q_[edge_dst], edge_src, species.shape[0])
+        epair = 0.5 * q_ * phi
+
+        if self.charges_key in inputs:
+            if self.c3_key is not None:
+                c3 = c3 + inputs[self.c3_key]
+            if self.c4_key is not None:
+                c4 = c4 + inputs[self.c4_key]
+            eself = eself + c3 * q_**3 + c4 * q_**4
+            if self.trainable and "training_flag" in inputs:
+                Aii_=jax.lax.stop_gradient(Aii)
+                chi_=jax.lax.stop_gradient(chi)
+                phi_=jax.lax.stop_gradient(phi)
+                c3_=jax.lax.stop_gradient(c3)
+                c4_=jax.lax.stop_gradient(c4)
+                switch_=jax.lax.stop_gradient(switch)
+                Aij_ = jax.lax.stop_gradient(Aij)
+                phi_ = jax.ops.segment_sum(Aij_ * q[edge_dst], edge_src, species.shape[0])
+
+                dedq = Aii_ * q + chi_ + phi_  + 3 * c3_ * q**2 + 4 * c4_ * q**3
+                dedq = jax.ops.segment_sum(
+                    switch_*(dedq[edge_src] - dedq[edge_dst]) ** 2, edge_src, species.shape[0]
+                )
+                etrain = 0.5 * Aii_ * q**2 + chi_ * q  + 0.5 * q * phi_ + c3_ * q**3 + c4_ * q**4
 
         energy = eself + epair
 
         energy_key = self.energy_key if self.energy_key is not None else self.name
 
-        return {
+        output = {
             **inputs,
             self.charges_key: q_,
             energy_key: energy,
         }
+        if self.charges_key in inputs and self.trainable and "training_flag" in inputs:
+            output[energy_key + "_regularization"] = regularization
+            output[energy_key + "_dedq"] = dedq
+            output[energy_key + "_etrain"] = etrain
+        return output
 
 
 class ChargeCorrection(nn.Module):
@@ -444,6 +519,7 @@ class ChargeCorrection(nn.Module):
     dq_key: str = "delta_qtot"
     ratioeta_key: str = None
     trainable: bool = False
+    cn_key: str = None
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -465,7 +541,7 @@ class ChargeCorrection(nn.Module):
         ai = D3_VDW_RADII
         eta = [jii + (2.0 / np.pi) ** 0.5 / aii for jii, aii in zip(Jii, ai)]
         if self.trainable:
-            eta = self.param("eta", lambda key: jnp.asarray(eta))[species]
+            eta = jnp.abs(self.param("eta", lambda key: jnp.asarray(eta)))[species]
         else:
             eta = jnp.asarray(eta)[species]
 
@@ -476,6 +552,11 @@ class ChargeCorrection(nn.Module):
             eta = eta * ratioeta
 
         s = (1.0e-6 + 2 * jnp.abs(eta)) ** (-1)
+        if self.cn_key is not None:
+            cn = inputs[self.cn_key]
+            if cn.shape[-1] == 1:
+                cn = jnp.squeeze(cn, axis=-1)
+            s = s * cn
 
         f = dq / jax.ops.segment_sum(s, batch_index, nsys)
 

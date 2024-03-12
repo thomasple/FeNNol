@@ -2,7 +2,6 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 import numpy as np
-from jaxopt.linear_solve import solve_cg, solve_iterative_refinement, solve_gmres
 from typing import Any, Dict, Union, Callable, Sequence, Optional
 from ...utils import AtomicUnits as au
 import dataclasses

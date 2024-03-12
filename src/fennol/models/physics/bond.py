@@ -2,7 +2,6 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 import numpy as np
-from jaxopt.linear_solve import solve_cg, solve_iterative_refinement, solve_gmres
 from typing import Any, Dict, Union, Callable, Sequence, Optional
 from ...utils import AtomicUnits as au
 import dataclasses
@@ -47,7 +46,7 @@ class CND4(nn.Module):
             k0 = self.k0
 
         CNij = (
-            0.5 * (1 + jax.scipy.special.erf(k0 * (1 - rij / rcij))) * graph["switch"]
+            0.5 * (1 + jax.scipy.special.erf(-k0 * (rij / rcij - 1.))) * graph["switch"]
         )
 
         if self.electronegativity_factor:
