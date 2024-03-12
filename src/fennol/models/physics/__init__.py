@@ -1,7 +1,8 @@
-from .repulsion import RepulsionZBL
-from .electrostatics import QeqD4,ChargeCorrection,Coulomb
-from .bond import CND4,CNShift,SumSwitch,CNStore
+from .bond import CND4, CNShift, CNStore, SumSwitch
 from .dispersion import VdwOQDO
+from .electrostatics import ChargeCorrection, Coulomb, QeqD4
+from .polarisation import Polarisation
+from .repulsion import RepulsionZBL
 
 PHYSICS={
     "REPULSION_ZBL": RepulsionZBL,
@@ -13,4 +14,5 @@ PHYSICS={
     "CN_STORE": CNStore,
     "SUM_SWITCH": SumSwitch,
     "VDW_OQDO": VdwOQDO,
+    "POLARISATION": Polarisation,
 }
