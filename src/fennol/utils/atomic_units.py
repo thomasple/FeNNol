@@ -6,7 +6,7 @@ class AtomicUnits:
     KCALPERMOL = 627.5096080305927  # Hartree to kcal/mol
     KJPERMOL = 2625.5002  # Hartree to kJ/mol
     BOHR = 0.52917721  # Bohr to Angstrom
-    MPROT = 1836.15  # proton mass
+    MPROT = 1836.1526734252586  # proton mass
     HBAR = 1.0  # Planck's constant
     FS = 2.4188843e-2  # AU time to femtoseconds
     PS = FS / 1000  # AU time to picoseconds
