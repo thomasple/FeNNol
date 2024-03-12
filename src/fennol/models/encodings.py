@@ -369,7 +369,7 @@ class RadialBasis(nn.Module):
         return out
 
 
-@partial(jax.jit, static_argnums=(1,2))
+@partial(jax.jit, static_argnums=(1,2),inline=True)
 def positional_encoding(t,d:int,n:float=10000.):
     if d%2==0:
         k=np.arange(d//2)
