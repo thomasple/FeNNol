@@ -266,6 +266,17 @@ class Transpose(nn.Module):
         output_key = self.output_key if self.output_key is not None else self.key
         return {**inputs, output_key: output}
 
+class Reshape(nn.Module):
+    key: str
+    shape: Sequence[int]
+    output_key: Optional[str] = None
+
+    @nn.compact
+    def __call__(self, inputs) -> Any:
+        output = jnp.reshape(inputs[self.key], self.shape)
+        output_key = self.output_key if self.output_key is not None else self.key
+        return {**inputs, output_key: output}
+
 class ChemicalConstant(nn.Module):
     value: Union[str, List[float], float, Dict]
     output_key: Optional[str] = None
@@ -312,7 +323,7 @@ class SwitchFunction(nn.Module):
             graph = inputs[self.graph_key]
             distances, edge_mask = graph["distances"], graph["edge_mask"]
             if self.cutoff is not None:
-                edge_mask = edge_mask * (distances < self.cutoff)
+                edge_mask = jnp.logical_and(edge_mask, (distances < self.cutoff))
                 cutoff = self.cutoff
             else:
                 cutoff = graph["cutoff"]
@@ -394,4 +405,5 @@ MISC = {
     "SWITCH_FUNCTION": SwitchFunction,
     "APPLY_SWITCH": ApplySwitch,
     "EDGE_CONCATENATE": EdgeConcatenate,
+    "RESHAPE": Reshape,
 }
