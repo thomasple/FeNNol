@@ -172,6 +172,7 @@ class FENNIX:
 
         self.modules = FENNIXModules(mods)
 
+        self.__apply = self.modules.apply
         self._apply = jax.jit(self.modules.apply)
 
         self.set_energy_terms(energy_terms)
@@ -191,40 +192,51 @@ class FENNIX:
 
         self._initializing = False
 
-    def set_energy_terms(self, energy_terms: Sequence[str]) -> None:
+    def set_energy_terms(self, energy_terms: Sequence[str],jit=True) -> None:
         object.__setattr__(self, "energy_terms", energy_terms)
 
         # build the energy and force functions
-        @jax.jit
         def total_energy(variables, data):
-            out = self._apply(variables, data)
+            out = self.__apply(variables, data)
             atomic_energies = 0.0
+            system_energies = 0.0
             species = out["species"]
+            nsys = out["natoms"].shape[0]
             for term in self.energy_terms:
                 e = out[term]
                 if e.shape[-1] == 1:
                     e = jnp.squeeze(e, axis=-1)
+                if e.shape[0] == nsys:
+                    system_energies += e
+                    continue
                 assert e.shape == species.shape
                 atomic_energies += e
             # atomic_energies = jnp.squeeze(atomic_energies, axis=-1)
-            if "true_atoms" in out:
-                atomic_energies = jnp.where(out["true_atoms"], atomic_energies, 0.0)
-            out["atomic_energies"] = atomic_energies
+            if isinstance(atomic_energies, jnp.ndarray):
+                if "true_atoms" in out:
+                    atomic_energies = jnp.where(out["true_atoms"], atomic_energies, 0.0)
+                out["atomic_energies"] = atomic_energies
+                energies = jax.ops.segment_sum(
+                    atomic_energies, data["batch_index"], num_segments=len(data["natoms"])
+                )
+            else:
+                energies = 0.
+            
+            if isinstance(system_energies, jnp.ndarray):
+                if "true_sys" in out:
+                    system_energies = jnp.where(out["true_sys"], system_energies, 0.0)
+                out["system_energies"] = system_energies
 
-            energies = jax.ops.segment_sum(
-                atomic_energies, data["batch_index"], num_segments=len(data["natoms"])
-            )
-            out["total_energy"] = energies
-            return energies, out
+            
+            out["total_energy"] = energies + system_energies
+            return out["total_energy"], out
 
-        @jax.jit
         def energy_and_forces(variables, data):
             def _etot(variables, coordinates):
                 energy, out = total_energy(
                     variables, {**data, "coordinates": coordinates}
                 )
                 return energy.sum(), out
-
             de, out = jax.grad(_etot, argnums=1, has_aux=True)(
                 variables, data["coordinates"]
             )
@@ -232,7 +244,6 @@ class FENNIX:
 
             return out["total_energy"], out["forces"], out
 
-        @jax.jit
         def energy_and_forces_and_virial(variables, data):
             assert "cells" in data
             cells = data["cells"]
@@ -267,11 +278,18 @@ class FENNIX:
 
             return out["total_energy"], out["forces"], out["virial_tensor"], out
 
-        object.__setattr__(self, "_total_energy", total_energy)
-        object.__setattr__(self, "_energy_and_forces", energy_and_forces)
-        object.__setattr__(
-            self, "_energy_and_forces_and_virial", energy_and_forces_and_virial
-        )
+        if jit:
+            object.__setattr__(self, "_total_energy", jax.jit(total_energy))
+            object.__setattr__(self, "_energy_and_forces", jax.jit(energy_and_forces))
+            object.__setattr__(
+                self, "_energy_and_forces_and_virial", jax.jit(energy_and_forces_and_virial)
+            )
+        else:
+            object.__setattr__(self, "_total_energy", total_energy)
+            object.__setattr__(self, "_energy_and_forces", energy_and_forces)
+            object.__setattr__(
+                self, "_energy_and_forces_and_virial", energy_and_forces_and_virial
+            )
 
     def preprocess(self, **inputs) -> Dict[str, Any]:
         """apply preprocessing to the input data
@@ -311,7 +329,10 @@ class FENNIX:
         if variables is None:
             variables = self.variables
         inputs = self.preprocess(**inputs)
-        return self._apply(variables, inputs)
+        output = self._apply(variables, inputs)
+        if self.use_atom_padding:
+            output = atom_unpadding(output)
+        return output
 
     def total_energy(
         self, variables: Optional[dict] = None, **inputs
@@ -324,7 +345,10 @@ class FENNIX:
         if variables is None:
             variables = self.variables
         inputs = self.preprocess(**inputs)
-        return self._total_energy(variables, inputs)
+        _,output =  self._total_energy(variables, inputs)
+        if self.use_atom_padding:
+            output = atom_unpadding(output)
+        return output["total_energy"], output
 
     def energy_and_forces(
         self, variables: Optional[dict] = None, **inputs
@@ -337,7 +361,10 @@ class FENNIX:
         if variables is None:
             variables = self.variables
         inputs = self.preprocess(**inputs)
-        return self._energy_and_forces(variables, inputs)
+        _,_,output = self._energy_and_forces(variables, inputs)
+        if self.use_atom_padding:
+            output = atom_unpadding(output)
+        return output["total_energy"], output["forces"], output
 
     def energy_and_forces_and_virial(
         self, variables: Optional[dict] = None, **inputs
@@ -350,7 +377,10 @@ class FENNIX:
         if variables is None:
             variables = self.variables
         inputs = self.preprocess(**inputs)
-        return self._energy_and_forces_and_virial(variables, inputs)
+        _,_,_,output =  self._energy_and_forces_and_virial(variables, inputs)
+        if self.use_atom_padding:
+            output = atom_unpadding(output)
+        return output["total_energy"], output["forces"], output["virial_tensor"], output
 
     def remove_atom_padding(self, inputs):
         return atom_unpadding(inputs)
