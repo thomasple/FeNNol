@@ -26,6 +26,8 @@ def compute_nblist_flatbatch(
                 dst.append(j)
                 d12s.append(d12)
     nattot = shifts[-1]
+    iedge = np.arange(len(src))
+    isym = np.concatenate((iedge+iedge.shape[0],iedge))
     src, dst = np.array(src + dst,dtype=np.int64), np.array(dst + src,dtype=np.int64)
     d12s = np.array(d12s + d12s, dtype=np.float32)
 
@@ -44,7 +46,10 @@ def compute_nblist_flatbatch(
     d12s = np.append(
         d12s, c2 * np.ones(prev_nblist_size - nblist_size, dtype=np.float32)
     )
-    return src, dst, d12s, prev_nblist_size
+    isym = np.append(
+        isym, -np.ones(prev_nblist_size - nblist_size, dtype=np.int64)
+    )
+    return src, dst, d12s, prev_nblist_size,isym
 
 def compute_nblist_ase(
     coords, cutoff, batch_index, natoms, mult_size, prev_nblist_size=0,padding_value=None
@@ -67,6 +72,15 @@ def compute_nblist_ase(
         dst = np.concatenate(dst,dtype=np.int64)
         d12s = np.concatenate(d12s,dtype=np.float32)
     
+    sel = src<dst
+    src = src[sel]
+    dst = dst[sel]
+    d12s = d12s[sel]
+    iedge = np.arange(len(src))
+    isym = np.concatenate((iedge+iedge.shape[0],iedge))
+    src, dst = np.concatenate((src,dst)), np.concatenate((dst,src))
+    d12s = np.concatenate((d12s,d12s))
+    
     nblist_size = src.shape[0]
     if nblist_size > prev_nblist_size:
         prev_nblist_size = int(mult_size * nblist_size)
@@ -82,7 +96,10 @@ def compute_nblist_ase(
     d12s = np.append(
         d12s, cutoff**2 * np.ones(prev_nblist_size - nblist_size, dtype=np.float32)
     )
-    return src, dst, d12s, prev_nblist_size
+    isym = np.append(
+        isym, -np.ones(prev_nblist_size - nblist_size, dtype=np.int64)
+    )
+    return src, dst, d12s, prev_nblist_size,isym
 
 def compute_nblist_ase_pbc(
     coords, cutoff, batch_index, natoms, mult_size, cells, reciprocal_cells,prev_nblist_size=0,padding_value=None
@@ -108,6 +125,17 @@ def compute_nblist_ase_pbc(
         d12s = np.concatenate(d12s,dtype=np.float32)
         pbc_shifts = np.concatenate(pbc_shifts,axis=0,dtype=np.float32)
     
+    sel = src<dst
+    src = src[sel]
+    dst = dst[sel]
+    d12s = d12s[sel]
+    pbc_shifts = pbc_shifts[sel]
+    iedge = np.arange(len(src))
+    isym = np.concatenate((iedge+iedge.shape[0],iedge))
+    src, dst = np.concatenate((src,dst)), np.concatenate((dst,src))
+    d12s = np.concatenate((d12s,d12s))
+    pbc_shifts = np.concatenate((pbc_shifts,-pbc_shifts),axis=0)
+
     nblist_size = src.shape[0]
     if nblist_size > prev_nblist_size:
         prev_nblist_size = int(mult_size * nblist_size)
@@ -127,7 +155,10 @@ def compute_nblist_ase_pbc(
         pbc_shifts, np.zeros((prev_nblist_size - nblist_size,3), dtype=np.float32)
         ,axis=0
     )
-    return src, dst, d12s, pbc_shifts,prev_nblist_size
+    isym = np.append(
+        isym, -np.ones(prev_nblist_size - nblist_size, dtype=np.int64)
+    )
+    return src, dst, d12s, pbc_shifts,prev_nblist_size,isym
 
 
 @numba.njit
@@ -155,6 +186,8 @@ def compute_nblist_flatbatch_minimage(
                 d12s.append(d12)
                 pbc_shifts.append(list(shift))
     nattot = shifts[-1]
+    iedge = np.arange(len(src))
+    isym = np.concatenate((iedge+iedge.shape[0],iedge))
     src, dst = np.array(src + dst,dtype=np.int64), np.array(dst + src,dtype=np.int64)
     d12s = np.array(d12s + d12s, dtype=np.float32)
     pbc_shifts = np.array(pbc_shifts, dtype=np.float32)
@@ -179,7 +212,10 @@ def compute_nblist_flatbatch_minimage(
         pbc_shifts, np.zeros((prev_nblist_size - nblist_size,3), dtype=np.float32)
         ,axis=0
     )
-    return src, dst, d12s, pbc_shifts,prev_nblist_size
+    isym = np.append(
+        isym, -np.ones(prev_nblist_size - nblist_size, dtype=np.int64)
+    )
+    return src, dst, d12s, pbc_shifts,prev_nblist_size,isym
 
 @numba.njit
 def compute_nblist_flatbatch_fullpbc(
@@ -227,7 +263,8 @@ def compute_nblist_flatbatch_fullpbc(
                             pbc_shifts.append([ix,iy,iz])
     nattot = shifts[-1]
     pbc_shifts = np.array(pbc_shifts, dtype=np.float32) + at_shifts[np.array(dst,dtype=np.int64)] - at_shifts[np.array(src,dtype=np.int64)]
-    print(pbc_shifts.shape)
+    iedge = np.arange(len(src))
+    isym = np.concatenate((iedge+iedge.shape[0],iedge))
     src, dst = np.array(src + dst,dtype=np.int64), np.array(dst + src,dtype=np.int64)
     d12s = np.array(d12s + d12s, dtype=np.float32)
     pbc_shifts = np.concatenate((pbc_shifts, -pbc_shifts),axis=0)
@@ -251,7 +288,10 @@ def compute_nblist_flatbatch_fullpbc(
         pbc_shifts, np.zeros((prev_nblist_size - nblist_size,3), dtype=np.float32)
         ,axis=0
     )
-    return src, dst, d12s, pbc_shifts,prev_nblist_size
+    isym = np.append(
+        isym, -np.ones(prev_nblist_size - nblist_size, dtype=np.int64)
+    )
+    return src, dst, d12s, pbc_shifts,prev_nblist_size,isym
 
 def hash_cell(cell_coords,batch_index,nel):
     return (15823*cell_coords[...,0]+9737333*cell_coords[...,1]+95483*cell_coords[...,2] + 79411*batch_index)%nel

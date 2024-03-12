@@ -82,6 +82,7 @@ class GraphGenerator(nn.Module):
                 d12,
                 pbc_shifts,
                 prev_nblist_size_,
+                isym,
             ) = compute_nblist(
                 coords,
                 cutoff,
@@ -98,7 +99,7 @@ class GraphGenerator(nn.Module):
                 compute_nblist = compute_nblist_ase
             else:
                 compute_nblist = compute_nblist_flatbatch
-            edge_src, edge_dst, d12, prev_nblist_size_ = compute_nblist(
+            edge_src, edge_dst, d12, prev_nblist_size_,isym = compute_nblist(
                 coords,
                 cutoff,
                 batch_index,
@@ -120,6 +121,7 @@ class GraphGenerator(nn.Module):
                 "d12": d12,
                 "cutoff": self.cutoff,
                 "pbc_shifts": pbc_shifts,
+                "isym": isym,
             },
         }
         if "cells" in inputs:
@@ -253,6 +255,8 @@ class GraphGeneratorFixed(nn.Module):
                     padding_value,
                 )
 
+        iedge = np.arange(len(edge_src))
+        isym = np.concatenate((iedge+iedge.shape[0],iedge))
         edge_src, edge_dst = np.concatenate((edge_src, edge_dst)), np.concatenate(
             (edge_dst, edge_src)
         )
@@ -273,6 +277,7 @@ class GraphGeneratorFixed(nn.Module):
                 "d12": d12,
                 "cutoff": self.cutoff,
                 "pbc_shifts": pbc_shifts,
+                "isym": isym,
             },
         }
         if "cells" in inputs:
@@ -381,6 +386,11 @@ class GraphFilter(nn.Module):
             edge_dst = edge_dst[mask]
             d12 = d12[mask]
             indices = indices[mask]
+            isym=None
+        else:
+            isym = graph_in.get("isym",None)
+            if isym is not None:
+                isym = isym[indices]
 
         prev_nblist_size = self.variable(
             "preprocessing",
@@ -409,6 +419,10 @@ class GraphFilter(nn.Module):
             indices,
             nblist_size_in * np.ones(prev_nblist_size_ - nblist_size, dtype=np.int64),
         )
+        if isym is not None:
+            isym = np.append(
+                isym, -1 * np.ones(prev_nblist_size_ - nblist_size, dtype=np.int32)
+            )
 
         if not self.is_initializing():
             prev_nblist_size.value = prev_nblist_size_
@@ -435,6 +449,9 @@ class GraphFilter(nn.Module):
                 )
             out[self.graph_out]["k_points"] = ks
             out[self.graph_out]["b_ewald"] = bewald
+        
+        if isym is not None:
+            out[self.graph_out]["isym"] = isym
 
         return out
 
@@ -729,10 +746,16 @@ def atom_unpadding(inputs: Dict[str, Any]) -> Dict[str, Any]:
     output = {**inputs}
     for k, v in inputs.items():
         if isinstance(v, jax.Array) or isinstance(v, np.ndarray):
+            if v.ndim == 0:
+                continue
             if v.shape[0] == natall:
                 output[k] = v[:nat]
             elif v.shape[0] == nsysall:
                 output[k] = v[:-1]
+    if "true_sys" in output:
+        del output["true_sys"]
+    if "true_atoms" in output:
+        del output["true_atoms"]
     return output
 
 
