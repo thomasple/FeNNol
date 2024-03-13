@@ -2,12 +2,12 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 from ...utils.spherical_harmonics import generate_spherical_harmonics
-from ..encodings import SpeciesEncoding, RadialBasis
+from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
 from typing import Any, Dict, List, Union, Callable, Tuple, Sequence,Optional
-from ..nets import FullyConnectedNet
-from ..e3 import FilteredTensorProduct, ChannelMixingE3, ChannelMixing,E3NN_AVAILABLE,E3NN_EXCEPTION
+from ..misc.nets import FullyConnectedNet
+from ..misc.e3 import FilteredTensorProduct, ChannelMixingE3, ChannelMixing,E3NN_AVAILABLE,E3NN_EXCEPTION
 
 
 class AllegroEmbedding(nn.Module):
@@ -30,6 +30,8 @@ class AllegroEmbedding(nn.Module):
     tensor_embedding_key: str = "tensor_embedding"
     species_encoding: dict = dataclasses.field(default_factory=dict)
     radial_basis: dict = dataclasses.field(default_factory=dict)
+
+    FID: str  = "ALLEGRO"
 
     @nn.compact
     def __call__(self, inputs):
@@ -131,6 +133,8 @@ if E3NN_AVAILABLE:
         tensor_embedding_key: str = "tensor_embedding"
         species_encoding: dict = dataclasses.field(default_factory=dict)
         radial_basis: dict = dataclasses.field(default_factory=dict)
+        
+        FID: str  = "ALLEGRO_E3NN"
 
         @nn.compact
         def __call__(self, inputs):
@@ -222,6 +226,8 @@ if E3NN_AVAILABLE:
             return {**inputs, self.embedding_key: xij, self.tensor_embedding_key: Vij}
 else:
     class AllegroE3NNEmbedding(nn.Module):
+        FID: str  = "ALLEGRO_E3NN"
+
         def __call__(self, *args, **kwargs) -> Any:
             raise E3NN_EXCEPTION
 

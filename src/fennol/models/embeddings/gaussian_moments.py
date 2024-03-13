@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 from ...utils.spherical_harmonics import generate_spherical_harmonics, CG_SO3
-from ..encodings import SpeciesEncoding, RadialBasis
+from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
 from typing import Dict
@@ -31,6 +31,9 @@ class GaussianMomentsEmbedding(nn.Module):
     embedding_key: str = "embedding"
     species_encoding: dict = dataclasses.field(default_factory=dict)
     radial_basis: dict = dataclasses.field(default_factory=dict)
+
+    FID: str = "GAUSSIAN_MOMENTS"
+
 
     @nn.compact
     def __call__(self, inputs):

@@ -5,7 +5,7 @@ import jax
 import numpy as np
 from functools import partial
 from typing import Optional, Tuple
-from ..utils.spherical_harmonics import CG_SO3, spherical_to_cartesian_tensor
+from ...utils.spherical_harmonics import CG_SO3, spherical_to_cartesian_tensor
 
 ### e3nn version
 try:
@@ -150,6 +150,8 @@ class ChannelMixing(nn.Module):
     output_key: Optional[str] = None
     squeeze: bool = False
 
+    FID: str = "CHANNEL_MIXING"
+
     @nn.compact
     def __call__(self, inputs):
         if self.input_key is None:
@@ -185,6 +187,8 @@ class ChannelMixingE3(nn.Module):
     input_key: Optional[str] = None
     output_key: Optional[str] = None
     squeeze: bool = False
+
+    FID: str = "CHANNEL_MIXING_E3"
 
     @nn.compact
     def __call__(self, inputs):
@@ -224,6 +228,8 @@ class SphericalToCartesian(nn.Module):
     input_key: Optional[str] = None
     output_key: Optional[str] = None
 
+    FID: str = "SPHERICAL_TO_CARTESIAN"
+
     @nn.compact
     def __call__(self, inputs) -> Any:
         if self.input_key is None:
@@ -242,10 +248,3 @@ class SphericalToCartesian(nn.Module):
             output_key = self.input_key if self.output_key is None else self.output_key
             return {**inputs, output_key: out} if output_key is not None else out
         return out
-
-
-E3MODULES = {
-    "CHANNEL_MIXING": ChannelMixing,
-    "CHANNEL_MIXING_E3": ChannelMixingE3,
-    "SPHERICAL_TO_CARTESIAN": SphericalToCartesian,
-}

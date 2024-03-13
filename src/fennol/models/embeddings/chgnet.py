@@ -5,15 +5,14 @@ import dataclasses
 import numpy as np
 from typing import Any, Dict, Union, Callable, Sequence, Optional
 
-from ..encodings import SpeciesEncoding, RadialBasis, positional_encoding
+from ..misc.encodings import SpeciesEncoding, RadialBasis, positional_encoding
 from ...utils.spherical_harmonics import generate_spherical_harmonics, CG_SO3
 from ...utils.activations import activation_from_str, tssr2
 from ...utils.initializers import initializer_from_str
-from ..nets import FullyConnectedNet
-from ..e3 import ChannelMixing, ChannelMixingE3, FilteredTensorProduct
+from ..misc.nets import FullyConnectedNet
 from ...utils.periodic_table import D3_COV_RADII, D3_VDW_RADII
 from ...utils import AtomicUnits as au
-from ..nets import GatedPerceptron
+from ..misc.nets import GatedPerceptron
 
 
 class CHGNetEmbedding(nn.Module):
@@ -29,6 +28,9 @@ class CHGNetEmbedding(nn.Module):
     radial_basis_angle: Optional[dict] = None
     keep_all_layers: bool = False
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+
+
+    FID: str  = "CHGNET"
 
     @nn.compact
     def __call__(self, inputs):

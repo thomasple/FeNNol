@@ -1,13 +1,14 @@
 import flax.linen as nn
 from typing import Sequence, Callable, Union
-from ..utils.periodic_table import PERIODIC_TABLE
+from ...utils.periodic_table import PERIODIC_TABLE
 import jax.numpy as jnp
 import jax
 import numpy as np
 from functools import partial
 from typing import Optional, Tuple
-from ..utils.activations import activation_from_str, TrainableSiLU
-from ..utils.initializers import initializer_from_str, scaled_orthogonal
+from ...utils.activations import activation_from_str, TrainableSiLU
+from ...utils.initializers import initializer_from_str, scaled_orthogonal
+
 
 
 class FullyConnectedNet(nn.Module):
@@ -29,6 +30,8 @@ class FullyConnectedNet(nn.Module):
     output_key: Optional[str] = None
     squeeze: bool = False
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+    
+    FID: str = "NEURAL_NET"
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -92,6 +95,8 @@ class ResMLP(nn.Module):
     kernel_init: Union[str, Callable] = scaled_orthogonal(mode="fan_avg")
     res_only: bool = False
 
+    FID: str = "RES_MLP"
+
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
         if self.input_key is None:
@@ -148,6 +153,8 @@ class FullyResidualNet(nn.Module):
     output_key: Optional[str] = None
     squeeze: bool = False
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+
+    FID: str = "SKIP_NET"
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -226,6 +233,8 @@ class HierarchicalNet(nn.Module):
     squeeze: bool = False
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
 
+    FID: str = "HIERARCHICAL_NET"
+
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
         if self.input_key is None:
@@ -287,6 +296,8 @@ class ChemicalNetHet(nn.Module):
     output_key: Optional[str] = None
     squeeze: bool = False
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+
+    FID: str = "CHEMICAL_NET"
 
     def setup(self):
         idx_map = {s: i for i, s in enumerate(PERIODIC_TABLE)}
@@ -361,6 +372,8 @@ class ChemicalNet(nn.Module):
     squeeze: bool = False
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
 
+    FID: str = "CHEMICAL_NET_HET"
+
     @nn.compact
     def __call__(
         self, inputs: Union[dict, Tuple[jax.Array, jax.Array]]
@@ -422,6 +435,8 @@ class MOENet(nn.Module):
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
     router_key: Optional[str] = None
 
+    FID: str = "MOE_NET"
+
     @nn.compact
     def __call__(
         self, inputs: Union[dict, Tuple[jax.Array, jax.Array]]
@@ -472,6 +487,7 @@ class GatedPerceptron(nn.Module):
     output_key: Optional[str] = None
     squeeze: bool = False
 
+    FID: str = "GATED_PERCEPTRON"
 
     @nn.compact
     def __call__(self, inputs):
@@ -506,14 +522,201 @@ class GatedPerceptron(nn.Module):
             return {**inputs, output_key: x} if output_key is not None else x
         return x
 
+class ZAcNet(nn.Module):
+    """
+    A fully connected neural network module with affine Z-dependent adjustments of activations.
 
-NETWORKS = {
-    "NEURAL_NET": FullyConnectedNet,
-    "SKIP_NET": FullyResidualNet,
-    "HIERARCHICAL_NET": HierarchicalNet,
-    "CHEMICAL_NET": ChemicalNet,
-    "CHEMICAL_NET_HET": ChemicalNetHet,
-    "RES_MLP": ResMLP,
-    "MOE_NET": MOENet,
-    "GATED_PERCEPTRON": GatedPerceptron,
-}
+    Args:
+        neurons (Sequence[int]): A sequence of integers representing the dimensions of the network.
+        activation (Callable, optional): The activation function to use. Defaults to nn.silu.
+        use_bias (bool, optional): Whether to use bias in the dense layers. Defaults to True.
+        input_key (Optional[str], optional): The key to use to access the input tensor. Defaults to None.
+        output_key (Optional[str], optional): The key to use to access the output tensor. Defaults to None.
+    """
+
+    neurons: Sequence[int]
+    zmax: int = 86
+    activation: Union[Callable, str] = nn.silu
+    use_bias: bool = True
+    input_key: Optional[str] = None
+    output_key: Optional[str] = None
+    squeeze: bool = False
+    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+
+    FID: str  = "ZACNET"
+
+    @nn.compact
+    def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
+        """
+        Applies the neural network to the given inputs.
+
+        Args:
+        - inputs: A dictionary or JAX array containing the inputs to the neural network.
+
+        Returns:
+        - A dictionary or JAX array containing the output of the neural network.
+        """
+        if self.input_key is None:
+            assert not isinstance(
+                inputs, dict
+            ), "input key must be provided if inputs is a dictionary"
+            species, x = inputs
+        else:
+            species, x = inputs["species"], inputs[self.input_key]
+
+        activation = (
+            activation_from_str(self.activation)
+            if isinstance(self.activation, str)
+            else self.activation
+        )
+        kernel_init = (
+            initializer_from_str(self.kernel_init)
+            if isinstance(self.kernel_init, str)
+            else self.kernel_init
+        )
+        ############################
+        for i, d in enumerate(self.neurons[:-1]):
+            x = nn.Dense(
+                d, use_bias=self.use_bias, name=f"Layer_{i+1}", kernel_init=kernel_init
+            )(x)
+            sig = self.param(
+                f"sig_{i+1}",
+                lambda key, shape: jnp.ones(shape, dtype=x.dtype),
+                (self.zmax+2, d),
+            )[species]
+            if self.use_bias:
+                b = self.param(
+                    f"b_{i+1}",
+                    lambda key, shape: jnp.zeros(shape, dtype=x.dtype),
+                    (self.zmax+2, d),
+                )[species]
+            else:
+                b=0
+            x = activation(sig*x+b)
+        x = nn.Dense(
+            self.neurons[-1],
+            use_bias=self.use_bias,
+            name=f"Layer_{len(self.neurons)}",
+            kernel_init=kernel_init,
+        )(x)
+        sig = self.param(
+            f"sig_{len(self.neurons)}",
+            lambda key, shape: jnp.ones(shape, dtype=x.dtype),
+            (self.zmax+2, self.neurons[-1]),
+        )[species]
+        if self.use_bias:
+            b = self.param(
+                f"b_{len(self.neurons)}",
+                lambda key, shape: jnp.zeros(shape, dtype=x.dtype),
+                (self.zmax+2, self.neurons[-1]),
+            )[species]
+        else:
+            b=0
+        x = sig*x+b
+        if self.squeeze and x.shape[-1] == 1:
+            x = jnp.squeeze(x, axis=-1)
+        ############################
+
+        if self.input_key is not None:
+            output_key = self.name if self.output_key is None else self.output_key
+            return {**inputs, output_key: x} if output_key is not None else x
+        return x
+
+class ZLoRANet(nn.Module):
+    """
+    A fully connected neural network module with Z-dependent low-rank adaptation.
+
+    Args:
+        neurons (Sequence[int]): A sequence of integers representing the dimensions of the network.
+        activation (Callable, optional): The activation function to use. Defaults to nn.silu.
+        use_bias (bool, optional): Whether to use bias in the dense layers. Defaults to True.
+        input_key (Optional[str], optional): The key to use to access the input tensor. Defaults to None.
+        output_key (Optional[str], optional): The key to use to access the output tensor. Defaults to None.
+    """
+
+    neurons: Sequence[int]
+    ranks: Sequence[int]
+    zmax: int = 86
+    activation: Union[Callable, str] = nn.silu
+    use_bias: bool = True
+    input_key: Optional[str] = None
+    output_key: Optional[str] = None
+    squeeze: bool = False
+    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+
+    FID: str  = "ZLORANET"
+
+    @nn.compact
+    def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
+        """
+        Applies the neural network to the given inputs.
+
+        Args:
+        - inputs: A dictionary or JAX array containing the inputs to the neural network.
+
+        Returns:
+        - A dictionary or JAX array containing the output of the neural network.
+        """
+        if self.input_key is None:
+            assert not isinstance(
+                inputs, dict
+            ), "input key must be provided if inputs is a dictionary"
+            species, x = inputs
+        else:
+            species, x = inputs["species"], inputs[self.input_key]
+
+        activation = (
+            activation_from_str(self.activation)
+            if isinstance(self.activation, str)
+            else self.activation
+        )
+        kernel_init = (
+            initializer_from_str(self.kernel_init)
+            if isinstance(self.kernel_init, str)
+            else self.kernel_init
+        )
+        ############################
+        for i, d in enumerate(self.neurons[:-1]):
+            xi = nn.Dense(
+                d, use_bias=self.use_bias, name=f"Layer_{i+1}", kernel_init=kernel_init
+            )(x)
+            A= self.param(
+                f"A_{i+1}",
+                lambda key, shape: jnp.zeros(shape, dtype=x.dtype),
+                (self.zmax+2, self.ranks[i], x.shape[-1]),
+            )[species]
+            B= self.param(
+                f"B_{i+1}",
+                lambda key, shape: jnp.zeros(shape, dtype=x.dtype),
+                (self.zmax+2, d,self.ranks[i]),
+            )[species]
+            Ax = jnp.einsum('zrd,zd->zr', A, x)
+            BAx = jnp.einsum('zrd,zd->zr', B, Ax)
+            x = activation(xi + BAx)
+        xi = nn.Dense(
+            self.neurons[-1],
+            use_bias=self.use_bias,
+            name=f"Layer_{len(self.neurons)}",
+            kernel_init=kernel_init,
+        )(x)
+        A= self.param(
+            f"A_{len(self.neurons)}",
+            lambda key, shape: jnp.zeros(shape, dtype=x.dtype),
+            (self.zmax+2, self.ranks[-1], x.shape[-1]),
+        )[species]
+        B= self.param(
+            f"B_{len(self.neurons)}",
+            lambda key, shape: jnp.zeros(shape, dtype=x.dtype),
+            (self.zmax+2, self.neurons[-1],self.ranks[-1]),
+        )[species]
+        Ax = jnp.einsum('zrd,zd->zr', A, x)
+        BAx = jnp.einsum('zrd,zd->zr', B, Ax)
+        x = xi + BAx
+        if self.squeeze and x.shape[-1] == 1:
+            x = jnp.squeeze(x, axis=-1)
+        ############################
+
+        if self.input_key is not None:
+            output_key = self.name if self.output_key is None else self.output_key
+            return {**inputs, output_key: x} if output_key is not None else x
+        return x

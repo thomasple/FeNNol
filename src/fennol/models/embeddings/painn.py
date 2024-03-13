@@ -2,12 +2,12 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 from ...utils.spherical_harmonics import generate_spherical_harmonics, CG_SO3
-from ..encodings import SpeciesEncoding, RadialBasis
+from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
 from typing import Dict, Union, Callable, Sequence, Optional
 from ...utils.activations import activation_from_str, tssr2
-from ..nets import FullyConnectedNet
+from ..misc.nets import FullyConnectedNet
 
 
 class PAINNEmbedding(nn.Module):
@@ -24,6 +24,8 @@ class PAINNEmbedding(nn.Module):
     species_encoding: dict = dataclasses.field(default_factory=dict)
     radial_basis: dict = dataclasses.field(default_factory=dict)
     keep_all_layers: bool = False
+
+    FID: str = "PAINN"
 
     @nn.compact
     def __call__(self, inputs):

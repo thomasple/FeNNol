@@ -25,6 +25,8 @@ class VdwOQDO(nn.Module):
     energy_key: Optional[str] = None
     damped: bool = True
 
+    FID: str  = "VDW_OQDO"
+
     @nn.compact
     def __call__(self, inputs):
         species = inputs["species"]

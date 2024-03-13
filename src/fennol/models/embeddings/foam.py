@@ -2,12 +2,10 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 from ...utils.spherical_harmonics import generate_spherical_harmonics
-from ..encodings import SpeciesEncoding, RadialBasis
+from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
-from typing import Any, Dict, List, Union, Callable, Tuple, Sequence, Optional
-from ..nets import FullyConnectedNet
-from ..e3 import FilteredTensorProduct, ChannelMixingE3, ChannelMixing
+from typing import  Dict, Optional
 
 
 class FOAMEmbedding(nn.Module):
@@ -24,6 +22,8 @@ class FOAMEmbedding(nn.Module):
     species_encoding: dict = dataclasses.field(default_factory=dict)
     radial_basis: dict = dataclasses.field(default_factory=dict)
     include_species: bool = True
+
+    FID: str = "FOAM"
 
     @nn.compact
     def __call__(self, inputs):

@@ -7,7 +7,7 @@ from typing import Optional, Tuple
 import numba
 import dataclasses
 
-from .misc import SwitchFunction
+from .misc.misc import SwitchFunction
 from ..utils.nblist import (
     compute_nblist_flatbatch,
     angular_nblist,
