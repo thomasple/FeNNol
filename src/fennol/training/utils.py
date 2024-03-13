@@ -23,7 +23,7 @@ from ..models import FENNIX
 from ..utils import AtomicUnits as au
 
 
-def load_dataset(training_parameters, rename_refs=[]):
+def load_dataset(training_parameters, rename_refs=[],infinite_iterator=True):
     """
     Load a dataset from a pickle file and return two iterators for training and validation batches.
 
@@ -77,6 +77,7 @@ def load_dataset(training_parameters, rename_refs=[]):
             
             output["minimum_image"]=minimum_image
             output["ase_nblist"]=ase_nblist
+            output["training_flag"]=True
             return output
     else:
         def collate_fn(batch):
@@ -97,6 +98,8 @@ def load_dataset(training_parameters, rename_refs=[]):
             for key in rename_refs:
                 if key in output:
                     output["true_" + key] = output.pop(key)
+            
+            output["training_flag"]=True
             return output
 
     # dspath = "dataset_ani1ccx.pkl"
@@ -128,6 +131,11 @@ def load_dataset(training_parameters, rename_refs=[]):
         dataset["training"], batch_size=batch_size, shuffle=True, collate_fn=collate_fn
     )
 
+    print("Dataset loaded.")
+    
+    if not infinite_iterator:
+        return dataloader_training, dataloader_validation
+
     def next_batch_factory(dataloader):
         while True:
             for batch in dataloader:
@@ -136,7 +144,6 @@ def load_dataset(training_parameters, rename_refs=[]):
     validation_iterator = next_batch_factory(dataloader_validation)
     training_iterator = next_batch_factory(dataloader_training)
 
-    print("Dataset loaded.")
     return training_iterator, validation_iterator
 
 
@@ -212,7 +219,7 @@ def get_loss_definition(
             },
         )
     )
-    rename_refs = ["forces", "total_energy", "atomic_energies"]+manual_renames
+    used_keys = []
     for k in loss_definition.keys():
         loss_prms = loss_definition[k]
         if "unit" in loss_prms:
@@ -228,7 +235,10 @@ def get_loss_definition(
         assert loss_prms["weight"] >= 0.0, "Loss weight must be positive"
         if "threshold" in loss_prms:
             assert loss_prms["threshold"] > 1.0, "Threshold must be greater than 1.0"
-        rename_refs.append(loss_prms["key"])
+        used_keys.append(loss_prms["key"])
+    
+    rename_refs = list(set(["forces", "total_energy", "atomic_energies"]+manual_renames+used_keys))
+
     
     for k in loss_definition.keys():
         loss_prms = loss_definition[k]
@@ -237,7 +247,7 @@ def get_loss_definition(
                 loss_prms["ref"] = "true_" + loss_prms["ref"]
         
 
-    return loss_definition, rename_refs
+    return loss_definition, rename_refs, used_keys
 
 
 def copy_parameters(variables, variables_ref, params):

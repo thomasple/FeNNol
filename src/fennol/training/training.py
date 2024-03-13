@@ -86,20 +86,18 @@ def main():
     # copy config_file to output directory
     config_name = Path(config_file).name
     with open(config_file) as f_in:
-        with open(output_directory+"/"+config_name, "w") as f_out:
-            f_out.write(f_in.read())          
+        with open(output_directory + "/" + config_name, "w") as f_out:
+            f_out.write(f_in.read())
 
     # set log file
     log_file = parameters.get("log_file", None)
     if log_file is not None:
-        logger = TeeLogger(output_directory+log_file)
+        logger = TeeLogger(output_directory + log_file)
         logger.bind_stdout()
 
     _device = jax.devices(device)[0]
 
-    rng_seed = parameters.get(
-        "rng_seed", np.random.randint(0, 2**32 - 1)
-    )
+    rng_seed = parameters.get("rng_seed", np.random.randint(0, 2**32 - 1))
     print(f"rng_seed: {rng_seed}")
     rng_key = jax.random.PRNGKey(rng_seed)
     torch.manual_seed(rng_seed)
@@ -111,9 +109,13 @@ def main():
             if "stages" in parameters["training"]:
                 params = deepcopy(parameters)
                 stages = params["training"].pop("stages")
-                assert isinstance(stages, dict), "'stages' must be a dict with named stages"
+                assert isinstance(
+                    stages, dict
+                ), "'stages' must be a dict with named stages"
                 model_file_stage = model_file
-                print_stages_params = params["training"].get("print_stages_params", False)
+                print_stages_params = params["training"].get(
+                    "print_stages_params", False
+                )
                 for i, (stage, stage_params) in enumerate(stages.items()):
                     rng_key, subkey = jax.random.split(rng_key)
                     print("")
@@ -126,9 +128,16 @@ def main():
                     if print_stages_params:
                         print("stage parameters:")
                         print(json.dumps(params, indent=2, sort_keys=False))
-                    _, model_file_stage = train(subkey,params, stage=i + 1,output_directory=output_directory)
+                    _, model_file_stage = train(
+                        subkey, params, stage=i + 1, output_directory=output_directory
+                    )
             else:
-                train(rng_key,parameters, model_file=model_file,output_directory=output_directory)
+                train(
+                    rng_key,
+                    parameters,
+                    model_file=model_file,
+                    output_directory=output_directory,
+                )
     except KeyboardInterrupt:
         print("Training interrupted by user.")
     finally:
@@ -137,47 +146,110 @@ def main():
             logger.close()
 
 
-def train(rng_key,parameters, model_file=None, stage=None,output_directory=None):
+def train(rng_key, parameters, model_file=None, stage=None, output_directory=None):
     if output_directory is None:
-        output_directory = ""
+        output_directory = "./"
     elif not output_directory.endswith("/"):
         output_directory += "/"
     stage_prefix = f"_stage_{stage}" if stage is not None else ""
 
-    model = load_model(parameters, model_file,rng_key=rng_key)    
+    model = load_model(parameters, model_file, rng_key=rng_key)
 
     training_parameters = parameters.get("training", {})
     model_ref = None
     if "model_ref" in training_parameters:
-        model_ref = load_model(parameters,training_parameters["model_ref"])
+        model_ref = load_model(parameters, training_parameters["model_ref"])
         print("Reference model:", training_parameters["model_ref"])
 
         if "ref_parameters" in training_parameters:
             ref_parameters = training_parameters["ref_parameters"]
-            assert isinstance(ref_parameters, list), "ref_parameters must be a list of str"
+            assert isinstance(
+                ref_parameters, list
+            ), "ref_parameters must be a list of str"
             print("Reference parameters:", ref_parameters)
-            model.variables = copy_parameters(model.variables, model_ref.variables, ref_parameters)
+            model.variables = copy_parameters(
+                model.variables, model_ref.variables, ref_parameters
+            )
 
     rename_refs = training_parameters.get("rename_refs", [])
-    loss_definition, rename_refs = get_loss_definition(training_parameters,rename_refs)
-    training_iterator, validation_iterator = load_dataset(
-        training_parameters, rename_refs 
+    loss_definition, rename_refs, used_keys = get_loss_definition(
+        training_parameters, rename_refs
     )
+    training_iterator, validation_iterator = load_dataset(
+        training_parameters, rename_refs
+    )
+    batch_size = training_parameters.get("batch_size", 16)
+
+    compute_forces = "forces" in used_keys
 
     # get optimizer parameters
     lr = training_parameters.get("lr", 1.0e-3)
     max_epochs = training_parameters.get("max_epochs", 2000)
     nbatch_per_epoch = training_parameters.get("nbatch_per_epoch", 200)
     nbatch_per_validation = training_parameters.get("nbatch_per_validation", 20)
-    init_lr = training_parameters.get("init_lr", lr/25)
-    final_lr = training_parameters.get("final_lr", lr/10000)
-    peak_epoch = training_parameters.get("peak_epoch", 0.3*max_epochs)
+    init_lr = training_parameters.get("init_lr", lr / 25)
+    final_lr = training_parameters.get("final_lr", lr / 10000)
+    peak_epoch = training_parameters.get("peak_epoch", 0.3 * max_epochs)
 
-    schedule = optax.cosine_onecycle_schedule(
-        peak_value=lr,div_factor=lr/init_lr, final_div_factor=init_lr/final_lr,transition_steps=max_epochs * nbatch_per_epoch, pct_start=peak_epoch/max_epochs
+    schedule_type = training_parameters.get("schedule_type", "cosine_onecycle").lower()
+    schedule_metrics = training_parameters.get("schedule_metrics", "rmse_tot")
+    print("Schedule type:", schedule_type)
+    if schedule_type == "cosine_onecycle":
+        schedule_ = optax.cosine_onecycle_schedule(
+            peak_value=lr,
+            div_factor=lr / init_lr,
+            final_div_factor=init_lr / final_lr,
+            transition_steps=max_epochs * nbatch_per_epoch,
+            pct_start=peak_epoch / max_epochs,
+        )
+        sch_state = {"count": 0, "best": np.inf, "lr": init_lr}
+
+        def schedule(state, rmse=None):
+            new_state = {**state}
+            lr = schedule_(state["count"])
+            if rmse is None:
+                new_state["count"] += 1
+            new_state["lr"] = lr
+            return lr, new_state
+
+    elif schedule_type == "constant":
+        sch_state = {"count": 0}
+
+        def schedule(state, rmse=None):
+            new_state = {**state}
+            if rmse is None:
+                new_state["count"] += 1
+            return lr, new_state
+
+    elif schedule_type == "reduce_on_plateau":
+        patience = training_parameters.get("patience", 10)
+        factor = training_parameters.get("lr_factor", 0.5)
+        patience_thr = training_parameters.get("patience_thr", 0.0)
+        sch_state = {"count": 0, "best": np.inf, "lr": lr, "patience": patience}
+
+        def schedule(state, rmse=None):
+            new_state = {**state}
+            if rmse is None:
+                new_state["count"] += 1
+                return state["lr"], new_state
+            if rmse <= state["best"] * (1.0 + patience_thr):
+                if rmse < state["best"]:
+                    new_state["best"] = rmse
+                new_state["patience"] = 0
+            else:
+                new_state["patience"] += 1
+                if new_state["patience"] >= patience:
+                    new_state["lr"] = state["lr"] * factor
+                    new_state["patience"] = 0
+                    print("Reducing learning rate to", new_state["lr"])
+            return new_state["lr"], new_state
+
+    else:
+        raise ValueError(f"Unknown schedule_type: {schedule_type}")
+
+    optimizer = get_optimizer(
+        training_parameters, model.variables, schedule(sch_state)[0]
     )
-
-    optimizer = get_optimizer(training_parameters, model.variables, schedule(0))
     opt_st = optimizer.init(model.variables)
 
     # exponential moving average of the parameters
@@ -196,25 +268,41 @@ def train(rng_key,parameters, model_file=None, stage=None,output_directory=None)
     else:
         assert len(end_event) == 2, "end_event must be a list of two elements"
         is_end = lambda metrics: metrics[end_event[0]] < end_event[1]
-    
+
     coordinates_ref_key = training_parameters.get("coordinates_ref_key", None)
     if coordinates_ref_key is not None:
         compute_ref_coords = True
         print("Reference coordinates:", coordinates_ref_key)
     else:
         compute_ref_coords = False
-    
+
     print_timings = parameters.get("print_timings", False)
 
+    if compute_forces:
+        print("Computing forces")
+
+        def evaluate(model, variables, data):
+            _, _, output = model._energy_and_forces(variables, data)
+            return output
+
+    else:
+
+        def evaluate(model, variables, data):
+            _, output = model._total_energy(variables, data)
+            return output
+
     @jax.jit
-    def train_step(variables, variables_ema, opt_st, ema_st, data,data_ref):
-        
+    def train_step(variables, variables_ema, opt_st, ema_st, data, data_ref):
+
         def loss_fn(variables):
             if model_ref is not None:
-                _, _, output_ref = model_ref._energy_and_forces(model_ref.variables, data)
-            _, _, output = model._energy_and_forces(variables, data)
+                output_ref = evaluate(model_ref, model_ref.variables, data)
+                # _, _, output_ref = model_ref._energy_and_forces(model_ref.variables, data)
+            output = evaluate(model, variables, data)
+            # _, _, output = model._energy_and_forces(variables, data)
             if compute_ref_coords:
-                _,_,output_data_ref = model._energy_and_forces(variables, data_ref)
+                output_data_ref = evaluate(model, variables, data_ref)
+                # _,_,output_data_ref = model._energy_and_forces(variables, data_ref)
             nsys = jnp.sum(data["true_sys"])
             nat = jnp.sum(data["true_atoms"])
             loss_tot = 0.0
@@ -234,22 +322,37 @@ def train(rng_key,parameters, model_file=None, stage=None,output_directory=None)
                 else:
                     ref = jnp.zeros_like(predicted)
 
+                if loss_prms["type"] in ["ensemble_nll", "ensemble_crps"]:
+                    ensemble_axis = loss_prms.get("ensemble_axis", -1)
+                    predicted_var = predicted.var(axis=ensemble_axis, ddof=1)
+                    predicted = predicted.mean(axis=ensemble_axis)
+
+
                 if predicted.shape[-1] == 1:
                     predicted = jnp.squeeze(predicted, axis=-1)
-                
+
                 nel = np.prod(ref.shape)
-                shape_mask=[ref.shape[0]]+[1]*(len(predicted.shape)-1)
+                shape_mask = [ref.shape[0]] + [1] * (len(ref.shape) - 1)
                 # print(loss_prms["key"],predicted.shape,loss_prms["ref"],ref.shape)
-                if ref.shape[0] == output["batch_index"].shape[0]:  # shape is number of systems
+                if (
+                    ref.shape[0] == output["batch_index"].shape[0]
+                ):  # shape is number of atoms
                     nel = nel * nat / ref.shape[0]
                     true_atoms = data["true_atoms"].reshape(*shape_mask)
                     ref = ref * true_atoms
-                    predicted = predicted *true_atoms
-                elif ref.shape[0] == output["natoms"].shape[0]: # shape is number of atoms
+                    predicted = predicted * true_atoms
+                    if loss_prms.get("per_atom", False):
+                        ref = ref / output["natoms"].reshape(*shape_mask)
+                        predicted = predicted / output["natoms"].reshape(*shape_mask)
+                    truth_mask = true_atoms
+                elif (
+                    ref.shape[0] == output["natoms"].shape[0]
+                ):  # shape is number of systems
                     nel = nel * nsys / ref.shape[0]
                     true_sys = data["true_sys"].reshape(*shape_mask)
-                    ref = ref *true_sys
+                    ref = ref * true_sys
                     predicted = predicted * true_sys
+                    truth_mask = true_sys
 
                 loss_type = loss_prms["type"]
                 if loss_type == "mse":
@@ -260,41 +363,68 @@ def train(rng_key,parameters, model_file=None, stage=None,output_directory=None)
                     loss = (jnp.sum((predicted - ref) ** 2)) ** 0.5 + jnp.sum(
                         jnp.abs(predicted - ref)
                     )
+                elif loss_type == "ensemble_nll":
+                    predicted_var = predicted_var * truth_mask + (1.0 - truth_mask)
+                    loss = 0.5 * jnp.sum(
+                        truth_mask
+                        * (
+                            jnp.log(predicted_var)
+                            + (ref - predicted) ** 2 / predicted_var
+                        )
+                    )
+                elif loss_type == "ensemble_crps":
+                    predicted_var = predicted_var * truth_mask + (1.0 - truth_mask)
+                    sigma = predicted_var ** 0.5
+                    dy = (ref - predicted)/sigma
+                    Phi = 0.5 * (1.0 + jax.scipy.special.erf(dy / 2**0.5))
+                    phi = jnp.exp(-0.5 * dy**2) / (2 * jnp.pi)**0.5
+                    loss = jnp.sum(
+                        truth_mask*sigma*(dy*(2*Phi-1.) + 2*phi)
+                    )
                 elif loss_type == "evidential":
                     evidence = loss_prms["evidence_key"]
-                    nu,alpha,beta = jnp.split(output[evidence],3,axis=-1)
+                    nu, alpha, beta = jnp.split(output[evidence], 3, axis=-1)
                     gamma = predicted
                     nu = nu.reshape(shape_mask)
                     alpha = alpha.reshape(shape_mask)
                     beta = beta.reshape(shape_mask)
-                    if ref.shape[0] == output["batch_index"].shape[0]:
-                        nu = jnp.where(true_atoms,nu,1.)
-                        alpha = jnp.where(true_atoms,alpha,1.)
-                        beta = jnp.where(true_atoms,beta,1.)
-                    elif ref.shape[0] == output["natoms"].shape[0]:
-                        nu = jnp.where(true_sys,nu,1.)
-                        alpha = jnp.where(true_sys,alpha,1.)
-                        beta = jnp.where(true_sys,beta,1.)
-                    omega = 2*beta*(1+nu)
-                    lg = jax.scipy.special.gammaln(alpha)-jax.scipy.special.gammaln(alpha+0.5)
-                    ls = 0.5*jnp.log(jnp.pi/nu) - alpha*jnp.log(omega)
-                    lt = (alpha+0.5)*jnp.log(omega+nu*(gamma-ref)**2)
-                    wst = (beta*(1+nu)/(alpha*nu))**0.5 if loss_prms.get("normalize_evidence",True) else 1.
-                    lr = loss_prms.get("lambda_evidence",1.)*jnp.abs(gamma-ref)*nu/wst
-                    r = loss_prms.get("evidence_ratio",1.)
-                    le = loss_prms.get("lambda_evidence_diff",0.)*(nu-r*2*alpha)**2
-                    lb = loss_prms.get("lambda_evidence_beta",0.)*beta
-                    loss = lg+ls+lt+lr+le+lb
+                    nu = jnp.where(truth_mask, nu, 1.0)
+                    alpha = jnp.where(truth_mask, alpha, 1.0)
+                    beta = jnp.where(truth_mask, beta, 1.0)
+                    omega = 2 * beta * (1 + nu)
+                    lg = jax.scipy.special.gammaln(alpha) - jax.scipy.special.gammaln(
+                        alpha + 0.5
+                    )
+                    ls = 0.5 * jnp.log(jnp.pi / nu) - alpha * jnp.log(omega)
+                    lt = (alpha + 0.5) * jnp.log(omega + nu * (gamma - ref) ** 2)
+                    wst = (
+                        (beta * (1 + nu) / (alpha * nu)) ** 0.5
+                        if loss_prms.get("normalize_evidence", True)
+                        else 1.0
+                    )
+                    lr = (
+                        loss_prms.get("lambda_evidence", 1.0)
+                        * jnp.abs(gamma - ref)
+                        * nu
+                        / wst
+                    )
+                    r = loss_prms.get("evidence_ratio", 1.0)
+                    le = (
+                        loss_prms.get("lambda_evidence_diff", 0.0)
+                        * (nu - r * 2 * alpha) ** 2
+                    )
+                    lb = loss_prms.get("lambda_evidence_beta", 0.0) * beta
+                    loss = lg + ls + lt + lr + le + lb
                     if ref.shape[0] == output["batch_index"].shape[0]:
                         loss = loss * true_atoms
                     elif ref.shape[0] == output["natoms"].shape[0]:
                         loss = loss * true_sys
-                    
+
                     loss = jnp.sum(loss)
+                elif loss_type == "raw":
+                    loss = jnp.sum(predicted)
                 else:
                     raise ValueError(f"Unknown loss type: {loss_type}")
-
-                
 
                 loss_tot = loss_tot + loss_prms["weight"] * loss / nel
 
@@ -307,17 +437,23 @@ def train(rng_key,parameters, model_file=None, stage=None,output_directory=None)
         return variables, variables_ema, opt_st, ema_st, loss
 
     @jax.jit
-    def validation(variables, data,data_ref):
+    def validation(variables, data, data_ref):
         if model_ref is not None:
-            _, _, output_ref = model_ref._energy_and_forces(model_ref.variables, data)
-        _, _, output = model._energy_and_forces(variables, data)
+            output_ref = evaluate(model_ref, model_ref.variables, data)
+            # _, _, output_ref = model_ref._energy_and_forces(model_ref.variables, data)
+        output = evaluate(model, variables, data)
+        # _, _, output = model._energy_and_forces(variables, data)
         if compute_ref_coords:
-            _,_,output_data_ref = model._energy_and_forces(variables, data_ref)
+            output_data_ref = evaluate(model, variables, data_ref)
+            # _,_,output_data_ref = model._energy_and_forces(variables, data_ref)
         nsys = jnp.sum(data["true_sys"])
         nat = jnp.sum(data["true_atoms"])
         rmses = {}
         maes = {}
         for name, loss_prms in loss_definition.items():
+            do_validation = loss_prms.get("validate", True)
+            if not do_validation:
+                continue
             predicted = output[loss_prms["key"]]
             if "remove_ref_sys" in loss_prms and loss_prms["remove_ref_sys"]:
                 assert compute_ref_coords, "compute_ref_coords must be True"
@@ -330,6 +466,11 @@ def train(rng_key,parameters, model_file=None, stage=None,output_directory=None)
                     ref = output[loss_prms["ref"]] * loss_prms["mult"]
             else:
                 ref = jnp.zeros_like(predicted)
+
+            if loss_prms["type"] in ["ensemble_nll", "ensemble_crps"]:
+                axis = loss_prms.get("ensemble_axis", -1)
+                predicted = predicted.mean(axis=axis)
+
             if predicted.shape[-1] == 1:
                 predicted = jnp.squeeze(predicted, axis=-1)
             # nel = ref.shape[0]
@@ -338,9 +479,9 @@ def train(rng_key,parameters, model_file=None, stage=None,output_directory=None)
             #     nel = nel * nat / ref.shape[0]
             # elif ref.shape[0] == data["natoms"].shape[0]:
             #     nel = nel * nsys / ref.shape[0]
-            
+
             nel = np.prod(ref.shape)
-            shape_mask=[ref.shape[0]]+[1]*(len(predicted.shape)-1)
+            shape_mask = [ref.shape[0]] + [1] * (len(predicted.shape) - 1)
             if ref.shape[0] == output["batch_index"].shape[0]:
                 nel = nel * nat / ref.shape[0]
                 ref = ref * data["true_atoms"].reshape(*shape_mask)
@@ -358,7 +499,7 @@ def train(rng_key,parameters, model_file=None, stage=None,output_directory=None)
         return rmses, maes, output
 
     if "energy_terms" in training_parameters:
-        model.set_energy_terms(training_parameters["energy_terms"])
+        model.set_energy_terms(training_parameters["energy_terms"],jit=False)
     print("energy terms:", model.energy_terms)
 
     keep_all_bests = training_parameters.get("keep_all_bests", False)
@@ -379,6 +520,9 @@ def train(rng_key,parameters, model_file=None, stage=None,output_directory=None)
     variables = deepcopy(model.variables)
     variables_save = deepcopy(variables)
     variables_ema_save = deepcopy(model.variables)
+
+    fmetrics = open(output_directory + f"metrics{stage_prefix}.traj", "w")
+
     print("Starting training...")
     for epoch in range(max_epochs):
         for _ in range(nbatch_per_epoch):
@@ -404,11 +548,12 @@ def train(rng_key,parameters, model_file=None, stage=None,output_directory=None)
             # opt_st.inner_states["trainable"].inner_state[1].hyperparams[
             #     "learning_rate"
             # ] = schedule(count)
+            current_lr, sch_state = schedule(sch_state)
             opt_st.inner_states["trainable"].inner_state[-1].hyperparams[
                 "step_size"
-            ] = schedule(count)
+            ] = current_lr
             variables, model.variables, opt_st, ema_st, loss = train_step(
-                variables, model.variables, opt_st, ema_st, inputs,inputs_ref
+                variables, model.variables, opt_st, ema_st, inputs, inputs_ref
             )
             count += 1
             # jax.block_until_ready(state)
@@ -425,7 +570,7 @@ def train(rng_key,parameters, model_file=None, stage=None,output_directory=None)
                 inputs_ref = model.preprocess(**data_ref)
             else:
                 inputs_ref = None
-            rmses, maes, output = validation(model.variables, inputs,inputs_ref)
+            rmses, maes, output = validation(model.variables, inputs, inputs_ref)
             for k, v in rmses.items():
                 rmses_avg[k] += v
             for k, v in maes.items():
@@ -438,28 +583,21 @@ def train(rng_key,parameters, model_file=None, stage=None,output_directory=None)
         step_time /= nbatch_per_epoch
         fetch_time /= nbatch_per_epoch
         preprocess_time /= nbatch_per_epoch
-        current_lr = schedule(count)
+
         print("")
-        print(f"Step {epoch+1}, lr={current_lr:.3e}, loss = {loss:.3e}")
-        metrics = {
-            "loss": loss,
-            "lr": current_lr,
-            "step": epoch,
-            "count": count,
-            "time": time.time() - start,
-        }
+        print(f"Epoch {epoch+1}, lr={current_lr:.3e}, loss = {loss:.3e}")
         rmse_tot = 0.0
         for k in rmses_avg.keys():
             mult = loss_definition[k]["mult"]
+            rmse_tot = (
+                rmse_tot + rmses_avg[k] / mult * loss_definition[k]["weight"] ** 0.5
+            )
             unit = (
                 "(" + loss_definition[k]["unit"] + ")"
                 if "unit" in loss_definition[k]
                 else ""
             )
-            rmse_tot = rmse_tot + rmses_avg[k] * loss_definition[k]["weight"]**0.5
-            metrics[f"rmse_{k}"] = rmses_avg[k] / mult
-            metrics[f"mae_{k}"] = maes_avg[k] / mult
-            if rmses_avg[k]/mult < 1.e-2:
+            if rmses_avg[k] / mult < 1.0e-2:
                 print(
                     f"    rmse_{k}= {rmses_avg[k]/mult:10.3e} ; mae_{k}= {maes_avg[k]/mult:10.3e}   {unit}"
                 )
@@ -467,10 +605,11 @@ def train(rng_key,parameters, model_file=None, stage=None,output_directory=None)
                 print(
                     f"    rmse_{k}= {rmses_avg[k]/mult:10.3f} ; mae_{k}= {maes_avg[k]/mult:10.3f}   {unit}"
                 )
-        metrics["rmse_tot"] = rmse_tot
-        
+
         if print_timings:
-            print(f"    fetch time = {fetch_time:.5f}; preprocess time = {preprocess_time:.5f}; train time = {step_time:.5f}")
+            print(
+                f"    fetch time = {fetch_time:.5f}; preprocess time = {preprocess_time:.5f}; train time = {step_time:.5f}"
+            )
         fetch_time = 0.0
         step_time = 0.0
         preprocess_time = 0.0
@@ -512,19 +651,48 @@ def train(rng_key,parameters, model_file=None, stage=None,output_directory=None)
         variables_save = deepcopy(variables)
         variables_ema_save = deepcopy(model.variables)
         rmses_prev = rmses_avg
-        
-        model.save(output_directory+"latest_model.fnx")
 
+        model.save(output_directory + "latest_model.fnx")
+
+        # save metrics
+        metrics = {
+            "epoch": epoch + 1,
+            "step": count,
+            "data_count": count * batch_size,
+            "elapsed_time": time.time() - start,
+            "lr": current_lr,
+            "loss": loss,
+        }
+        for k in rmses_avg.keys():
+            mult = loss_definition[k]["mult"]
+            metrics[f"rmse_{k}"] = rmses_avg[k] / mult
+            metrics[f"mae_{k}"] = maes_avg[k] / mult
+
+        metrics["rmse_tot"] = rmse_tot
         if rmse_tot < rmse_tot_best:
             rmse_tot_best = rmse_tot
             metrics["rmse_tot_best"] = rmse_tot_best
             if keep_all_bests:
-                best_name = output_directory+f"best_model{stage_prefix}_{time.strftime('%Y-%m-%d-%H-%M-%S')}.fnx"
+                best_name = (
+                    output_directory
+                    + f"best_model{stage_prefix}_{time.strftime('%Y-%m-%d-%H-%M-%S')}.fnx"
+                )
                 model.save(best_name)
-            
-            best_name = output_directory+f"best_model{stage_prefix}.fnx"
+
+            best_name = output_directory + f"best_model{stage_prefix}.fnx"
             model.save(best_name)
             print("New best model saved to:", best_name)
+
+        if epoch == 0:
+            fmetrics.write("# " + " ".join(metrics.keys()) + "\n")
+        fmetrics.write(" ".join([str(metrics[k]) for k in metrics.keys()]) + "\n")
+        fmetrics.flush()
+
+        # update learning rate using current metrics
+        assert (
+            schedule_metrics in metrics
+        ), f"Error: cannot update lr, {schedule_metrics} not in metrics"
+        current_lr, sch_state = schedule(sch_state, metrics[schedule_metrics])
 
         if is_end(metrics):
             print("Stage finished.")
@@ -534,7 +702,9 @@ def train(rng_key,parameters, model_file=None, stage=None,output_directory=None)
     print(f"Training time: {end-start} s")
     print("")
 
-    filename = output_directory+f"final_model{stage_prefix}.fnx"
+    fmetrics.close()
+
+    filename = output_directory + f"final_model{stage_prefix}.fnx"
     model.save(filename)
     print("Final model saved to:", filename)
 
