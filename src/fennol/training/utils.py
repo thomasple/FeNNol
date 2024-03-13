@@ -121,18 +121,19 @@ def load_dataset(training_parameters, rename_refs=[],infinite_iterator=True):
             dataset = pickle.load(f)
 
     batch_size = training_parameters.get("batch_size", 16)
+    shuffle = training_parameters.get("shuffle_dataset", True)
     dataloader_validation = DataLoader(
         dataset["validation"],
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=shuffle,
         collate_fn=collate_fn,
     )
     dataloader_training = DataLoader(
-        dataset["training"], batch_size=batch_size, shuffle=True, collate_fn=collate_fn
+        dataset["training"], batch_size=batch_size, shuffle=shuffle, collate_fn=collate_fn
     )
 
     print("Dataset loaded.")
-    
+
     if not infinite_iterator:
         return dataloader_training, dataloader_validation
 
