@@ -63,18 +63,62 @@ class Polarisation(nn.Module):
             Input dictionary containing all the info about the system.
             This dictionary is given from the FENNIX class.
         """
+        # Species
         species = inputs['species']
         species = species.reshape(-1)
         graph = inputs[self.graph_key]
+        # Graph
         edge_src, edge_dst = graph['edge_src'], graph['edge_dst']
+        # Distances and vector between each pair of atoms
         distances = graph['distances']
         rij = distances / au.BOHR
         vec_ij = graph['vec'] / au.BOHR
+        # Polarisability
         polarisability = (
             inputs[self.polarisability_key].reshape(-1) / au.BOHR**3
         )
         pol_src = polarisability[edge_src]
         pol_dst = polarisability[edge_dst]
+        alpha_ij = pol_dst * pol_src
+
+        # The output is a dictionary with the polarisation energy
+        output = {}
+
+        # Effective distance
+        uij = self.get_uij(rij, alpha_ij)
+
+        # Values of the system
+        n_batch, n_atoms = species.shape
+        polarisability = polarisability.reshape(n_batch, n_atoms)
+
+        # Interaction matrix
+
+        # Permanent electric field
+
+        # Solve linear equation to get electric point dipole moment
+
+        # Energy related to the polarisation
+
+    def get_uij(
+            self,
+            rij: jnp.ndarray,
+            alpha_ij: jnp.ndarray
+        ) -> jnp.ndarray:
+        """Compute the effective distance for every pair.
+
+        Parameters
+        ----------
+        rij : jnp.ndarray
+            Tensor containing the distances between every pair.
+        alpha_ij : jnp.ndarray
+            Product of the polarization between every pair
+
+        Returns
+        -------
+        uij : jnp.ndarray
+            Tensor containing the effective distances for every pair
+        """
+        return rij / alpha_ij ** (1 / 6)
 
 
 if __name__ == "__main__":
