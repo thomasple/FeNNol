@@ -734,7 +734,12 @@ class AtomPadding(nn.Module):
 
 
 def atom_unpadding(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    if "true_atoms" not in inputs:
+        return inputs
+    
     species = inputs["species"]
+    true_atoms = inputs["true_atoms"]
+    true_sys = inputs["true_sys"]
     natall = species.shape[0]
     nat = np.argmax(species <= 0)
     if nat == 0:
@@ -749,13 +754,11 @@ def atom_unpadding(inputs: Dict[str, Any]) -> Dict[str, Any]:
             if v.ndim == 0:
                 continue
             if v.shape[0] == natall:
-                output[k] = v[:nat]
+                output[k] = v[true_atoms]
             elif v.shape[0] == nsysall:
-                output[k] = v[:-1]
-    if "true_sys" in output:
-        del output["true_sys"]
-    if "true_atoms" in output:
-        del output["true_atoms"]
+                output[k] = v[true_sys]
+    del output["true_sys"]
+    del output["true_atoms"]
     return output
 
 

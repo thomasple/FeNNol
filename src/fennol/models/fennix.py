@@ -70,6 +70,7 @@ class FENNIX:
         use_atom_padding: bool = False,
         fixed_preprocessing: bool = False,
         graph_config: Dict = {},
+        **kwargs,
     ) -> None:
         self._input_args = {
             "cutoff": cutoff,

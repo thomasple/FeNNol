@@ -297,7 +297,7 @@ class ChemicalNetHet(nn.Module):
     squeeze: bool = False
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
 
-    FID: str = "CHEMICAL_NET"
+    FID: str = "CHEMICAL_NET_HET"
 
     def setup(self):
         idx_map = {s: i for i, s in enumerate(PERIODIC_TABLE)}
@@ -372,7 +372,7 @@ class ChemicalNet(nn.Module):
     squeeze: bool = False
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
 
-    FID: str = "CHEMICAL_NET_HET"
+    FID: str = "CHEMICAL_NET"
 
     @nn.compact
     def __call__(
