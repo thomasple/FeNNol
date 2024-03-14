@@ -12,6 +12,9 @@ class RepulsionZBL(nn.Module):
     energy_key: Optional[str] = None
     trainable: bool = True
 
+    FID: str  = "REPULSION_ZBL"
+
+
     @nn.compact
     def __call__(self, inputs):
         species = inputs["species"]

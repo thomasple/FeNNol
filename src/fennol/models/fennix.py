@@ -10,13 +10,6 @@ import numpy as np
 from flax import serialization
 from flax.core.frozen_dict import freeze, unfreeze
 
-from .embeddings import EMBEDDINGS
-from .encodings import ENCODINGS
-from .nets import NETWORKS
-from .misc import MISC
-from .physics import PHYSICS
-from .e3 import E3MODULES
-from .uncertainty import UNCERTAINY_MODULES
 from .preprocessing import (
     GraphGenerator,
     GraphGeneratorFixed,
@@ -26,38 +19,7 @@ from .preprocessing import (
     atom_unpadding,
 )
 from ..utils import deep_update
-
-
-_MODULES = {
-    **EMBEDDINGS,
-    **ENCODINGS,
-    **NETWORKS,
-    **MISC,
-    **PHYSICS,
-    **E3MODULES,
-    **UNCERTAINY_MODULES,
-}
-
-
-class FENNIXModules(nn.Module):
-    layers: Sequence[Tuple[nn.Module, Dict]]
-
-    def __post_init__(self):
-        if not isinstance(self.layers, Sequence):
-            raise ValueError(
-                f"'layers' must be a sequence, got '{type(self.layers).__name__}'."
-            )
-        super().__post_init__()
-
-    @nn.compact
-    def __call__(self, inputs):
-        if not self.layers:
-            raise ValueError(f"Empty Sequential module {self.name}.")
-
-        outputs = inputs
-        for layer, prms in self.layers:
-            outputs = layer(**prms)(outputs)
-        return outputs
+from .modules import MODULES,FENNIXModules
 
 
 @dataclasses.dataclass
@@ -66,7 +28,7 @@ class FENNIX:
     Static wrapper for FENNIX models
 
     The underlying model is a flax.nn.Sequential built from the `modules` dictionary
-    which references registered modules in `_MODULES` and provides the parameters for initialization.
+    which references registered modules in `modules.MODULES` and provides the parameters for initialization.
 
     Since the model is static and contains variables, it must be initialized right away with either
     `example_data` or `variables`. If `variables` is provided, it is used directly. If `example_data`
@@ -164,7 +126,7 @@ class FENNIX:
                 raise ValueError(f"Module {name} already exists")
             modules_names.append(name)
             params["name"] = name
-            mod = _MODULES[key.upper()]
+            mod = MODULES[key.upper()]
             fields = [f.name for f in dataclasses.fields(mod)]
             if "_graphs_properties" in fields:
                 params["_graphs_properties"] = graphs_properties

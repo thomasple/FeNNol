@@ -4,9 +4,9 @@ import flax.linen as nn
 from typing import Optional, Union, List
 import math
 import numpy as np
-from ..utils import AtomicUnits as au
+from ...utils import AtomicUnits as au
 from functools import partial
-from ..utils.periodic_table import (
+from ...utils.periodic_table import (
     PERIODIC_TABLE_REV_IDX,
     PERIODIC_TABLE,
     ELECTRONIC_STRUCTURE,
@@ -37,6 +37,9 @@ class SpeciesEncoding(nn.Module):
     encoding: str = "random"
     species_order: Optional[List[str]] = None
     trainable: bool = False
+
+    FID: str = "SPECIES_ENCODING"
+
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -178,6 +181,8 @@ class RadialBasis(nn.Module):
     trainable: bool = False
     enforce_positive: bool = False
     gamma: float = 1./(2*au.BOHR)
+
+    FID: str = "RADIAL_BASIS"
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -382,8 +387,3 @@ def positional_encoding(t,d:int,n:float=10000.):
         out = out[:,:-1]
     return out
     
-
-ENCODINGS = {
-    "RADIAL_BASIS": RadialBasis,
-    "SPECIES_ENCODING": SpeciesEncoding,
-}

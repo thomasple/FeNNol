@@ -27,6 +27,8 @@ class CND4(nn.Module):
     electronegativity_factor: bool = False
     trainable: bool = False
 
+    FID: str  = "CN_D4"
+
     @nn.compact
     def __call__(self, inputs):
         graph = inputs[self.graph_key]
@@ -77,6 +79,8 @@ class SumSwitch(nn.Module):
     pow: float = 1.0
     trainable: bool = False
 
+    FID: str  = "SUM_SWITCH"
+
     @nn.compact
     def __call__(self, inputs):
         graph = inputs[self.graph_key]
@@ -105,6 +109,9 @@ class CNShift(nn.Module):
     ref_value: Union[str, float] = 1.0
     enforce_positive: bool = False
     cn_pow: float = 0.5
+
+    FID: str  = "CN_SHIFT"
+
 
     @nn.compact
     def __call__(self, inputs):
@@ -146,6 +153,8 @@ class CNStore(nn.Module):
     trainable: bool = True
     output_dim: int = 1
     squeeze: bool = True
+
+    FID: str  = "CN_STORE"
 
     @nn.compact
     def __call__(self, inputs):

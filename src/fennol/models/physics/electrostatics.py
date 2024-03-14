@@ -74,6 +74,9 @@ class Coulomb(nn.Module):
     bscreen: float = -1.0
     trainable: bool = True
 
+    FID: str  = "COULOMB"
+
+
     @nn.compact
     def __call__(self, inputs):
         species = inputs["species"]
@@ -357,6 +360,8 @@ class QeqD4(nn.Module):
     c3_key: Optional[str] = None
     c4_key: Optional[str] = None
 
+    FID: str  = "QEQ_D4"
+
     @nn.compact
     def __call__(self, inputs):
         species = inputs["species"]
@@ -520,6 +525,8 @@ class ChargeCorrection(nn.Module):
     ratioeta_key: str = None
     trainable: bool = False
     cn_key: str = None
+
+    FID: str  = "CHARGE_CORRECTION"
 
     @nn.compact
     def __call__(self, inputs) -> Any:

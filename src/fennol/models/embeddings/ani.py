@@ -41,6 +41,8 @@ class ANIAEV(nn.Module):
     embedding_key: str = "embedding"
     graph_key: str = "graph"
 
+    FID: str  = "ANI_AEV"
+
     @nn.compact
     def __call__(self, inputs):
         species = inputs["species"]

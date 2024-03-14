@@ -5,8 +5,8 @@ import jax
 import numpy as np
 from functools import partial
 from typing import Optional, Tuple, Dict, List, Union
-from ..utils.activations import activation_from_str
-from ..utils.periodic_table import (
+from ...utils.activations import activation_from_str
+from ...utils.periodic_table import (
     CHEMICAL_PROPERTIES,
     PERIODIC_TABLE,
     PERIODIC_TABLE_REV_IDX,
@@ -24,6 +24,8 @@ class ApplySwitch(nn.Module):
     switch_key: Optional[str] = None
     graph_key: Optional[str] = None
     output_key: Optional[str] = None
+
+    FID: str = "APPLY_SWITCH"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -48,6 +50,8 @@ class ScatterEdges(nn.Module):
     graph_key: str = "graph"
     switch: bool = False
     switch_key: Optional[str] = None
+
+    FID: str = "SCATTER_EDGES"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -77,6 +81,8 @@ class EdgeConcatenate(nn.Module):
     switch: bool = False
     switch_key: Optional[str] = None
     axis: int = -1
+    
+    FID: str = "EDGE_CONCATENATE"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -103,6 +109,8 @@ class ScatterSystem(nn.Module):
     key: str
     output_key: Optional[str] = None
 
+    FID: str = "SCATTER_SYSTEM"
+
     @nn.compact
     def __call__(self, inputs) -> Any:
         batch_index = inputs["batch_index"]
@@ -122,6 +130,8 @@ class SumAxis(nn.Module):
     axis: Union[None, int, Sequence[int]] = None
     output_key: Optional[str] = None
     norm: Optional[str] = None
+
+    FID: str = "SUM_AXIS"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -147,6 +157,8 @@ class Split(nn.Module):
     axis: int = -1
     sizes: Union[int, Sequence[int]] = 1
     squeeze: bool = True
+
+    FID: str = "SPLIT"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -181,6 +193,8 @@ class Concatenate(nn.Module):
     axis: int = -1
     output_key: Optional[str] = None
 
+    FID: str = "CONCATENATE"
+
     @nn.compact
     def __call__(self, inputs) -> Any:
         output = jnp.concatenate([inputs[k] for k in self.keys], axis=self.axis)
@@ -194,6 +208,8 @@ class Activation(nn.Module):
     scale_out: float = 1.0
     shift_out: float = 0.0
     output_key: Optional[str] = None
+
+    FID: str = "ACTIVATION"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -214,6 +230,8 @@ class Scale(nn.Module):
     output_key: Optional[str] = None
     trainable: bool = False
 
+    FID: str = "SCALE"
+
     @nn.compact
     def __call__(self, inputs) -> Any:
         x = inputs[self.key]
@@ -232,6 +250,8 @@ class Add(nn.Module):
     keys: Sequence[str]
     output_key: Optional[str] = None
 
+    FID: str = "ADD"
+
     @nn.compact
     def __call__(self, inputs) -> Any:
         output = 0
@@ -245,6 +265,8 @@ class Add(nn.Module):
 class Multiply(nn.Module):
     keys: Sequence[str]
     output_key: Optional[str] = None
+
+    FID: str = "MULTIPLY"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -260,6 +282,8 @@ class Transpose(nn.Module):
     axes: Sequence[int] 
     output_key: Optional[str] = None
 
+    FID: str = "TRANSPOSE"
+
     @nn.compact
     def __call__(self, inputs) -> Any:
         output = jnp.transpose(inputs[self.key], axes=self.axes)
@@ -271,6 +295,8 @@ class Reshape(nn.Module):
     shape: Sequence[int]
     output_key: Optional[str] = None
 
+    FID: str = "RESHAPE"
+
     @nn.compact
     def __call__(self, inputs) -> Any:
         output = jnp.reshape(inputs[self.key], self.shape)
@@ -281,6 +307,9 @@ class ChemicalConstant(nn.Module):
     value: Union[str, List[float], float, Dict]
     output_key: Optional[str] = None
     trainable: bool = False
+
+    FID: str = "CHEMICAL_CONSTANT"
+
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -316,6 +345,9 @@ class SwitchFunction(nn.Module):
     switch_type: str = "cosine"
     p: Optional[float] = None
     trainable: bool = False
+
+    FID: str = "SWITCH_FUNCTION"
+
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -388,22 +420,3 @@ class SwitchFunction(nn.Module):
                 return {**inputs, self.graph_key: {**graph, "switch": switch}}
         else:
             return switch, edge_mask
-
-
-MISC = {
-    "SCATTER_EDGES": ScatterEdges,
-    "SCATTER_SYSTEM": ScatterSystem,
-    "SUM_AXIS": SumAxis,
-    "SPLIT": Split,
-    "CONCATENATE": Concatenate,
-    "ACTIVATION": Activation,
-    "SCALE": Scale,
-    "ADD": Add,
-    "MULTIPLY": Multiply,
-    "TRANSPOSE": Transpose,
-    "CHEMICAL_CONSTANT": ChemicalConstant,
-    "SWITCH_FUNCTION": SwitchFunction,
-    "APPLY_SWITCH": ApplySwitch,
-    "EDGE_CONCATENATE": EdgeConcatenate,
-    "RESHAPE": Reshape,
-}

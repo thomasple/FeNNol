@@ -2,13 +2,13 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 from ...utils.spherical_harmonics import generate_spherical_harmonics, CG_SO3
-from ..encodings import SpeciesEncoding, RadialBasis
+from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
 from typing import Dict, Union, Callable, Sequence, Optional
 from ...utils.activations import activation_from_str, tssr2
 from ...utils.initializers import initializer_from_str, scaled_orthogonal
-from ..nets import FullyConnectedNet, ResMLP
+from ..misc.nets import FullyConnectedNet, ResMLP
 
 
 class SpookyNetEmbedding(nn.Module):
@@ -22,6 +22,9 @@ class SpookyNetEmbedding(nn.Module):
     )
     radial_basis: dict = dataclasses.field(default_factory=lambda: {"basis": "spooky"})
     kernel_init: Union[Callable, str] = scaled_orthogonal(scale=1.0, mode="fan_avg")
+
+    FID: str = "SPOOKYNET"
+
 
     @nn.compact
     def __call__(self, inputs):

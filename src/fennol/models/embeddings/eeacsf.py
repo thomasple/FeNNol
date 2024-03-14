@@ -6,7 +6,7 @@ import numpy as np
 import dataclasses
 
 from ...utils.periodic_table import PERIODIC_TABLE, VALENCE_STRUCTURE
-from ..encodings import SpeciesEncoding, RadialBasis
+from ..misc.encodings import SpeciesEncoding, RadialBasis
 
 
 class EEACSF(nn.Module):
@@ -20,6 +20,8 @@ class EEACSF(nn.Module):
     radial_basis: dict = dataclasses.field(default_factory=dict)
     radial_basis_angle: dict = dataclasses.field(default_factory=dict)
     angle_combine_pairs: bool = False
+
+    FID: str = "EEACSF"
 
     @nn.compact
     def __call__(self, inputs):

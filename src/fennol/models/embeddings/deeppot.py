@@ -5,10 +5,10 @@ from typing import Sequence, Dict, Optional, Union, Callable
 import numpy as np
 import dataclasses
 
-from ..nets import FullyConnectedNet, ChemicalNet
+from ..misc.nets import FullyConnectedNet, ChemicalNet
 
 from ...utils.periodic_table import PERIODIC_TABLE, VALENCE_STRUCTURE
-from ..encodings import SpeciesEncoding, RadialBasis
+from ..misc.encodings import SpeciesEncoding, RadialBasis
 
 
 class DeepPotEmbedding(nn.Module):
@@ -27,6 +27,8 @@ class DeepPotEmbedding(nn.Module):
     concatenate_species: bool = False
     divide_distances: bool = True
     species_order: Optional[Sequence[str]] = None
+
+    FID: str = "DEEPPOT"
 
     @nn.compact
     def __call__(self, inputs):
@@ -123,6 +125,8 @@ class DeepPotE3Embedding(nn.Module):
     activation: Union[Callable, str] = nn.silu
     concatenate_species: bool = False
     divide_distances: bool = True
+
+    FID: str = "DEEPPOT_E3"
 
     @nn.compact
     def __call__(self, inputs):

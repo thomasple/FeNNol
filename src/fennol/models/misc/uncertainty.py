@@ -6,12 +6,14 @@ import numpy as np
 from functools import partial
 import dataclasses
 from typing import Optional, Tuple, Dict, List, Union
-from ..utils.periodic_table import PERIODIC_TABLE
+from ...utils.periodic_table import PERIODIC_TABLE
 
 class EnsembleStatistics(nn.Module):
     key: str
     axis: int = -1
     output_key: Optional[str] = None
+
+    FID: str  = "ENSEMBLE_STAT"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -40,6 +42,8 @@ class ConstrainEvidence(nn.Module):
     graph_key: Optional[str] = None
     self_weight: float = 10.
     # target_dim: Optional[int] = None
+
+    FID: str  = "CONSTRAIN_EVIDENCE"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -134,8 +138,3 @@ class ConstrainEvidence(nn.Module):
         }
         return out
 
-
-UNCERTAINY_MODULES = {
-    "CONSTRAIN_EVIDENCE": ConstrainEvidence,
-    "ENSEMBLE_STAT": EnsembleStatistics,
-}
