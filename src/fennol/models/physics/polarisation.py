@@ -92,6 +92,16 @@ class Polarisation(nn.Module):
         polarisability = polarisability.reshape(n_batch, n_atoms)
 
         # Interaction matrix
+        t_matrix = self.get_T_matrix(
+            vec=vec_ij,
+            rij=rij,
+            edge_src=edge_src,
+            edge_dst=edge_dst,
+            species=species,
+            polarisability=polarisability,
+            uij=uij,
+            a=self.damping_param_mutual
+        )
 
         # Permanent electric field
 
@@ -119,6 +129,47 @@ class Polarisation(nn.Module):
             Tensor containing the effective distances for every pair
         """
         return rij / alpha_ij ** (1 / 6)
+
+    def get_T_matrix(
+        self,
+        vec: jnp.ndarray,
+        rij: jnp.ndarray,
+        edge_src: jnp.ndarray,
+        edge_dst: jnp.ndarray,
+        species: jnp.ndarray,
+        polarisability: jnp.ndarray,
+        uij: jnp.ndarray,
+        a: float
+    ) -> jnp.ndarray:
+        n_batch, n_atoms = species.shape
+        lambda_3, lambda_5 = self.damping(uij, a)
+
+    def damping(
+        self,
+        uij: jnp.ndarray,
+        a: float
+    ) -> jnp.ndarray:
+        """Compute the damping function.
+
+        Parameters
+        ----------
+        uij : jnp.ndarray
+            Tensor containing the effective distances for every pair.
+        a : float
+            Hyper parameter of the polarisation model.
+
+        Returns
+        -------
+        lambda_3 : jnp.ndarray
+            Damping function for the power 3 term.
+        lambda_5 : jnp.ndarray
+            Damping function for the power 5 term.
+        """
+        exp = jnp.exp(-a * uij**3)
+        lambda_3 = 1 - exp
+        lambda_5 = 1 - (1 + a * uij**3) * exp
+        return lambda_3, lambda_5
+
 
 
 if __name__ == "__main__":
