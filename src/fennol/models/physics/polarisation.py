@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 from jax import random
 
-from ...utils import AtomicUnits as au
+from fennol.utils import AtomicUnits as au
 
 
 class Polarisation(nn.Module):
@@ -53,6 +53,8 @@ class Polarisation(nn.Module):
     if energy_key is None:
         energy_key = name
 
+    FID: str = 'POLARISATION'
+
     @nn.compact
     def __call__(self, inputs):
         """Forward pass of the polarisation model.
@@ -65,7 +67,6 @@ class Polarisation(nn.Module):
         """
         # Species
         species = inputs['species']
-        species = species.reshape(-1)
         graph = inputs[self.graph_key]
         # Graph
         edge_src, edge_dst = graph['edge_src'], graph['edge_dst']
@@ -75,8 +76,9 @@ class Polarisation(nn.Module):
         vec_ij = graph['vec'] / au.BOHR
         # Polarisability
         polarisability = (
-            inputs[self.polarisability_key].reshape(-1) / au.BOHR**3
+            inputs[self.polarisability_key] / au.BOHR**3
         )
+
         pol_src = polarisability[edge_src]
         pol_dst = polarisability[edge_dst]
         alpha_ij = pol_dst * pol_src
@@ -85,23 +87,32 @@ class Polarisation(nn.Module):
         output = {}
 
         # Effective distance
-        uij = self.get_uij(rij, alpha_ij)
+        uij = rij / alpha_ij ** (1 / 6)
+        # Damping terms
+        exp = jnp.exp(-self.damping_param_mutual * uij**3)
+        lambda_3 = 1 - exp
+        lambda_5 = 1 - (1 + self.damping_param_mutual * uij**3) * exp
+
+        def matvec(x):
+            pass
+
+        return graph
 
         # Values of the system
-        n_batch, n_atoms = species.shape
-        polarisability = polarisability.reshape(n_batch, n_atoms)
+        # n_batch, n_atoms = species.shape
+        # polarisability = polarisability.reshape(n_batch, n_atoms)
 
         # Interaction matrix
-        t_matrix = self.get_T_matrix(
-            vec=vec_ij,
-            rij=rij,
-            edge_src=edge_src,
-            edge_dst=edge_dst,
-            species=species,
-            polarisability=polarisability,
-            uij=uij,
-            a=self.damping_param_mutual
-        )
+        # t_matrix = self.get_T_matrix(
+        #     vec=vec_ij,
+        #     rij=rij,
+        #     edge_src=edge_src,
+        #     edge_dst=edge_dst,
+        #     species=species,
+        #     polarisability=polarisability,
+        #     uij=uij,
+        #     a=self.damping_param_mutual
+        # )
 
         # Permanent electric field
 
@@ -109,90 +120,94 @@ class Polarisation(nn.Module):
 
         # Energy related to the polarisation
 
-    def get_uij(
-            self,
-            rij: jnp.ndarray,
-            alpha_ij: jnp.ndarray
-        ) -> jnp.ndarray:
-        """Compute the effective distance for every pair.
-
-        Parameters
-        ----------
-        rij : jnp.ndarray
-            Tensor containing the distances between every pair.
-        alpha_ij : jnp.ndarray
-            Product of the polarization between every pair
-
-        Returns
-        -------
-        uij : jnp.ndarray
-            Tensor containing the effective distances for every pair
-        """
-        return rij / alpha_ij ** (1 / 6)
-
-    def get_T_matrix(
-        self,
-        vec: jnp.ndarray,
-        rij: jnp.ndarray,
-        edge_src: jnp.ndarray,
-        edge_dst: jnp.ndarray,
-        species: jnp.ndarray,
-        polarisability: jnp.ndarray,
-        uij: jnp.ndarray,
-        a: float
-    ) -> jnp.ndarray:
-        n_batch, n_atoms = species.shape
-        lambda_3, lambda_5 = self.damping(uij, a)
-
-    def damping(
-        self,
-        uij: jnp.ndarray,
-        a: float
-    ) -> jnp.ndarray:
-        """Compute the damping function.
-
-        Parameters
-        ----------
-        uij : jnp.ndarray
-            Tensor containing the effective distances for every pair.
-        a : float
-            Hyper parameter of the polarisation model.
-
-        Returns
-        -------
-        lambda_3 : jnp.ndarray
-            Damping function for the power 3 term.
-        lambda_5 : jnp.ndarray
-            Damping function for the power 5 term.
-        """
-        exp = jnp.exp(-a * uij**3)
-        lambda_3 = 1 - exp
-        lambda_5 = 1 - (1 + a * uij**3) * exp
-        return lambda_3, lambda_5
-
-
 
 if __name__ == "__main__":
-    pola = Polarisation(name='polarisation')
 
-    species = jnp.array([6, 1, 1])
-    graph = {
-        'edge_src': jnp.array([0, 0, 1]),
-        'edge_dst': jnp.array([1, 2, 2]),
-        'distances': jnp.array([1.0, 1.0, jnp.sqrt(2.0)]),
-        'vec': jnp.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
-    }
-    charges = jnp.array([-0.5, 0.25, 0.25])
-    polarisability = jnp.array([1.0, 0.5, 0.5])
-    inputs = {
-        'species': species,
-        'graph': graph,
-        'charges': charges,
-        'polarisability': polarisability
-    }
+    from jax.random import PRNGKey
 
-    key = random.PRNGKey(0)
+    from fennol import FENNIX
 
-    variables = pola.init(key, inputs)
+    model = FENNIX(
+        cutoff=5.0,
+        rng_key=PRNGKey(0),
+        modules={
+            # 'embedding': {
+            #     'module_name': 'ALLEGRO',
+            #     'dim': 64,
+            #     'nchannels': 1,
+            #     'lmax': 1,
+            #     'nlayers': 1,
+            #     'twobody_hidden': [32, 64],
+            #     'latent_hidden': [64],
+            #     'radial_basis': {
+            #         'dim': 8,
+            #         'basis': 'bessel',
+            #         'trainable': False,
+            #     },
+            #     'species_encoding': {
+            #         'encoding': 'onehot',
+            #         'species_order': ['O', 'H'],
+            #         'trainable': False
+            #     },
+            # },
+            'energy': {
+                'module_name': 'NEURAL_NET',
+                'neurons': [32, 1],
+                'input_key': 'coordinates',
+            },
+            'charges': {
+                'module_name': 'CHEMICAL_CONSTANT',
+                'value': {
+                    'O': -0.504458,
+                    'H': 0.252229
+                },
+            },
+            'polarisability': {
+            'module_name': 'CHEMICAL_CONSTANT',
+                'value': {
+                    'O': 0.976,
+                    'H': 0.428
+                },
+            },
+            'coulomb': {
+                'module_name': 'COULOMB',
+                'charges_key': 'charges',
+            },
+            'polarisation': {
+                'module_name': 'POLARISATION',
+            },
+        }
+    )
 
-    results = pola.apply(variables, inputs)
+    species = jnp.array(
+        [
+            [8, 1, 1],
+            [8, 1, 1]
+        ]
+    ).reshape(-1)
+
+    coordinates = jnp.array(
+        [
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0]
+            ],
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0]
+            ]
+        ]
+    ).reshape(-1, 3)
+
+    natoms = jnp.array([3, 3])
+    batch_index = jnp.array([0, 0, 0, 1, 1, 1])
+
+
+    output = model(
+        species=species,
+        coordinates=coordinates,
+        natoms=natoms,
+        batch_index=batch_index
+    )
