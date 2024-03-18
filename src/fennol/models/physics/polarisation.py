@@ -102,13 +102,11 @@ class Polarisation(nn.Module):
         charges = inputs[self.charges_key]
         rij = rij[:, None]
         q_ij = charges[edge_src, None]
-        q_ji = charges[edge_dst, None]
-        damping_field = 1 - jnp.exp(-self.damping_param_field * uij**1.5)[:, None]
+        damping_field = 1 - jnp.exp(
+            -self.damping_param_field * uij**1.5
+        )[:, None]
         eij = q_ij * (vec_ij / rij**3) * damping_field
-        eji = -q_ji * (vec_ij / rij**3) * damping_field
-        electric_field = jnp.zeros(
-            (species.shape[0], 3)).at[edge_src].add(eij).at[edge_dst].add(eji)
-
+        electric_field = jax.ops.segment_sum(eij, edge_dst, species.shape[0])
 
         return electric_field
 
