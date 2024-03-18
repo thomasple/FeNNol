@@ -7,9 +7,8 @@ Created by C. Cattin 2024
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
-from jax import random
 
-from fennol.utils import AtomicUnits as au
+from fennol.utils import AtomicUnits as Au
 
 
 class Polarisation(nn.Module):
@@ -72,11 +71,11 @@ class Polarisation(nn.Module):
         edge_src, edge_dst = graph['edge_src'], graph['edge_dst']
         # Distances and vector between each pair of atoms
         distances = graph['distances']
-        rij = distances / au.BOHR
-        vec_ij = graph['vec'] / au.BOHR
+        rij = distances / Au.BOHR
+        vec_ij = graph['vec'] / Au.BOHR
         # Polarisability
         polarisability = (
-            inputs[self.polarisability_key] / au.BOHR**3
+            inputs[self.polarisability_key] / Au.BOHR**3
         )
 
         pol_src = polarisability[edge_src]
@@ -93,44 +92,59 @@ class Polarisation(nn.Module):
         lambda_3 = 1 - exp
         lambda_5 = 1 - (1 + self.damping_param_mutual * uij**3) * exp
 
-        def matvec(x):
-            pass
+        ######################
+        # Interaction matrix #
+        ######################
+        # Diagonal terms
+        tii = 1 / polarisability[:, None]
+        # Off-diagonal terms
+        tij = (
+            3 * lambda_5[:, None, None]
+                * vec_ij[:, :, None] * vec_ij[:, None, :]
+                / rij[:, None, None]**5
+            - jnp.eye(3)[None, :, :] * lambda_3[:, None, None]
+                / rij[:, None, None]**3
+        )
+
+        def matvec(mui):
+            """Compute the matrix vector product of T and mu."""
+            mui = mui.reshape(-1, 3)
+            tmu_self = tii * mui
+            tmu_pair = jnp.einsum("jab,jb->ja", tij, mui[edge_dst])
+            tmu = (
+                jax.ops.segment_sum(tmu_pair, edge_src, species.shape[0])
+                + tmu_self
+            )
+            return tmu.flatten()
 
         ##################
         # Electric field #
         ##################
         charges = inputs[self.charges_key]
         rij = rij[:, None]
-        q_ij = charges[edge_src, None]
+        q_ij = charges[edge_dst, None]
         damping_field = 1 - jnp.exp(
             -self.damping_param_field * uij**1.5
         )[:, None]
         eij = q_ij * (vec_ij / rij**3) * damping_field
-        electric_field = jax.ops.segment_sum(eij, edge_dst, species.shape[0])
+        electric_field = jax.ops.segment_sum(
+            eij, edge_src, species.shape[0]
+        ).flatten()
 
-        return electric_field
+        ###############################
+        # Electric point dipole moment#
+        ###############################
+        mu = jax.scipy.sparse.linalg.cg(matvec, electric_field)[0]
 
-        # Values of the system
-        # n_batch, n_atoms = species.shape
-        # polarisability = polarisability.reshape(n_batch, n_atoms)
+        # Polarisation energy
+        pol_energy = (0.5 * matvec(mu) - electric_field) @ mu
 
-        # Interaction matrix
-        # t_matrix = self.get_T_matrix(
-        #     vec=vec_ij,
-        #     rij=rij,
-        #     edge_src=edge_src,
-        #     edge_dst=edge_dst,
-        #     species=species,
-        #     polarisability=polarisability,
-        #     uij=uij,
-        #     a=self.damping_param_mutual
-        # )
+        # Output
+        output[self.electric_field_key] = electric_field.reshape(-1, 3)
+        output[self.induce_dipole_key] = mu.reshape(-1, 3) * Au.BOHR
+        output[self.energy_key] = pol_energy
 
-        # Permanent electric field
-
-        # Solve linear equation to get electric point dipole moment
-
-        # Energy related to the polarisation
+        return {**inputs, **output}
 
 
 if __name__ == "__main__":
@@ -143,25 +157,6 @@ if __name__ == "__main__":
         cutoff=5.0,
         rng_key=PRNGKey(0),
         modules={
-            # 'embedding': {
-            #     'module_name': 'ALLEGRO',
-            #     'dim': 64,
-            #     'nchannels': 1,
-            #     'lmax': 1,
-            #     'nlayers': 1,
-            #     'twobody_hidden': [32, 64],
-            #     'latent_hidden': [64],
-            #     'radial_basis': {
-            #         'dim': 8,
-            #         'basis': 'bessel',
-            #         'trainable': False,
-            #     },
-            #     'species_encoding': {
-            #         'encoding': 'onehot',
-            #         'species_order': ['O', 'H'],
-            #         'trainable': False
-            #     },
-            # },
             'energy': {
                 'module_name': 'NEURAL_NET',
                 'neurons': [32, 1],
@@ -215,7 +210,6 @@ if __name__ == "__main__":
 
     natoms = jnp.array([3, 3])
     batch_index = jnp.array([0, 0, 0, 1, 1, 1])
-
 
     output = model(
         species=species,
