@@ -137,7 +137,9 @@ class Polarisation(nn.Module):
         mu = jax.scipy.sparse.linalg.cg(matvec, electric_field)[0]
 
         # Polarisation energy
-        pol_energy = (0.5 * matvec(mu) - electric_field) @ mu
+        pol_energy = (
+            (0.5 * matvec(mu) - electric_field) * mu
+        ).reshape(-1, 3).sum(axis=1)
 
         # Output
         output[self.electric_field_key] = electric_field.reshape(-1, 3)
