@@ -213,11 +213,11 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
 
     # spectra parameters
     omegasmear = np.pi / dt / 100.0
-    Tseg = qtb_parameters.get("tseg", 1.0 / au.PS)
+    Tseg = qtb_parameters.get("tseg", 1.0 / au.PS)*au.FS
     nseg = int(Tseg / dt)
     Tseg = nseg * dt
     dom = 2 * np.pi / (3 * Tseg)
-    omegacut = qtb_parameters.get("omegacut", 15000.0 / au.CM1)
+    omegacut = qtb_parameters.get("omegacut", 15000.0 / au.CM1)/au.FS
     nom = int(omegacut / dom)
     omega = dom * np.arange((3 * nseg) // 2 + 1)
     cutoff = jnp.asarray(1.0 / (1.0 + np.exp((omega - omegacut) / omegasmear)))
@@ -241,7 +241,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
 
     # hbar schedule
     classical_kernel = qtb_parameters.get("classical_kernel", False)
-    hbar = qtb_parameters.get("hbar", 1.0)
+    hbar = qtb_parameters.get("hbar", 1.0)*au.FS
     u = 0.5 * hbar * np.abs(omega) / kT
     theta = kT * np.ones_like(omega)
     if hbar > 0:
@@ -288,10 +288,10 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
             adaptation_method in authorized_methods
         ), f"adaptation_method must be one of {authorized_methods}"
         if adaptation_method == "SIMPLE":
-            agamma = qtb_parameters.get("agamma", 1.0e-3)
+            agamma = qtb_parameters.get("agamma", 1.0e-3)/au.FS
             assert agamma > 0, "agamma must be positive"
             a1_ad = agamma * Tseg  #  * gamma
-            print(f"ADQTB SIMPLE: agamma = {agamma:.3f}")
+            print(f"ADQTB SIMPLE: agamma = {agamma*au.FS:.3f}")
 
             def update_gammar(state):
                 g = state["dFDT"]
@@ -300,11 +300,11 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
                 return {**state, "gammar": gammar}
 
         elif adaptation_method == "RATIO":
-            tau_ad = qtb_parameters.get("tau_ad", 5.0 / au.PS)
-            tau_s = qtb_parameters.get("tau_s", 10 * tau_ad)
+            tau_ad = qtb_parameters.get("tau_ad", 5.0 / au.PS)*au.FS
+            tau_s = qtb_parameters.get("tau_s", 10 * tau_ad)*au.FS
             assert tau_ad > 0, "tau_ad must be positive"
             print(
-                f"ADQTB RATIO: tau_ad = {tau_ad*au.PS:.2f} ps, tau_s = {tau_s*au.PS:.2f} ps"
+                f"ADQTB RATIO: tau_ad = {tau_ad*1e-3:.2f} ps, tau_s = {tau_s*1e-3:.2f} ps"
             )
             b1 = np.exp(-Tseg / tau_ad)
             b2 = np.exp(-Tseg / tau_s)
@@ -330,17 +330,17 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
                 }
 
         elif adaptation_method == "ADABELIEF":
-            agamma = qtb_parameters.get("agamma", 1.0e-2)
-            tau_ad = qtb_parameters.get("tau_ad", 1.0 / au.PS)
-            tau_s = qtb_parameters.get("tau_s", 100 * tau_ad)
+            agamma = qtb_parameters.get("agamma", 0.1)
+            tau_ad = qtb_parameters.get("tau_ad", 1.0 / au.PS)*au.FS
+            tau_s = qtb_parameters.get("tau_s", 100 * tau_ad)*au.FS
             assert tau_ad > 0, "tau_ad must be positive"
             assert tau_s > 0, "tau_s must be positive"
             assert agamma > 0, "agamma must be positive"
             print(
-                f"ADQTB ADABELIEF: agamma = {agamma:.3f}, tau_ad = {tau_ad*au.PS:.2f} ps, tau_s = {tau_s*au.PS:.2f} ps"
+                f"ADQTB ADABELIEF: agamma = {agamma:.3f}, tau_ad = {tau_ad*1.e-3:.2f} ps, tau_s = {tau_s*1.e-3:.2f} ps"
             )
 
-            a1_ad = agamma  # * Tseg #* gamma
+            a1_ad = agamma  * gamma # * Tseg #* gamma
             b1 = np.exp(-Tseg / tau_ad)
             b2 = np.exp(-Tseg / tau_s)
             state["dFDT_m"] = jnp.zeros((nspecies, nom), dtype=np.float32)
@@ -531,11 +531,11 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
             ff_scale = au.KELVIN / ((2 * gamma / dt) * mass_idx[i])
             columns = np.column_stack(
                 (
-                    omega[:nom] * au.CM1,
+                    omega[:nom] * (au.FS * au.CM1),
                     mCvv_avg[i],
                     Cvfg_avg[i],
                     dFDT_avg[i],
-                    gammar[i] * gamma * au.THZ,
+                    gammar[i] * gamma * (au.FS * au.THZ),
                     Cff_avg[i] * ff_scale,
                     Cff_theo[i] * ff_scale,
                 )
