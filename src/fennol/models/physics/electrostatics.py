@@ -20,45 +20,85 @@ from ...utils.periodic_table import (
 import math
 
 
-@jax.jit
-def ewald_reciprocal(
-    q, cells, reciprocal_cells, coordinates, batch_index, k_points, bewald
+def prepare_reciprocal_space(
+    cells, reciprocal_cells, coordinates, batch_index, k_points, bewald
 ):
+    """Prepare variables for Ewald summation in reciprocal space"""
     A = reciprocal_cells
-    ### Ewald reciprocal space
-
     if A.shape[0] == 1:
         s = jnp.einsum("ij,aj->ai", A[0], coordinates)
         ks = 2j * jnp.pi * jnp.einsum("ai,ki-> ak", s, k_points[0])  # nat x nk
-        Sm = (q[:, None] * jnp.exp(ks)).sum(axis=0)[None, :]  # nys x nk
     else:
         s = jnp.einsum("aij,aj->ai", A[batch_index], coordinates)
         ks = (
             2j * jnp.pi * jnp.einsum("ai,aki-> ak", s, k_points[batch_index])
         )  # nat x nk
+
+    m2 = jnp.sum(
+        jnp.einsum("sij,ski->skj", A, k_points) ** 2,
+        axis=-1,
+    )  # nsys x nk
+    a2 = (jnp.pi / bewald) ** 2
+    expfac = jnp.exp(-a2 * m2) / m2  # nsys x nk
+
+    volume = jnp.linalg.det(cells)  # nsys
+    phiscale = (au.BOHR / jnp.pi) / volume
+    selfscale = bewald * (2 * au.BOHR / jnp.pi**0.5)
+    return batch_index, k_points, phiscale, selfscale, expfac, ks
+
+
+def ewald_reciprocal(q, batch_index, k_points, phiscale, selfscale, expfac, ks):
+    """Compute Coulomb interactions in reciprocal space using Ewald summation"""
+    if phiscale.shape[0] == 1:
+        Sm = (q[:, None] * jnp.exp(ks)).sum(axis=0)[None, :]  # nys x nk
+    else:
         Sm = jax.ops.segment_sum(
             q[:, None] * jnp.exp(ks), batch_index, k_points.shape[0]
         )  # nsys x nk
 
-    m2 = jnp.sum(
-        jnp.einsum("sij,ski->skj", A, k_points) ** 2,
-        # (
-        #    k_points[:, :, 0, None] * A[:, None, 0, :]
-        #    + k_points[:, :, 1, None] * A[:, None, 1, :]
-        #    + k_points[:, :, 2, None] * A[:, None, 2, :]
-        # )**2,
-        axis=-1,
-    )  # nsys x nk
-    a2 = (jnp.pi / bewald) ** 2
-    expfac = Sm * jnp.exp(-a2 * m2) / m2  # nsys x nk
-    volume = jnp.linalg.det(cells)  # nsys
-
     ### compute reciprocal Coulomb potential (https://arxiv.org/abs/1805.10363)
-    phi = jnp.real((expfac[batch_index] * jnp.exp(-ks)).sum(axis=-1)) * (
-        (au.BOHR / jnp.pi) / volume[batch_index]
-    ) - q * (bewald * (2 * au.BOHR / jnp.pi**0.5))
+    phi = (
+        jnp.real(((Sm * expfac)[batch_index] * jnp.exp(-ks)).sum(axis=-1))
+        * phiscale[batch_index]
+        - q * selfscale
+    )
 
     return 0.5 * q * phi, phi
+
+
+# def ewald_reciprocal(
+#     q, cells, reciprocal_cells, coordinates, batch_index, k_points, bewald
+# ):
+#     A = reciprocal_cells
+#     ### Ewald reciprocal space
+
+#     if A.shape[0] == 1:
+#         s = jnp.einsum("ij,aj->ai", A[0], coordinates)
+#         ks = 2j * jnp.pi * jnp.einsum("ai,ki-> ak", s, k_points[0])  # nat x nk
+#         Sm = (q[:, None] * jnp.exp(ks)).sum(axis=0)[None, :]  # nys x nk
+#     else:
+#         s = jnp.einsum("aij,aj->ai", A[batch_index], coordinates)
+#         ks = (
+#             2j * jnp.pi * jnp.einsum("ai,aki-> ak", s, k_points[batch_index])
+#         )  # nat x nk
+#         Sm = jax.ops.segment_sum(
+#             q[:, None] * jnp.exp(ks), batch_index, k_points.shape[0]
+#         )  # nsys x nk
+
+#     m2 = jnp.sum(
+#         jnp.einsum("sij,ski->skj", A, k_points) ** 2,
+#         axis=-1,
+#     )  # nsys x nk
+#     a2 = (jnp.pi / bewald) ** 2
+#     expfac = Sm * jnp.exp(-a2 * m2) / m2  # nsys x nk
+#     volume = jnp.linalg.det(cells)  # nsys
+
+#     ### compute reciprocal Coulomb potential (https://arxiv.org/abs/1805.10363)
+#     phi = jnp.real((expfac[batch_index] * jnp.exp(-ks)).sum(axis=-1)) * (
+#         (au.BOHR / jnp.pi) / volume[batch_index]
+#     ) - q * (bewald * (2 * au.BOHR / jnp.pi**0.5))
+
+#     return 0.5 * q * phi, phi
 
 
 class Coulomb(nn.Module):
@@ -74,8 +114,7 @@ class Coulomb(nn.Module):
     bscreen: float = -1.0
     trainable: bool = True
 
-    FID: str  = "COULOMB"
-
+    FID: str = "COULOMB"
 
     @nn.compact
     def __call__(self, inputs):
@@ -115,12 +154,14 @@ class Coulomb(nn.Module):
             batch_index = inputs["batch_index"]
             erec, _ = ewald_reciprocal(
                 q,
-                cells,
-                reciprocal_cells,
-                inputs["coordinates"],
-                batch_index,
-                k_points,
-                bewald,
+                *prepare_reciprocal_space(
+                    cells,
+                    reciprocal_cells,
+                    inputs["coordinates"],
+                    batch_index,
+                    k_points,
+                    bewald,
+                )
             )
             dirfact = jax.scipy.special.erfc(bewald * distances)
         else:
@@ -360,7 +401,7 @@ class QeqD4(nn.Module):
     c3_key: Optional[str] = None
     c4_key: Optional[str] = None
 
-    FID: str  = "QEQ_D4"
+    FID: str = "QEQ_D4"
 
     @nn.compact
     def __call__(self, inputs):
@@ -371,10 +412,25 @@ class QeqD4(nn.Module):
 
         rij = graph["distances"] / au.BOHR
 
-        if "cells" in inputs:
-            raise NotImplementedError(
-                "QeqD3 does not support periodic boundary conditions"
+        do_recip = "k_points" in graph
+        if do_recip:
+            k_points = graph["k_points"]
+            bewald = graph["b_ewald"]
+            cells = inputs["cells"]
+            reciprocal_cells = inputs["reciprocal_cells"]
+            batch_index = inputs["batch_index"]
+            dirfact = jax.scipy.special.erfc(bewald * graph["distances"])
+            ewald_params = prepare_reciprocal_space(
+                cells,
+                reciprocal_cells,
+                inputs["coordinates"],
+                batch_index,
+                k_points,
+                bewald,
             )
+        else:
+            dirfact = 1.0
+
         Jii = D3_HARDNESSES
         ai = D3_VDW_RADII
         ETA = [jii + (2.0 / np.pi) ** 0.5 / aii for jii, aii in zip(Jii, ai)]
@@ -428,8 +484,8 @@ class QeqD4(nn.Module):
             + rci.at[edge_dst].get(mode="fill", fill_value=1.0)
             + 1.0e-3
         )
-        mCNij = 1.0 + jax.scipy.special.erf(-k1 * (rij / rcij - 1)) 
-        mCNi = 0.5 * jax.ops.segment_sum(mCNij*switch, edge_src, species.shape[0])
+        mCNij = 1.0 + jax.scipy.special.erf(-k1 * (rij / rcij - 1))
+        mCNi = 0.5 * jax.ops.segment_sum(mCNij * switch, edge_src, species.shape[0])
         chi = ENi - kappai * (mCNi + 1.0e-3) ** 0.5
         if self.chi_key is not None:
             chi = chi + inputs[self.chi_key]
@@ -440,8 +496,9 @@ class QeqD4(nn.Module):
             + 1.0e-3
         ) ** (-0.5)
 
-        Aii = eta #Jii + ((2.0 / np.pi) ** 0.5) / ai
-        Aij = jax.scipy.special.erf(gamma_ij * rij) / rij * switch
+        Aii = eta  # Jii + ((2.0 / np.pi) ** 0.5) / ai
+        # Aij = jax.scipy.special.erf(gamma_ij * rij) / rij * switch
+        Aij = (dirfact - jax.scipy.special.erfc(gamma_ij * rij)) / rij * switch
 
         if self.charges_key in inputs:
             q = inputs[self.charges_key]
@@ -460,6 +517,9 @@ class QeqD4(nn.Module):
                     + Aq_pair
                     + l.at[batch_index].get(mode="fill", fill_value=0.0)
                 )
+                if do_recip:
+                    _, phirec = ewald_reciprocal(q, *ewald_params)
+                    Aq = Aq + phirec
                 Al = jax.ops.segment_sum(q, batch_index, nsys)
                 return jnp.concatenate((Al, Aq))
 
@@ -478,6 +538,8 @@ class QeqD4(nn.Module):
         eself = 0.5 * Aii * q_**2 + chi * q_
 
         phi = jax.ops.segment_sum(Aij * q_[edge_dst], edge_src, species.shape[0])
+        if do_recip:
+            erec, _ = ewald_reciprocal(q_, *ewald_params)
         epair = 0.5 * q_ * phi
 
         if self.charges_key in inputs:
@@ -487,22 +549,36 @@ class QeqD4(nn.Module):
                 c4 = c4 + inputs[self.c4_key]
             eself = eself + c3 * q_**3 + c4 * q_**4
             if self.trainable and "training_flag" in inputs:
-                Aii_=jax.lax.stop_gradient(Aii)
-                chi_=jax.lax.stop_gradient(chi)
-                phi_=jax.lax.stop_gradient(phi)
-                c3_=jax.lax.stop_gradient(c3)
-                c4_=jax.lax.stop_gradient(c4)
-                switch_=jax.lax.stop_gradient(switch)
+                Aii_ = jax.lax.stop_gradient(Aii)
+                chi_ = jax.lax.stop_gradient(chi)
+                phi_ = jax.lax.stop_gradient(phi)
+                c3_ = jax.lax.stop_gradient(c3)
+                c4_ = jax.lax.stop_gradient(c4)
+                switch_ = jax.lax.stop_gradient(switch)
                 Aij_ = jax.lax.stop_gradient(Aij)
-                phi_ = jax.ops.segment_sum(Aij_ * q[edge_dst], edge_src, species.shape[0])
-
-                dedq = Aii_ * q + chi_ + phi_  + 3 * c3_ * q**2 + 4 * c4_ * q**3
-                dedq = jax.ops.segment_sum(
-                    switch_*(dedq[edge_src] - dedq[edge_dst]) ** 2, edge_src, species.shape[0]
+                phi_ = jax.ops.segment_sum(
+                    Aij_ * q[edge_dst], edge_src, species.shape[0]
                 )
-                etrain = 0.5 * Aii_ * q**2 + chi_ * q  + 0.5 * q * phi_ + c3_ * q**3 + c4_ * q**4
+
+                dedq = Aii_ * q + chi_ + phi_ + 3 * c3_ * q**2 + 4 * c4_ * q**3
+                dedq = jax.ops.segment_sum(
+                    switch_ * (dedq[edge_src] - dedq[edge_dst]) ** 2,
+                    edge_src,
+                    species.shape[0],
+                )
+                etrain = (
+                    0.5 * Aii_ * q**2
+                    + chi_ * q
+                    + 0.5 * q * phi_
+                    + c3_ * q**3
+                    + c4_ * q**4
+                )
+                if do_recip:
+                    etrain = etrain + erec
 
         energy = eself + epair
+        if do_recip:
+            energy = energy + erec
 
         energy_key = self.energy_key if self.energy_key is not None else self.name
 
@@ -511,6 +587,8 @@ class QeqD4(nn.Module):
             self.charges_key: q_,
             energy_key: energy,
         }
+        if do_recip:
+            output[energy_key + "_reciprocal"] = erec
         if self.charges_key in inputs and self.trainable and "training_flag" in inputs:
             output[energy_key + "_regularization"] = regularization
             output[energy_key + "_dedq"] = dedq
@@ -526,7 +604,7 @@ class ChargeCorrection(nn.Module):
     trainable: bool = False
     cn_key: str = None
 
-    FID: str  = "CHARGE_CORRECTION"
+    FID: str = "CHARGE_CORRECTION"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
