@@ -328,8 +328,11 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
                     predicted = predicted.mean(axis=ensemble_axis)
 
 
-                if predicted.shape[-1] == 1:
+                if predicted.ndim >1 and predicted.shape[-1] == 1:
                     predicted = jnp.squeeze(predicted, axis=-1)
+                
+                if ref.ndim >1 and ref.shape[-1] == 1:
+                    ref = jnp.squeeze(ref, axis=-1)
 
                 nel = np.prod(ref.shape)
                 shape_mask = [ref.shape[0]] + [1] * (len(ref.shape) - 1)
@@ -471,8 +474,11 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
                 axis = loss_prms.get("ensemble_axis", -1)
                 predicted = predicted.mean(axis=axis)
 
-            if predicted.shape[-1] == 1:
+            if predicted.ndim > 1 and predicted.shape[-1] == 1:
                 predicted = jnp.squeeze(predicted, axis=-1)
+            
+            if ref.ndim > 1 and ref.shape[-1] == 1:
+                ref = jnp.squeeze(ref, axis=-1)
             # nel = ref.shape[0]
             # nel = np.prod(ref.shape)
             # if ref.shape[0] == data["batch_index"].shape[0]:
