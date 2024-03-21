@@ -106,7 +106,7 @@ def test_tmu():
             [0, -0.10356116, -0.02453007]
         ]
     ).flatten()
-    mu_tinker = jax.scipy.sparse.linalg.cg(t_tinker, electric_field)[0]
+    mu_tinker = jax.scipy.linalg.solve(t_tinker, electric_field)
 
     assert jnp.allclose(  # noqa: S101
         output_tinker['tmu'].flatten(),
@@ -235,7 +235,7 @@ def test_tmu_water():
             [-0.19055352, -0.06115383, 0.],
             [-0.06115383, -0.19055352, 0.]]
     ).flatten()
-    mu_water = jax.scipy.sparse.linalg.cg(t_water, electric_field)[0]
+    mu_water = jax.scipy.linalg.solve(t_water, electric_field)
 
     assert jnp.allclose(  # noqa: S101
         output_water['tmu'].flatten(),
