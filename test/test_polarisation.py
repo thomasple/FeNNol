@@ -9,34 +9,36 @@ from jax.random import PRNGKey
 # Test using Tinker reference #
 ###############################
 
+modules = {
+    'energy': {
+        'module_name': 'NEURAL_NET',
+        'neurons': [32, 1],
+        'input_key': 'coordinates',
+    },
+    'charges': {
+        'module_name': 'CHEMICAL_CONSTANT',
+        'value': {
+            'O': -0.55824546,
+            'H': 0.27912273
+        },
+    },
+    'polarisability': {
+    'module_name': 'CHEMICAL_CONSTANT',
+        'value': {
+            'O': 0.9479157,
+            'H': 0.4158204
+        },
+    },
+    'polarisation': {
+        'module_name': 'POLARISATION',
+        'test': True
+    },
+}
+
 model_tinker = FENNIX(
     cutoff=5.0,
     rng_key=PRNGKey(0),
-    modules={
-        'energy': {
-            'module_name': 'NEURAL_NET',
-            'neurons': [32, 1],
-            'input_key': 'coordinates',
-        },
-        'charges': {
-            'module_name': 'CHEMICAL_CONSTANT',
-            'value': {
-                'O': -0.55824546,
-                'H': 0.27912273
-            },
-        },
-        'polarisability': {
-        'module_name': 'CHEMICAL_CONSTANT',
-            'value': {
-                'O': 0.9479157,
-                'H': 0.4158204
-            },
-        },
-        'polarisation': {
-            'module_name': 'POLARISATION',
-            'test': True
-        },
-    }
+    modules=modules
 )
 
 species = jnp.array(
@@ -115,8 +117,20 @@ def test_tmu():
 
 def test_energy():
     """Test the energy output of the polarisation model."""
+    modules['polarisation']['test'] = False
+    model_tinker = FENNIX(
+        cutoff=5.0,
+        rng_key=PRNGKey(0),
+        modules=modules
+    )
+    output_tinker = model_tinker(
+        species=species,
+        coordinates=coordinates_tinker,
+        natoms=natoms,
+        batch_index=batch_index
+    )
     predicted_energy = output_tinker['polarisation'].sum().item()
-    expected_energy = -0.007705782074481249
+    expected_energy = -0.0041091106832027435
     assert jnp.allclose(predicted_energy, expected_energy, atol=1e-6)  # noqa: S101
 
 
