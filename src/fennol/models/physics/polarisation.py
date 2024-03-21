@@ -36,6 +36,8 @@ class Polarisation(nn.Module):
         Damping parameter for mutual polarisation.
     damping_param_field : float
         Damping parameter for the electric field.
+    test : bool
+        Test the polarisation model.
     """
 
     name: str = 'polarisation'
@@ -48,6 +50,7 @@ class Polarisation(nn.Module):
     induce_dipole_key: str = 'induce_dipole'
     damping_param_mutual: float = 0.39
     damping_param_field: float = 0.7
+    test: bool = False
 
     if energy_key is None:
         energy_key = name
@@ -78,6 +81,11 @@ class Polarisation(nn.Module):
             inputs[self.polarisability_key] / Au.BOHR**3
         )
 
+        if self.test:
+            rij *= Au.BOHR
+            vec_ij *= Au.BOHR
+            polarisability *= Au.BOHR**3
+
         pol_src = polarisability[edge_src]
         pol_dst = polarisability[edge_dst]
         alpha_ij = pol_dst * pol_src
@@ -91,6 +99,9 @@ class Polarisation(nn.Module):
         exp = jnp.exp(-self.damping_param_mutual * uij**3)
         lambda_3 = 1 - exp
         lambda_5 = 1 - (1 + self.damping_param_mutual * uij**3) * exp
+        if self.test:
+            lambda_3 = lambda_3 * 0. + 1.
+            lambda_5 = lambda_5 * 0. + 1.
 
         ######################
         # Interaction matrix #
@@ -151,66 +162,4 @@ class Polarisation(nn.Module):
 
 
 if __name__ == "__main__":
-
-    from jax.random import PRNGKey
-
-    from fennol import FENNIX
-
-    model = FENNIX(
-        cutoff=5.0,
-        rng_key=PRNGKey(0),
-        modules={
-            'energy': {
-                'module_name': 'NEURAL_NET',
-                'neurons': [32, 1],
-                'input_key': 'coordinates',
-            },
-            'charges': {
-                'module_name': 'CHEMICAL_CONSTANT',
-                'value': {
-                    'O': -0.55824546, #-0.55824546
-                    'H': 0.27912273 #0.27912273
-                },
-            },
-            'polarisability': {
-            'module_name': 'CHEMICAL_CONSTANT',
-                'value': {
-                    'O': 0.9479157, #0.9479157,
-                    'H': 0.4158204 #0.4158204
-                },
-            },
-            # 'coulomb': {
-            #     'module_name': 'COULOMB',
-            #     'charges_key': 'charges',
-            # },
-            'polarisation': {
-                'module_name': 'POLARISATION',
-            },
-        }
-    )
-
-    species = jnp.array(
-        [
-            [8, 1, 1]
-        ]
-    ).reshape(-1)
-
-    coordinates = jnp.array(
-        [
-            [
-                [0.0, 0.0, 0.0],
-                [0.0, 0.0, 2.0],
-                [0.0, 2.0, 0.0]
-            ]
-        ]
-    ).reshape(-1, 3)
-
-    natoms = jnp.array([3])
-    batch_index = jnp.array([0, 0, 0])
-
-    output = model(
-        species=species,
-        coordinates=coordinates,
-        natoms=natoms,
-        batch_index=batch_index
-    )
+    pass
