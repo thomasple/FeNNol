@@ -19,7 +19,7 @@ from .preprocessing import (
     atom_unpadding,
 )
 from ..utils import deep_update
-from .modules import MODULES,FENNIXModules
+from .modules import MODULES, FENNIXModules
 
 
 @dataclasses.dataclass
@@ -70,6 +70,7 @@ class FENNIX:
         use_atom_padding: bool = False,
         fixed_preprocessing: bool = False,
         graph_config: Dict = {},
+        **kwargs,
     ) -> None:
         self._input_args = {
             "cutoff": cutoff,
@@ -105,18 +106,11 @@ class FENNIX:
             preprocessing_modules.append(mod)
 
         self.preprocessing = PreprocessingChain(preprocessing_modules, use_atom_padding)
-        mods = [(JaxConverter, {})]
-        # add preprocessing modules that should be differentiated/jitted
-        # mods.append((JaxConverter, {})
-        graphs_properties = {}
-        for m in preprocessing_modules:
-            if hasattr(m, "get_processor"):
-                mods.append(m.get_processor())
-            if hasattr(m, "get_graph_properties"):
-                graphs_properties = deep_update(
-                    graphs_properties, m.get_graph_properties()
-                )
+        graphs_properties = self.preprocessing.get_graphs_properties()
         self._graphs_properties = freeze(graphs_properties)
+        # add preprocessing modules that should be differentiated/jitted
+        mods = [(JaxConverter, {})] + self.preprocessing.get_processors(return_list=True)
+
         # build the model
         modules = deepcopy(modules)
         modules_names = []
@@ -154,7 +148,7 @@ class FENNIX:
 
         self._initializing = False
 
-    def set_energy_terms(self, energy_terms: Sequence[str],jit=True) -> None:
+    def set_energy_terms(self, energy_terms: Sequence[str], jit=True) -> None:
         object.__setattr__(self, "energy_terms", energy_terms)
 
         # build the energy and force functions
@@ -166,9 +160,9 @@ class FENNIX:
             nsys = out["natoms"].shape[0]
             for term in self.energy_terms:
                 e = out[term]
-                if e.shape[-1] == 1:
+                if e.ndim > 1 and e.shape[-1] == 1:
                     e = jnp.squeeze(e, axis=-1)
-                if e.shape[0] == nsys:
+                if e.shape[0] == nsys and nsys!=species.shape[0]:
                     system_energies += e
                     continue
                 assert e.shape == species.shape
@@ -179,17 +173,18 @@ class FENNIX:
                     atomic_energies = jnp.where(out["true_atoms"], atomic_energies, 0.0)
                 out["atomic_energies"] = atomic_energies
                 energies = jax.ops.segment_sum(
-                    atomic_energies, data["batch_index"], num_segments=len(data["natoms"])
+                    atomic_energies,
+                    data["batch_index"],
+                    num_segments=len(data["natoms"]),
                 )
             else:
-                energies = 0.
-            
+                energies = 0.0
+
             if isinstance(system_energies, jnp.ndarray):
                 if "true_sys" in out:
                     system_energies = jnp.where(out["true_sys"], system_energies, 0.0)
                 out["system_energies"] = system_energies
 
-            
             out["total_energy"] = energies + system_energies
             return out["total_energy"], out
 
@@ -199,6 +194,7 @@ class FENNIX:
                     variables, {**data, "coordinates": coordinates}
                 )
                 return energy.sum(), out
+
             de, out = jax.grad(_etot, argnums=1, has_aux=True)(
                 variables, data["coordinates"]
             )
@@ -231,7 +227,9 @@ class FENNIX:
             # dedx = jnp.einsum("sij,si->sj", reciprocal_cells[batch_index], deds)
             out["forces"] = -dedx
             fx = jax.ops.segment_sum(
-                dedx[:, :, None] * x[:, None, :], batch_index, num_segments=len(data["natoms"])
+                dedx[:, :, None] * x[:, None, :],
+                batch_index,
+                num_segments=len(data["natoms"]),
             )
 
             out["virial_tensor"] = (
@@ -244,7 +242,9 @@ class FENNIX:
             object.__setattr__(self, "_total_energy", jax.jit(total_energy))
             object.__setattr__(self, "_energy_and_forces", jax.jit(energy_and_forces))
             object.__setattr__(
-                self, "_energy_and_forces_and_virial", jax.jit(energy_and_forces_and_virial)
+                self,
+                "_energy_and_forces_and_virial",
+                jax.jit(energy_and_forces_and_virial),
             )
         else:
             object.__setattr__(self, "_total_energy", total_energy)
@@ -257,9 +257,7 @@ class FENNIX:
         """apply preprocessing to the input data
 
         !!! This is not a pure function => do not apply jax transforms !!!"""
-        out, preproc_state = self.preprocessing.apply(
-            self.preproc_state, inputs, mutable=["preprocessing"]
-        )
+        out, preproc_state = self.preprocessing(inputs, self.preproc_state)
         object.__setattr__(self, "preproc_state", preproc_state)
         return out
 
@@ -276,9 +274,7 @@ class FENNIX:
             rng_key_sys, rng_key_pre = jax.random.split(rng_key_pre)
             example_data = self.generate_dummy_system(rng_key_sys, n_atoms=10)
 
-        inputs, preproc_state = self.preprocessing.init_with_output(
-            rng_key_pre, example_data
-        )
+        inputs, preproc_state = self.preprocessing.init_with_output(example_data)
         object.__setattr__(self, "preproc_state", preproc_state)
         return inputs, rng_key
 
@@ -307,7 +303,7 @@ class FENNIX:
         if variables is None:
             variables = self.variables
         inputs = self.preprocess(**inputs)
-        _,output =  self._total_energy(variables, inputs)
+        _, output = self._total_energy(variables, inputs)
         if self.use_atom_padding:
             output = atom_unpadding(output)
         return output["total_energy"], output
@@ -323,7 +319,7 @@ class FENNIX:
         if variables is None:
             variables = self.variables
         inputs = self.preprocess(**inputs)
-        _,_,output = self._energy_and_forces(variables, inputs)
+        _, _, output = self._energy_and_forces(variables, inputs)
         if self.use_atom_padding:
             output = atom_unpadding(output)
         return output["total_energy"], output["forces"], output
@@ -339,7 +335,7 @@ class FENNIX:
         if variables is None:
             variables = self.variables
         inputs = self.preprocess(**inputs)
-        _,_,_,output =  self._energy_and_forces_and_virial(variables, inputs)
+        _, _, _, output = self._energy_and_forces_and_virial(variables, inputs)
         if self.use_atom_padding:
             output = atom_unpadding(output)
         return output["total_energy"], output["forces"], output["virial_tensor"], output
@@ -354,13 +350,13 @@ class FENNIX:
         return self.preprocessing, self.preproc_state
 
     def __setattr__(self, __name: str, __value: Any) -> None:
-        if __name == "variables":
+        if __name in ["variables","preproc_state"]:
             if __value is not None:
                 if not isinstance(__value, dict):
-                    raise ValueError("variables must be a dict")
+                    raise ValueError(f"{__name} must be a dict")
                 object.__setattr__(self, __name, JaxConverter()(__value))
             else:
-                raise ValueError("variables cannot be None")
+                raise ValueError(f"{__name} cannot be None")
         elif self._initializing:
             object.__setattr__(self, __name, __value)
         else:

@@ -48,7 +48,7 @@ def pow(x, a):
 
 
 def chain(*activations):
-    @jax.jit
+    # @jax.jit
     def act(x):
         for a in activations:
             x = a(x)

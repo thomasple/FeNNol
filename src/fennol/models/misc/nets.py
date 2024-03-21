@@ -10,7 +10,6 @@ from ...utils.activations import activation_from_str, TrainableSiLU
 from ...utils.initializers import initializer_from_str, scaled_orthogonal
 
 
-
 class FullyConnectedNet(nn.Module):
     """
     A fully connected neural network module.
@@ -30,7 +29,7 @@ class FullyConnectedNet(nn.Module):
     output_key: Optional[str] = None
     squeeze: bool = False
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
-    
+
     FID: str = "NEURAL_NET"
 
     @nn.compact
@@ -65,7 +64,11 @@ class FullyConnectedNet(nn.Module):
         ############################
         for i, d in enumerate(self.neurons[:-1]):
             x = nn.Dense(
-                d, use_bias=self.use_bias, name=f"Layer_{i+1}", kernel_init=kernel_init
+                d,
+                use_bias=self.use_bias,
+                name=f"Layer_{i+1}",
+                kernel_init=kernel_init,
+                # precision=jax.lax.Precision.HIGH,
             )(x)
             x = activation(x)
         x = nn.Dense(
@@ -73,6 +76,7 @@ class FullyConnectedNet(nn.Module):
             use_bias=self.use_bias,
             name=f"Layer_{len(self.neurons)}",
             kernel_init=kernel_init,
+            # precision=jax.lax.Precision.HIGH,
         )(x)
         if self.squeeze and x.shape[-1] == 1:
             x = jnp.squeeze(x, axis=-1)
@@ -297,7 +301,7 @@ class ChemicalNetHet(nn.Module):
     squeeze: bool = False
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
 
-    FID: str = "CHEMICAL_NET"
+    FID: str = "CHEMICAL_NET_HET"
 
     def setup(self):
         idx_map = {s: i for i, s in enumerate(PERIODIC_TABLE)}
@@ -372,7 +376,7 @@ class ChemicalNet(nn.Module):
     squeeze: bool = False
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
 
-    FID: str = "CHEMICAL_NET_HET"
+    FID: str = "CHEMICAL_NET"
 
     @nn.compact
     def __call__(
@@ -446,12 +450,14 @@ class MOENet(nn.Module):
                 inputs, dict
             ), "input key must be provided if inputs is a dictionary"
             if isinstance(inputs, tuple):
-                embedding,router = inputs
+                embedding, router = inputs
             else:
                 embedding = router = inputs
         else:
             embedding = inputs[self.input_key]
-            router = inputs[self.router_key] if self.router_key is not None else embedding
+            router = (
+                inputs[self.router_key] if self.router_key is not None else embedding
+            )
 
         ############################
         # build shape-sharing networks using vmap
@@ -477,6 +483,7 @@ class MOENet(nn.Module):
             output_key = self.name if self.output_key is None else self.output_key
             return {**inputs, output_key: out} if output_key is not None else out
         return out
+
 
 class GatedPerceptron(nn.Module):
     dim: int
@@ -510,8 +517,12 @@ class GatedPerceptron(nn.Module):
             else self.kernel_init
         )
         ############################
-        gate = jax.nn.sigmoid(nn.Dense(self.dim, use_bias=self.use_bias, kernel_init=kernel_init)(x))
-        x = gate * activation(nn.Dense(self.dim, use_bias=self.use_bias, kernel_init=kernel_init)(x))
+        gate = jax.nn.sigmoid(
+            nn.Dense(self.dim, use_bias=self.use_bias, kernel_init=kernel_init)(x)
+        )
+        x = gate * activation(
+            nn.Dense(self.dim, use_bias=self.use_bias, kernel_init=kernel_init)(x)
+        )
 
         if self.squeeze and out.shape[-1] == 1:
             out = jnp.squeeze(out, axis=-1)
@@ -521,6 +532,7 @@ class GatedPerceptron(nn.Module):
             output_key = self.name if self.output_key is None else self.output_key
             return {**inputs, output_key: x} if output_key is not None else x
         return x
+
 
 class ZAcNet(nn.Module):
     """
@@ -543,7 +555,7 @@ class ZAcNet(nn.Module):
     squeeze: bool = False
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
 
-    FID: str  = "ZACNET"
+    FID: str = "ZACNET"
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -582,17 +594,17 @@ class ZAcNet(nn.Module):
             sig = self.param(
                 f"sig_{i+1}",
                 lambda key, shape: jnp.ones(shape, dtype=x.dtype),
-                (self.zmax+2, d),
+                (self.zmax + 2, d),
             )[species]
             if self.use_bias:
                 b = self.param(
                     f"b_{i+1}",
                     lambda key, shape: jnp.zeros(shape, dtype=x.dtype),
-                    (self.zmax+2, d),
+                    (self.zmax + 2, d),
                 )[species]
             else:
-                b=0
-            x = activation(sig*x+b)
+                b = 0
+            x = activation(sig * x + b)
         x = nn.Dense(
             self.neurons[-1],
             use_bias=self.use_bias,
@@ -602,17 +614,17 @@ class ZAcNet(nn.Module):
         sig = self.param(
             f"sig_{len(self.neurons)}",
             lambda key, shape: jnp.ones(shape, dtype=x.dtype),
-            (self.zmax+2, self.neurons[-1]),
+            (self.zmax + 2, self.neurons[-1]),
         )[species]
         if self.use_bias:
             b = self.param(
                 f"b_{len(self.neurons)}",
                 lambda key, shape: jnp.zeros(shape, dtype=x.dtype),
-                (self.zmax+2, self.neurons[-1]),
+                (self.zmax + 2, self.neurons[-1]),
             )[species]
         else:
-            b=0
-        x = sig*x+b
+            b = 0
+        x = sig * x + b
         if self.squeeze and x.shape[-1] == 1:
             x = jnp.squeeze(x, axis=-1)
         ############################
@@ -621,6 +633,7 @@ class ZAcNet(nn.Module):
             output_key = self.name if self.output_key is None else self.output_key
             return {**inputs, output_key: x} if output_key is not None else x
         return x
+
 
 class ZLoRANet(nn.Module):
     """
@@ -644,7 +657,7 @@ class ZLoRANet(nn.Module):
     squeeze: bool = False
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
 
-    FID: str  = "ZLORANET"
+    FID: str = "ZLORANET"
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -680,18 +693,18 @@ class ZLoRANet(nn.Module):
             xi = nn.Dense(
                 d, use_bias=self.use_bias, name=f"Layer_{i+1}", kernel_init=kernel_init
             )(x)
-            A= self.param(
+            A = self.param(
                 f"A_{i+1}",
                 lambda key, shape: jnp.zeros(shape, dtype=x.dtype),
-                (self.zmax+2, self.ranks[i], x.shape[-1]),
+                (self.zmax + 2, self.ranks[i], x.shape[-1]),
             )[species]
-            B= self.param(
+            B = self.param(
                 f"B_{i+1}",
                 lambda key, shape: jnp.zeros(shape, dtype=x.dtype),
-                (self.zmax+2, d,self.ranks[i]),
+                (self.zmax + 2, d, self.ranks[i]),
             )[species]
-            Ax = jnp.einsum('zrd,zd->zr', A, x)
-            BAx = jnp.einsum('zrd,zd->zr', B, Ax)
+            Ax = jnp.einsum("zrd,zd->zr", A, x)
+            BAx = jnp.einsum("zrd,zd->zr", B, Ax)
             x = activation(xi + BAx)
         xi = nn.Dense(
             self.neurons[-1],
@@ -699,18 +712,18 @@ class ZLoRANet(nn.Module):
             name=f"Layer_{len(self.neurons)}",
             kernel_init=kernel_init,
         )(x)
-        A= self.param(
+        A = self.param(
             f"A_{len(self.neurons)}",
             lambda key, shape: jnp.zeros(shape, dtype=x.dtype),
-            (self.zmax+2, self.ranks[-1], x.shape[-1]),
+            (self.zmax + 2, self.ranks[-1], x.shape[-1]),
         )[species]
-        B= self.param(
+        B = self.param(
             f"B_{len(self.neurons)}",
             lambda key, shape: jnp.zeros(shape, dtype=x.dtype),
-            (self.zmax+2, self.neurons[-1],self.ranks[-1]),
+            (self.zmax + 2, self.neurons[-1], self.ranks[-1]),
         )[species]
-        Ax = jnp.einsum('zrd,zd->zr', A, x)
-        BAx = jnp.einsum('zrd,zd->zr', B, Ax)
+        Ax = jnp.einsum("zrd,zd->zr", A, x)
+        BAx = jnp.einsum("zrd,zd->zr", B, Ax)
         x = xi + BAx
         if self.squeeze and x.shape[-1] == 1:
             x = jnp.squeeze(x, axis=-1)
