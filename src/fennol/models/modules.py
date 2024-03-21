@@ -16,19 +16,24 @@ def available_fennix_modules():
 
 def register_fennix_module(module: nn.Module, FID: Optional[str] = None):
     if FID is not None:
-        name = FID.upper()
+        names = [FID.upper()]
     else:
-        assert hasattr(module, "FID") and isinstance(
+        if not hasattr(module, "FID"):
+            print(f"Warning: module {module.__name__} does not have a FID field and no explicit FID was provided. Module was NOT registered.")
+        if not (isinstance(
             module.FID, str
-        ), "Error: registering a FENNIX module requires setting the FID field as a str."
-        name = module.FID.upper()
-    if name in MODULES:
-        if MODULES[name] == module:
-            return
-        raise ValueError(
-            f"A different module identified as '{name}' is already registered !"
-        )
-    MODULES[name] = module
+        ) or isinstance(module.FID,tuple)):
+            print(f"Warning: module {module.__name__} has an invalid FID field. Module was NOT registered.")
+        if isinstance(module.FID, str):
+            names = [module.FID.upper()]
+        else:
+            names = [fid.upper() for fid in module.FID]
+    for name in names:
+        if name in MODULES and MODULES[name] != module:
+            raise ValueError(
+                f"A different module identified as '{name}' is already registered !"
+            )
+        MODULES[name] = module
 
 
 def register_fennix_modules(module, recurs=0, max_recurs=2):
@@ -38,7 +43,7 @@ def register_fennix_modules(module, recurs=0, max_recurs=2):
             register_fennix_modules(sub_module, recurs=recurs + 1, max_recurs=max_recurs)
     for m in module.__dict__.values():
         if isclass(m) and issubclass(m, nn.Module) and m != nn.Module:
-            if hasattr(m, "FID") and isinstance(m.FID, str):
+            if hasattr(m, "FID"):
                 register_fennix_module(m)
 
 
