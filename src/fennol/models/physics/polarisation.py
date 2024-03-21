@@ -69,7 +69,7 @@ class Polarisation(nn.Module):
         graph = inputs[self.graph_key]
         # Graph
         edge_src, edge_dst = graph['edge_src'], graph['edge_dst']
-        # Distances and vector between each pair of atoms
+        # Distances and vector between each pair of atoms in atomic units
         distances = graph['distances']
         rij = distances / Au.BOHR
         vec_ij = graph['vec'] / Au.BOHR
@@ -126,7 +126,7 @@ class Polarisation(nn.Module):
         damping_field = 1 - jnp.exp(
             -self.damping_param_field * uij**1.5
         )[:, None]
-        eij = q_ij * (vec_ij / rij**3) * damping_field
+        eij = -q_ij * (vec_ij / rij**3) * damping_field
         electric_field = jax.ops.segment_sum(
             eij, edge_src, species.shape[0]
         ).flatten()
@@ -145,6 +145,7 @@ class Polarisation(nn.Module):
         output[self.electric_field_key] = electric_field.reshape(-1, 3)
         output[self.induce_dipole_key] = mu.reshape(-1, 3) * Au.BOHR
         output[self.energy_key] = pol_energy
+        output['tmu'] = matvec(mu).reshape(-1, 3)
 
         return {**inputs, **output}
 
@@ -167,21 +168,21 @@ if __name__ == "__main__":
             'charges': {
                 'module_name': 'CHEMICAL_CONSTANT',
                 'value': {
-                    'O': -0.504458,
-                    'H': 0.252229
+                    'O': -0.55824546, #-0.55824546
+                    'H': 0.27912273 #0.27912273
                 },
             },
             'polarisability': {
             'module_name': 'CHEMICAL_CONSTANT',
                 'value': {
-                    'O': 0.976,
-                    'H': 0.428
+                    'O': 0.9479157, #0.9479157,
+                    'H': 0.4158204 #0.4158204
                 },
             },
-            'coulomb': {
-                'module_name': 'COULOMB',
-                'charges_key': 'charges',
-            },
+            # 'coulomb': {
+            #     'module_name': 'COULOMB',
+            #     'charges_key': 'charges',
+            # },
             'polarisation': {
                 'module_name': 'POLARISATION',
             },
@@ -190,7 +191,6 @@ if __name__ == "__main__":
 
     species = jnp.array(
         [
-            [8, 1, 1],
             [8, 1, 1]
         ]
     ).reshape(-1)
@@ -199,19 +199,14 @@ if __name__ == "__main__":
         [
             [
                 [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0]
-            ],
-            [
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0]
+                [0.0, 0.0, 2.0],
+                [0.0, 2.0, 0.0]
             ]
         ]
     ).reshape(-1, 3)
 
-    natoms = jnp.array([3, 3])
-    batch_index = jnp.array([0, 0, 0, 1, 1, 1])
+    natoms = jnp.array([3])
+    batch_index = jnp.array([0, 0, 0])
 
     output = model(
         species=species,
