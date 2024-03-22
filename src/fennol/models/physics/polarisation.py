@@ -128,16 +128,7 @@ class Polarisation(nn.Module):
         ##################
         # Electric field #
         ##################
-        charges = inputs[self.charges_key]
-        rij = rij[:, None]
-        q_ij = charges[edge_dst, None]
-        damping_field = 1 - jnp.exp(
-            -self.damping_param_field * uij**1.5
-        )[:, None]
-        eij = -q_ij * (vec_ij / rij**3) * damping_field
-        electric_field = jax.ops.segment_sum(
-            eij, edge_src, species.shape[0]
-        ).flatten()
+        electric_field = inputs[self.electric_field_key]
 
         ###############################
         # Electric point dipole moment#
