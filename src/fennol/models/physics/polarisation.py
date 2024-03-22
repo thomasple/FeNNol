@@ -34,8 +34,6 @@ class Polarisation(nn.Module):
         Damping parameter for mutual polarisation.
     damping_param_field : float
         Damping parameter for the electric field.
-    test : bool
-        Test the polarisation model.
     """
 
     name: str = 'polarisation'
@@ -47,7 +45,6 @@ class Polarisation(nn.Module):
     induce_dipole_key: str = 'induce_dipole'
     damping_param_mutual: float = 0.39
     damping_param_field: float = 0.7
-    test: bool = False
 
     if energy_key is None:
         energy_key = name
@@ -78,7 +75,9 @@ class Polarisation(nn.Module):
             inputs[self.polarisability_key] / Au.BOHR**3
         )
 
-        if self.test:
+        # For tests purposes
+        testing = 'training_flag' not in inputs
+        if testing:
             rij *= Au.BOHR
             vec_ij *= Au.BOHR
             polarisability *= Au.BOHR**3
@@ -96,7 +95,8 @@ class Polarisation(nn.Module):
         exp = jnp.exp(-self.damping_param_mutual * uij**3)
         lambda_3 = 1 - exp
         lambda_5 = 1 - (1 + self.damping_param_mutual * uij**3) * exp
-        if self.test:
+        if testing:
+            output['damping'] = lambda_3, lambda_5
             lambda_3 = lambda_3 * 0. + 1.
             lambda_5 = lambda_5 * 0. + 1.
 
