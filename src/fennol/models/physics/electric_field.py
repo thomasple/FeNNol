@@ -36,7 +36,14 @@ class ElectricField(nn.Module):
 
     @nn.compact
     def __call__(self, inputs):
-        """Forward pass of the electric field model."""
+        """Forward pass of the electric field model.
+
+        Parameters
+        ----------
+        inputs : dict
+            Input dictionary containing all the info about the system.
+            This dictionary is given from the FENNIX class.
+        """
         species = inputs['species']
         graph = inputs[self.graph_key]
         edge_src, edge_dst = graph['edge_src'], graph['edge_dst']
