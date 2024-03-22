@@ -55,13 +55,20 @@ class ElectricField(nn.Module):
         rij = distances / Au.BOHR
         vec_ij = graph['vec'] / Au.BOHR
         rij = rij[:, None]
+        polarisability = (
+            inputs[self.polarisability_key] / Au.BOHR**3
+        )
+
+        # For tests purposes
+        testing = 'training_flag' not in inputs
+        if testing:
+            rij *= Au.BOHR
+            vec_ij *= Au.BOHR
+            polarisability *= Au.BOHR**3
 
         # Charges and polarisability
         charges = inputs[self.charges_key]
         q_ij = charges[edge_dst, None]
-        polarisability = (
-            inputs[self.polarisability_key] / Au.BOHR**3
-        )
         pol_src = polarisability[edge_src]
         pol_dst = polarisability[edge_dst]
         alpha_ij = pol_dst * pol_src
