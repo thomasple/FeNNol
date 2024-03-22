@@ -143,10 +143,11 @@ class Polarisation(nn.Module):
         # Electric point dipole moment#
         ###############################
         mu = jax.scipy.sparse.linalg.cg(matvec, electric_field)[0]
+        mu_ = jax.lax.stop_gradient(mu)
 
         # Polarisation energy
         pol_energy = (
-            (0.5 * matvec(mu) - electric_field) * mu
+            (0.5 * matvec(mu_) - electric_field) * mu_
         ).reshape(-1, 3).sum(axis=1)
 
         # Output
