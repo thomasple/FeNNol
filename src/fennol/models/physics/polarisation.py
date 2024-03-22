@@ -7,6 +7,7 @@ Created by C. Cattin 2024
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+from typing import Optional
 
 from fennol.utils import AtomicUnits as Au
 
@@ -36,8 +37,7 @@ class Polarisation(nn.Module):
         Damping parameter for the electric field.
     """
 
-    name: str = 'polarisation'
-    energy_key: str = None
+    energy_key: Optional[str] = None
     graph_key: str = 'graph'
     polarisability_key: str = 'polarisability'
     charges_key: str = 'charges'
@@ -45,9 +45,6 @@ class Polarisation(nn.Module):
     induce_dipole_key: str = 'induce_dipole'
     damping_param_mutual: float = 0.39
     damping_param_field: float = 0.7
-
-    if energy_key is None:
-        energy_key = name
 
     FID: str = 'POLARISATION'
 
@@ -75,13 +72,6 @@ class Polarisation(nn.Module):
             inputs[self.polarisability_key] / Au.BOHR**3
         )
 
-        # For tests purposes
-        testing = 'training_flag' not in inputs
-        if testing:
-            rij *= Au.BOHR
-            vec_ij *= Au.BOHR
-            polarisability *= Au.BOHR**3
-
         pol_src = polarisability[edge_src]
         pol_dst = polarisability[edge_dst]
         alpha_ij = pol_dst * pol_src
@@ -95,10 +85,6 @@ class Polarisation(nn.Module):
         exp = jnp.exp(-self.damping_param_mutual * uij**3)
         lambda_3 = 1 - exp
         lambda_5 = 1 - (1 + self.damping_param_mutual * uij**3) * exp
-        if testing:
-            output['damping'] = lambda_3, lambda_5
-            lambda_3 = lambda_3 * 0. + 1.
-            lambda_5 = lambda_5 * 0. + 1.
 
         ######################
         # Interaction matrix #
@@ -146,7 +132,10 @@ class Polarisation(nn.Module):
         # Output
         output[self.electric_field_key] = electric_field.reshape(-1, 3)
         output[self.induce_dipole_key] = mu.reshape(-1, 3) * Au.BOHR
-        output[self.energy_key] = pol_energy
+        energy_key = (
+            self.energy_key if self.energy_key is not None else 'polarisation'
+        )
+        output[energy_key] = pol_energy
         output['tmu'] = tmu.reshape(-1, 3)
 
         return {**inputs, **output}
