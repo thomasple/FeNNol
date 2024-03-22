@@ -30,8 +30,7 @@ modules = {
         },
     },
     'polarisation': {
-        'module_name': 'POLARISATION',
-        'test': True
+        'module_name': 'POLARISATION'
     },
 }
 
@@ -117,22 +116,34 @@ def test_tmu():
 
 def test_energy():
     """Test the energy output of the polarisation model."""
-    modules['polarisation']['test'] = False
-    model_tinker = FENNIX(
-        cutoff=5.0,
-        rng_key=PRNGKey(0),
-        modules=modules
-    )
-    output_tinker = model_tinker(
-        species=species,
-        coordinates=coordinates_tinker,
-        natoms=natoms,
-        batch_index=batch_index
-    )
     predicted_energy = output_tinker['polarisation'].sum().item()
-    expected_energy = -0.0041091106832027435
+    expected_energy = -0.007705782074481249
     assert jnp.allclose(predicted_energy, expected_energy, atol=1e-6)  # noqa: S101
 
+
+def test_damping():
+    """Test the interaction matrix damping."""
+    lambda_3, lambda_5 = output_tinker['damping']
+    lambda_3_ref = jnp.array(
+        [
+            0.99305373, 0.99305373, 1., 0.99305373, 0.99305373, 1.,
+            1., 1., 1., 1., 1., 1.,
+            1., 1., 1., 1., 1., 1.,
+            1., 1., 1., 1., 1., 1.,
+            1., 1.
+        ]
+    )
+    lambda_5_ref = jnp.array(
+        [
+            0.95853376, 0.95853376, 1., 0.95853376, 0.95853376, 1.,
+            1., 1., 1., 1., 1., 1.,
+            1., 1., 1., 1., 1., 1.,
+            1., 1., 1., 1., 1., 1.,
+            1., 1.
+        ]
+    )
+    assert jnp.allclose(lambda_3, lambda_3_ref, atol=1e-6)  # noqa: S101
+    assert jnp.allclose(lambda_5, lambda_5_ref, atol=1e-6)  # noqa: S101
 
 ##############
 # Water test #
@@ -162,8 +173,7 @@ model_water = FENNIX(
             },
         },
         'polarisation': {
-            'module_name': 'POLARISATION',
-            'test': True
+            'module_name': 'POLARISATION'
         },
     }
 )
