@@ -1,0 +1,21 @@
+line-length = 80
+
+[lint]
+select = [
+    "F",    # Pyflakes
+    "E",    # Pycodestyle
+    "N",    # pep8-naming
+    "D",    # pydocstyle
+    "UP",   # pyupgrade
+    "I001", # isort
+    "S",    # flake8-bandits
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "W",    # warning
+]
+ignore = [
+    "D105", # docstring required for magic methods
+]
+
+[lint.pydocstyle]
+convention = "numpy"
