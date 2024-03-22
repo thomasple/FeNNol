@@ -161,7 +161,7 @@ class Coulomb(nn.Module):
                     batch_index,
                     k_points,
                     bewald,
-                )
+                ),
             )
             dirfact = jax.scipy.special.erfc(bewald * distances)
         else:
@@ -524,7 +524,9 @@ class QeqD4(nn.Module):
                 return jnp.concatenate((Al, Aq))
 
             Qtot = (
-                inputs["total_charge"] if "total_charge" in inputs else jnp.zeros(nsys)
+                inputs["total_charge"].astype(chi.dtype)
+                if "total_charge" in inputs
+                else jnp.zeros(nsys, dype=chi.dtype)
             )
             b = jnp.concatenate([Qtot, -chi])
             # x = solve_cg(matvec, b, ridge=self.ridge)
@@ -616,9 +618,9 @@ class ChargeCorrection(nn.Module):
             q = jnp.squeeze(q, axis=-1)
         qtot = jax.ops.segment_sum(q, batch_index, nsys)
         Qtot = (
-            inputs["total_charge"]
+            inputs["total_charge"].astype(q.dtype)
             if "total_charge" in inputs
-            else jnp.zeros(qtot.shape[0])
+            else jnp.zeros(qtot.shape[0], dtype=q.dtype)
         )
         dq = Qtot - qtot
 
