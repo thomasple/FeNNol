@@ -145,16 +145,18 @@ class Polarisation(nn.Module):
         mu = jax.scipy.sparse.linalg.cg(matvec, electric_field)[0]
         mu_ = jax.lax.stop_gradient(mu)
 
+        # Matrix vector product
+        tmu = matvec(mu_)
         # Polarisation energy
         pol_energy = (
-            (0.5 * matvec(mu_) - electric_field) * mu_
+            (0.5 * tmu - electric_field) * mu_
         ).reshape(-1, 3).sum(axis=1)
 
         # Output
         output[self.electric_field_key] = electric_field.reshape(-1, 3)
         output[self.induce_dipole_key] = mu.reshape(-1, 3) * Au.BOHR
         output[self.energy_key] = pol_energy
-        output['tmu'] = matvec(mu).reshape(-1, 3)
+        output['tmu'] = tmu.reshape(-1, 3)
 
         return {**inputs, **output}
 
