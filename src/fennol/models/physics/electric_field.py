@@ -45,13 +45,19 @@ class ElectricField(nn.Module):
             This dictionary is given from the FENNIX class.
         """
         species = inputs['species']
+
+        # Graph information
         graph = inputs[self.graph_key]
         edge_src, edge_dst = graph['edge_src'], graph['edge_dst']
+
+        # Distance and vector between each pair of atoms in atomic units
         distances = graph['distances']
         rij = distances / Au.BOHR
         vec_ij = graph['vec'] / Au.BOHR
-        charges = inputs[self.charges_key]
         rij = rij[:, None]
+
+        # Charges and polarisability
+        charges = inputs[self.charges_key]
         q_ij = charges[edge_dst, None]
         polarisability = (
             inputs[self.polarisability_key] / Au.BOHR**3
@@ -59,18 +65,24 @@ class ElectricField(nn.Module):
         pol_src = polarisability[edge_src]
         pol_dst = polarisability[edge_dst]
         alpha_ij = pol_dst * pol_src
+
+        # Effective distance and damping term
         uij = rij / alpha_ij ** (1 / 6)
         damping_field = 1 - jnp.exp(
             -self.damping_param * uij**1.5
         )[:, None]
+
+        # Electric field
         eij = -q_ij * (vec_ij / rij**3) * damping_field
         electric_field = jax.ops.segment_sum(
             eij, edge_src, species.shape[0]
         ).flatten()
-        ouput = {
+
+        output = {
             self.name: electric_field
         }
-        return {**inputs, **ouput}
+
+        return {**inputs, **output}
 
 
 if __name__ == "__main__":
