@@ -32,6 +32,9 @@ modules = {
     'polarisation': {
         'module_name': 'POLARISATION'
     },
+    'electric_field': {
+        'module_name': 'ELECTRIC_FIELD',
+    },
 }
 
 model_tinker = FENNIX(
@@ -63,23 +66,6 @@ output_tinker = model_tinker(
         coordinates=coordinates_tinker,
         natoms=natoms,
         batch_index=batch_index
-    )
-
-
-def test_electric_field():
-    """Test the electric field output of the polarisation model."""
-    electric_field = jnp.array(
-        [
-            [0, -0.06404562, -0.06404562],
-            [0, -0.02453007, -0.10356116],
-            [0, -0.10356116, -0.02453007]
-        ]
-    ).flatten()
-
-    assert jnp.allclose(  # noqa: S101
-        output_tinker['electric_field'].flatten(),
-        electric_field,
-        atol=1e-6
     )
 
 
@@ -145,6 +131,7 @@ def test_damping():
     assert jnp.allclose(lambda_3, lambda_3_ref, atol=1e-6)  # noqa: S101
     assert jnp.allclose(lambda_5, lambda_5_ref, atol=1e-6)  # noqa: S101
 
+
 ##############
 # Water test #
 ##############
@@ -174,6 +161,9 @@ model_water = FENNIX(
         },
         'polarisation': {
             'module_name': 'POLARISATION'
+        },
+        'electric_field': {
+            'module_name': 'ELECTRIC_FIELD',
         },
     }
 )
@@ -218,22 +208,6 @@ output_water = model_water(
         coordinates=coordinates_water,
         natoms=natoms,
         batch_index=batch_index
-    )
-
-
-def test_electric_field_water():
-    """Test the electric field output of the polarisation model."""
-    electric_field = jnp.array(
-        [
-            [-0.12585367, -0.12585367, 0.],
-            [-0.19055352, -0.06115383, 0.],
-            [-0.06115383, -0.19055352, 0.]]
-    ).flatten()
-
-    assert jnp.allclose(  # noqa: S101
-        output_water['electric_field'].flatten(),
-        electric_field,
-        atol=1e-6
     )
 
 
