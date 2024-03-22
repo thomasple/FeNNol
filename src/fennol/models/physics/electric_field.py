@@ -10,8 +10,24 @@ import jax.numpy as jnp
 
 from fennol.utils import AtomicUnits as Au
 
+
 class ElectricField(nn.Module):
-    
+    """Electric field model for FENNOL.
+
+    Attributes
+    ----------
+    name : str
+        Name of the electric field model.
+    damping_param : float
+        Damping parameter for the electric field.
+    charges_key : str
+        Key of the charges in the input.
+    graph_key : str
+        Key of the graph in the input.
+    polarisability_key : str
+        Key of the polarisability in the input.
+    """
+
     name: str = 'electric_field'
     damping_param: float = 0.7
     charges_key: str = 'charges'
@@ -20,6 +36,7 @@ class ElectricField(nn.Module):
 
     @nn.compact
     def __call__(self, inputs):
+        """Forward pass of the electric field model."""
         species = inputs['species']
         graph = inputs[self.graph_key]
         edge_src, edge_dst = graph['edge_src'], graph['edge_dst']
