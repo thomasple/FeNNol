@@ -24,8 +24,6 @@ class Polarisation(nn.Module):
         Key of the graph in the input.
     polarisability_key : str
         Key of the polarisability in the input.
-    coulomb_key : str
-        Key of the Coulomb matrix in the input.
     charges_key : str
         Key of the charges in the input.
     electric_field_key : str
@@ -44,7 +42,6 @@ class Polarisation(nn.Module):
     energy_key: str = None
     graph_key: str = 'graph'
     polarisability_key: str = 'polarisability'
-    coulomb_key: str = 'coulomb'
     charges_key: str = 'charges'
     electric_field_key: str = 'electric_field'
     induce_dipole_key: str = 'induce_dipole'
