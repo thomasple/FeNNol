@@ -34,6 +34,8 @@ class ElectricField(nn.Module):
     graph_key: str = 'graph'
     polarisability_key: str = 'polarisability'
 
+    FID: str = 'ELECTRIC_FIELD'
+
     @nn.compact
     def __call__(self, inputs):
         """Forward pass of the electric field model.
@@ -54,10 +56,14 @@ class ElectricField(nn.Module):
         distances = graph['distances']
         rij = distances / Au.BOHR
         vec_ij = graph['vec'] / Au.BOHR
-        rij = rij[:, None]
         polarisability = (
             inputs[self.polarisability_key] / Au.BOHR**3
         )
+        pol_src = polarisability[edge_src]
+        pol_dst = polarisability[edge_dst]
+        alpha_ij = pol_dst * pol_src
+        # Effective distance
+        uij = rij / alpha_ij ** (1 / 6)
 
         # For tests purposes
         testing = 'training_flag' not in inputs
@@ -68,18 +74,16 @@ class ElectricField(nn.Module):
 
         # Charges and polarisability
         charges = inputs[self.charges_key]
+        rij = rij[:, None]
         q_ij = charges[edge_dst, None]
-        pol_src = polarisability[edge_src]
-        pol_dst = polarisability[edge_dst]
-        alpha_ij = pol_dst * pol_src
 
-        # Effective distance and damping term
-        uij = rij / alpha_ij ** (1 / 6)
+        # Damping term
         damping_field = 1 - jnp.exp(
             -self.damping_param * uij**1.5
         )[:, None]
 
         # Electric field
+        print(q_ij.shape, vec_ij.shape, rij.shape, damping_field.shape)
         eij = -q_ij * (vec_ij / rij**3) * damping_field
         electric_field = jax.ops.segment_sum(
             eij, edge_src, species.shape[0]
