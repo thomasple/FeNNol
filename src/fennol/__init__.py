@@ -1,3 +1,3 @@
-from .models import FENNIX
+from .models import FENNIX,register_fennix_module
 
 load = FENNIX.load
