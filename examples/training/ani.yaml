@@ -1,55 +1,59 @@
-device: cuda:0
-output_directory: run_dir
-log_file: train.log
-print_timings: True
+device: cuda:0 # device to use for the training
+output_directory: run_dir # directory where the output of the training will be stored
+log_file: train.log # log file for the training (this file contains a redirection of the standard output)
+print_timings: True # print the timings of the different parts of the training
 
 training:
+  # path to the dataset
   dspath: rmd17_aspirin_01.pkl
-  batch_size: 100
-  max_epochs: 1000
-  nbatch_per_epoch: 10
-  nbatch_per_validation: 1 
-  ema_decay: 0.99
-  default_loss_type: mse
+  batch_size: 100 # number of molecular configurations per batch
+  max_epochs: 1000 # number of training epochs
+  nbatch_per_epoch: 10 # number of batches per epoch
+  nbatch_per_validation: 1 # number of batches used for validation at each epoch
+  ema_decay: 0.99 # exponential moving average decay for the model parameters (<=0 means no EMA)
+  default_loss_type: mse # default loss type for the training
 
-  weight_decay: 1.e-4
-  decay_targets: [energy]
-  energy_terms: [energy]
+  weight_decay: 1.e-4 # weight decay for the optimizer (L2 regularization)
+  decay_targets: [energy] # list of modules and/or paramters for which the weight decay is applied
+  energy_terms: [energy] # output keys used to form the total energy
 
-  init_lr: 1.e-3
-  lr: 2.e-3
-  final_lr: 1.e-6
+  ## learning rate schedule (default is a cosine one-cycle schedule)
+  init_lr: 1.e-3 # initial learning rate
+  lr: 2.e-3 # maximum learning rate
+  final_lr: 1.e-6 # final learning rate
+
+  ## definition of the loss functions
   loss:
-    e:
-      key: total_energy
-      ref: formation_energy
-      weight: 1.e-3
-      unit: kcalpermol
+    e: # energy loss (this key is just an identifier for this part of the loss)
+      key: total_energy # key of the output used for the loss
+      ref: formation_energy # key of the reference from the dataset
+      weight: 1.e-3 # weight of this term in the total loss
+      unit: kcalpermol # unit of the reference -> model will be trained in atomic units so ref will be converted (but metrics will be shown in the unit of the dataset)
     f:
       key: forces
       ref: forces
       weight: 1.
       unit: kcalpermol
-      
-    
+
 model:
-  cutoff: 5.1
-  energy_terms: [energy]
+  cutoff: 5.1 # cutoff for the default graph
+
+  ## list of preprocessing modules -> graph construction/filtering/extensions
   preprocessing:
-    graph_filter_angle:
+    graph_filter_angle: #filter the main graph to 3.5 A and store in "graph_angle" key
       module_name: GRAPH_FILTER
       cutoff: 3.5
       graph_key: graph
       graph_out: graph_angle
-    angle_extension:
+    angle_extension: # add angle information to the "graph_angle" graph
       module_name: GRAPH_ANGULAR_EXTENSION
       graph_key: graph_angle
 
   modules:
-    embedding:
+    embedding: # ANI Atomic Environment Vector (AEV) with ANI2x setup
       module_name: ANI_AEV
       embedding_key: embedding
-      species_order: [H,C,N,O]
+      species_order: [H, C, N, O]
       graph_key: graph
       graph_angle_key: graph_angle
       radial_eta: 19.7
@@ -61,12 +65,10 @@ model:
       radial_start: 0.8
       angular_start: 0.8
 
-    energy:
+    energy: # neural network for the energy prediction (species-specialized networks)
       module_name: CHEMICAL_NET
-      species_order: [H,C,N,O]
+      species_order: [H, C, N, O]
       activation: partial(celu,alpha=0.1)
-      neurons: [256,192,160,1]
+      neurons: [256, 192, 160, 1]
       input_key: embedding
       squeeze: True
-      
-
