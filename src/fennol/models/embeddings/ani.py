@@ -10,21 +10,36 @@ class ANIAEV(nn.Module):
     """
     Computes the Atomic Environment Vector (AEV) for a given molecular system using the ANI model.
 
-    Args:
-        species_order (Sequence[str]): The atomic species which are considered by the model.
-        graph_angle_key (str): The key in the input dictionary that corresponds to the angular graph.
-        cutoff (float, optional): The radial cutoff distance in Angstroms. Default is 5.2.
-        angular_cutoff (float, optional): The angular cutoff distance in Angstroms. Default is 3.5.
-        radial_eta (float, optional): The radial eta hyperparameter. Default is 16.0.
-        angular_eta (float, optional): The angular eta hyperparameter. Default is 8.0.
-        radial_dist_divisions (int, optional): The number of radial distance divisions. Default is 16.
-        angular_dist_divisions (int, optional): The number of angular distance divisions. Default is 4.
-        zeta (float, optional): The zeta hyperparameter. Default is 32.0.
-        angle_sections (int, optional): The number of angular sections. Default is 4.
-        radial_start (float, optional): The starting radial distance. Default is 0.8.
-        angular_start (float, optional): The starting angular distance. Default is 0.8.
-        embedding_key (str, optional): The key to use for the output embedding in the returned dictionary. Default is "embedding".
-        graph_key (str, optional): The key in the input dictionary that corresponds to the radial graph. Default is "graph".
+    Reference
+    ---------
+    J. S. Smith, O. Isayev and A. E. Roitberg, ANI-1: an extensible neural network potential with DFT accuracy at force field computational cost, Chem. Sci., 2017, 8, 3192
+
+    Attributes
+    ----------
+    species_order : Sequence[str]
+        The chemical species which are considered by the model.
+    graph_angle_key : str
+        The key in the input dictionary that corresponds to the angular graph.
+    radial_eta : float, default=16.0
+        Controls the width of the gaussian sensity functions in radial AEV.
+    angular_eta : float, default=8.0
+        Controls the width of the gaussian sensity functions in angular AEV.
+    radial_dist_divisions : int, default=16
+        Number of basis function to encode ditance in radial AEV.
+    angular_dist_divisions : int, default=4
+        Number of basis function to encode ditance in angular AEV.
+    zeta : float, default=32.0
+        The power parameter in angle embedding.
+    angle_sections : int, default=4
+        The number of angle sections.
+    radial_start : float, default=0.8
+        The starting distance in radial AEV.
+    angular_start : float, default=0.8
+        The starting distance in angular AEV.
+    embedding_key : str, default="embedding"
+        The key to use for the output embedding in the returned dictionary.
+    graph_key : str, default="graph"
+        The key in the input dictionary that corresponds to the radial graph.
     """
 
     _graphs_properties: Dict
@@ -41,7 +56,7 @@ class ANIAEV(nn.Module):
     embedding_key: str = "embedding"
     graph_key: str = "graph"
 
-    FID: str  = "ANI_AEV"
+    FID: str = "ANI_AEV"
 
     @nn.compact
     def __call__(self, inputs):
@@ -49,7 +64,7 @@ class ANIAEV(nn.Module):
         rev_idx = {s: k for k, s in enumerate(PERIODIC_TABLE)}
         maxidx = max(rev_idx.values())
 
-        #convert species to internal indices
+        # convert species to internal indices
         conv_tensor = [0] * (maxidx + 2)
         for i, s in enumerate(self.species_order):
             conv_tensor[rev_idx[s]] = i
