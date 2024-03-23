@@ -10,53 +10,33 @@ import dataclasses
 
 
 class AIMNet(nn.Module):
-    """
-    Atom-In-Molecule Network message-passing embedding
+    """Atom-In-Molecule Network message-passing embedding
 
-    Reference
-    ---------
+    FID : AIMNET
+
+    Reference:
     Roman Zubatyuk et al. ,Accurate and transferable multitask prediction of chemical properties with an atoms-in-molecules neural network.Sci. Adv.5,eaav6490(2019).DOI:10.1126/sciadv.aav6490
 
-    Attributes
-    ----------
-    graph_angle_key : str
-        The key in the input dictionary that corresponds to the angular graph.
-    nlayers : int, default=3
-        The number of message-passing layers.
-    zmax : int, default=86
-        The maximum atomic number to allocate AFV
-    radial_eta : float, default=16.0
-        Controls the width of the gaussian sensity functions in radial AEV.
-    angular_eta : float, default=8.0
-        Controls the width of the gaussian sensity functions in angular AEV.
-    radial_dist_divisions : int, default=16
-        Number of basis function to encode ditance in radial AEV.
-    angular_dist_divisions : int, default=4
-        Number of basis function to encode ditance in angular AEV.
-    zeta : float, default=32.0
-        The power parameter in angle embedding.
-    angle_sections : int, default=4
-        The number of angle sections.
-    radial_start : float, default=0.8
-        The starting distance in radial AEV.
-    angular_start : float, default=0.8
-        The starting distance in angular AEV.
-    embedding_key : str, default="embedding"
-        The key to use for the output embedding in the returned dictionary.
-    graph_key : str, default="graph"
-        The key in the input dictionary that corresponds to the radial graph.
-    keep_all_layers : bool, default=False
-        If True, the output will contain the embeddings from all layers.
-    activation : Callable | str, default=nn.swish
-        The activation function to use.
-    combination_neurons : Sequence[int], default=[256, 128, 16]
-        The number of neurons in the AFV combination network.
-    embedding_neurons : Sequence[int], default=[512, 256, 256]
-        The number of neurons in the embedding network.
-    interaction_neurons : Sequence[int], default=[256, 256, 128]
-        The number of neurons in the interaction network.
-    afv_neurons : Sequence[int], default=[256, 256, 16]
-        The number of neurons in the AFV update network. The last number of neurons defines the size of AFV.
+    Attributes:
+        graph_angle_key (str): The key in the input dictionary that corresponds to the angular graph.
+        nlayers (int): The number of message-passing layers. Default is 3.
+        zmax (int): The maximum atomic number to allocate AFV. Default is 86.
+        radial_eta (float): Controls the width of the gaussian sensity functions in radial AEV. Default is 16.0.
+        angular_eta (float): Controls the width of the gaussian sensity functions in angular AEV. Default is 8.0.
+        radial_dist_divisions (int): Number of basis function to encode ditance in radial AEV. Default is 16.
+        angular_dist_divisions (int): Number of basis function to encode ditance in angular AEV. Default is 4.
+        zeta (float): The power parameter in angle embedding. Default is 32.0.
+        angle_sections (int): The number of angle sections. Default is 4.
+        radial_start (float): The starting distance in radial AEV. Default is 0.8.
+        angular_start (float): The starting distance in angular AEV. Default is 0.8.
+        embedding_key (str): The key to use for the output embedding in the returned dictionary. Default is "embedding".
+        graph_key (str): The key in the input dictionary that corresponds to the radial graph. Default is "graph".
+        keep_all_layers (bool): If True, the output will contain the embeddings from all layers. Default is False.
+        activation (Callable | str): The activation function to use. Default is nn.swish.
+        combination_neurons (Sequence[int]): The number of neurons in the AFV combination network. Default is [256, 128, 16].
+        embedding_neurons (Sequence[int]): The number of neurons in the embedding network. Default is [512, 256, 256].
+        interaction_neurons (Sequence[int]): The number of neurons in the interaction network. Default is [256, 256, 128].
+        afv_neurons (Sequence[int]): The number of neurons in the AFV update network. The last number of neurons defines the size of AFV. Default is [256, 256, 16].
     """
 
     _graphs_properties: Dict
