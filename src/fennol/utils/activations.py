@@ -64,19 +64,22 @@ def activation_from_str(activation: Union[str,Callable,None])->Callable:
         return activation
     if activation.lower() in ["none" ,"linear","identity"]:
         return lambda x: x
-    return eval(
-        activation,
-        {"__builtins__": None},
-        {
-            **jax.nn.__dict__,
-            **jax.numpy.__dict__,
-            **jax.__dict__,
-            "chain": chain,
-            "pow": pow,
-            "partial": partial,
-            "leaky_celu": leaky_celu,
-            "aptx": aptx,
-            "tssr": tssr,
-            "tssr2": tssr2,
-        },
-    )
+    try:
+        return eval(
+            activation,
+            {"__builtins__": None},
+            {
+                **jax.nn.__dict__,
+                **jax.numpy.__dict__,
+                **jax.__dict__,
+                "chain": chain,
+                "pow": pow,
+                "partial": partial,
+                "leaky_celu": leaky_celu,
+                "aptx": aptx,
+                "tssr": tssr,
+                "tssr2": tssr2,
+            },
+        )
+    except Exception as e:
+        raise ValueError(f'The following exception was raised while parsing the activation function {activation} : {e}')
