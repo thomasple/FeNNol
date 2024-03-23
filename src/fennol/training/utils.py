@@ -1,190 +1,42 @@
-import os, io, sys
 import jax
 import jax.numpy as jnp
 import numpy as np
+from typing import Callable, Optional, Dict, List, Tuple
 import optax
-from collections import defaultdict
-import pickle
+from copy import deepcopy
 from flax import traverse_util
 import json
-from functools import partial
-from copy import deepcopy
-from typing import Dict, List, Tuple, Union, Optional, Callable
-from .databases import DBDataset, H5Dataset
 
-try:
-    from torch.utils.data import DataLoader
-except ImportError:
-    raise ImportError(
-        "PyTorch is required for training. Install the CPU version from https://pytorch.org/get-started/locally/"
-    )
-
+from ..utils import deep_update, AtomicUnits as au
 from ..models import FENNIX
-from ..utils import AtomicUnits as au
 
 
-def load_dataset(training_parameters, rename_refs=[],infinite_iterator=True):
-    """
-    Load a dataset from a pickle file and return two iterators for training and validation batches.
+def get_training_parameters(
+    parameters: Dict[str, any], stage: int = -1
+) -> Dict[str, any]:
+    params = deepcopy(parameters["training"])
+    if "stages" not in params:
+        return params
 
-    Args:
-        training_parameters (dict): A dictionary with the following keys:
-            - 'dspath': str. Path to the pickle file containing the dataset.
-            - 'batch_size': int. Number of samples per batch.
-        rename_refs (list, optional): A list of strings with the names of the reference properties to rename.
-            Default is an empty list.
-
-    Returns:
-        tuple: A tuple of two infinite iterators, one for training batches and one for validation batches.
-            For each element in the batch, we expect a "species" key with the atomic numbers of the atoms in the system. Arrays are concatenated along the first axis and the following keys are added to distinguish between the systems:
-            - 'natoms': np.ndarray. Array with the number of atoms in each system.
-            - 'batch_index': np.ndarray. Array with the index of the system to which each atom
-            if the keys "forces", "total_energy", "atomic_energies" or any of the elements in rename_refs are present, the keys are renamed by prepending "true_" to the key name.
-    """
-    rename_refs = set(["forces", "total_energy", "atomic_energies"] + list(rename_refs))
-    pbc_training = training_parameters.get("pbc_training", False)
-
-
-    if pbc_training:
-        print("Periodic boundary conditions are active.")
-        length_nopbc = training_parameters.get("length_nopbc", 1000.0)
-        minimum_image = training_parameters.get("minimum_image", False)
-        ase_nblist = training_parameters.get("ase_nblist", False)
-        def collate_fn(batch):
-            output = defaultdict(list)
-            for i, d in enumerate(batch):
-                nat = d["species"].shape[0]
-                output["natoms"].append(np.asarray([nat]))
-                output["batch_index"].append(np.asarray([i] * nat))
-                if "cell" not in d:
-                    cell = np.asarray([[length_nopbc, 0.0, 0.0], [0.0, length_nopbc, 0.0], [0.0, 0.0, length_nopbc]])
-                else:
-                    cell = d["cell"]
-                output["cells"].append(cell.reshape(1, 3, 3))
-
-                for k, v in d.items():
-                    if k=="cell":
-                        continue
-                    output[k].append(np.asarray(v))
-            for k, v in output.items():
-                if v[0].ndim == 0:
-                    output[k] = np.stack(v)
-                else:
-                    output[k] = np.concatenate(v, axis=0)
-            for key in rename_refs:
-                if key in output:
-                    output["true_" + key] = output.pop(key)
-            
-            output["minimum_image"]=minimum_image
-            output["ase_nblist"]=ase_nblist
-            output["training_flag"]=True
-            return output
-    else:
-        def collate_fn(batch):
-            output = defaultdict(list)
-            for i, d in enumerate(batch):
-                if "cell" in d:
-                    raise ValueError("Activate pbc_training to use periodic boundary conditions.")
-                nat = d["species"].shape[0]
-                output["natoms"].append(np.asarray([nat]))
-                output["batch_index"].append(np.asarray([i] * nat))
-                for k, v in d.items():
-                    output[k].append(np.asarray(v))
-            for k, v in output.items():
-                if v[0].ndim == 0:
-                    output[k] = np.stack(v)
-                else:
-                    output[k] = np.concatenate(v, axis=0)
-            for key in rename_refs:
-                if key in output:
-                    output["true_" + key] = output.pop(key)
-            
-            output["training_flag"]=True
-            return output
-
-    # dspath = "dataset_ani1ccx.pkl"
-    dspath = training_parameters.get("dspath", None)
-    if dspath is None:
-        raise ValueError("Dataset path 'training/dspath' should be specified.")
-    print(f"Loading dataset from {dspath}...")
-    print(f"   the following keys will be renamed if present : {rename_refs}")
-    if dspath.endswith(".db"):
-        dataset = {}
-        dataset["training"] = DBDataset(dspath, table="training")
-        dataset["validation"] = DBDataset(dspath, table="validation")
-    elif dspath.endswith(".h5") or dspath.endswith(".hdf5"):
-        dataset = {}
-        dataset["training"] = H5Dataset(dspath, table="training")
-        dataset["validation"] = H5Dataset(dspath, table="validation")
-    else:
-        with open(dspath, "rb") as f:
-            dataset = pickle.load(f)
-
-    batch_size = training_parameters.get("batch_size", 16)
-    shuffle = training_parameters.get("shuffle_dataset", True)
-    dataloader_validation = DataLoader(
-        dataset["validation"],
-        batch_size=batch_size,
-        shuffle=shuffle,
-        collate_fn=collate_fn,
-    )
-    dataloader_training = DataLoader(
-        dataset["training"], batch_size=batch_size, shuffle=shuffle, collate_fn=collate_fn
-    )
-
-    print("Dataset loaded.")
-
-    if not infinite_iterator:
-        return dataloader_training, dataloader_validation
-
-    def next_batch_factory(dataloader):
-        while True:
-            for batch in dataloader:
-                yield batch
-
-    validation_iterator = next_batch_factory(dataloader_validation)
-    training_iterator = next_batch_factory(dataloader_training)
-
-    return training_iterator, validation_iterator
-
-
-def load_model(
-    parameters: Dict[str, any],
-    model_file: Optional[str] = None,
-    rng_key: Optional[str] = None,
-) -> FENNIX:
-    """
-    Load a FENNIX model from a file or create a new one.
-
-    Args:
-        parameters (dict): A dictionary of parameters for the model.
-        model_file (str, optional): The path to a saved model file to load.
-
-    Returns:
-        FENNIX: A FENNIX model object.
-    """
-    print_model = parameters["training"].get("print_model", False)
-    if model_file is None:
-        model_file = parameters.get("model_file", None)
-    if model_file is not None and os.path.exists(model_file):
-        model = FENNIX.load(model_file, use_atom_padding=True)
-        if print_model:
-            print(model.summarize())
-        print(f"Restored model from '{model_file}'.")
-    else:
-        assert (
-            rng_key is not None
-        ), "rng_key must be specified if model_file is not provided."
-        model_params = parameters["model"]
-        model = FENNIX(**model_params, rng_key=rng_key, use_atom_padding=True)
-        if print_model:
-            print(model.summarize())
-    return model
+    stages: dict = params.pop("stages")
+    stage_keys = list(stages.keys())
+    if stage < 0:
+        stage = len(stage_keys) + stage
+    assert stage >= 0 and stage < len(
+        stage_keys
+    ), f"Stage {stage} not found in training parameters"
+    for i in range(stage + 1):
+        ## remove end_event from previous stage ##
+        if i > 0 and "end_event" in params:
+            params.pop("end_event")
+        ## incrementally update training parameters ##
+        stage_params = stages[stage_keys[i]]
+        params = deep_update(params, stage_params)
+    return params
 
 
 def get_loss_definition(
-    training_parameters: Dict[str, any]
-    ,manual_renames: List[str] = []
+    training_parameters: Dict[str, any], manual_renames: List[str] = []
 ) -> Tuple[Dict[str, any], List[str]]:
     """
     Returns the loss definition and a list of renamed references.
@@ -237,37 +89,18 @@ def get_loss_definition(
         if "threshold" in loss_prms:
             assert loss_prms["threshold"] > 1.0, "Threshold must be greater than 1.0"
         used_keys.append(loss_prms["key"])
-    
-    rename_refs = list(set(["forces", "total_energy", "atomic_energies"]+manual_renames+used_keys))
 
-    
+    rename_refs = list(
+        set(["forces", "total_energy", "atomic_energies"] + manual_renames + used_keys)
+    )
+
     for k in loss_definition.keys():
         loss_prms = loss_definition[k]
         if "ref" in loss_prms:
             if loss_prms["ref"] in rename_refs:
                 loss_prms["ref"] = "true_" + loss_prms["ref"]
-        
 
     return loss_definition, rename_refs, used_keys
-
-
-def copy_parameters(variables, variables_ref, params):
-    def merge_params(full_path_, v, v_ref):
-        full_path = "/".join(full_path_[1:]).lower()
-        status = (False, "")
-        for path in params:
-            if full_path.startswith(path.lower()) and len(path) > len(status[1]):
-                status = (True, path)
-        return v_ref if status[0] else v
-
-    flat = traverse_util.flatten_dict(variables, keep_empty_nodes=False)
-    flat_ref = traverse_util.flatten_dict(variables_ref, keep_empty_nodes=False)
-    return traverse_util.unflatten_dict(
-        {
-            k: merge_params(k, v, flat_ref[k]) if k in flat_ref else v
-            for k, v in flat.items()
-        }
-    )
 
 
 def get_optimizer(
@@ -357,34 +190,296 @@ def get_optimizer(
     return optax.multi_transform(partition_optimizer, params_partition)
 
 
-class TeeLogger(object):
-    def __init__(self, name):
-        self.file = io.TextIOWrapper(open(name, "wb"), write_through=True)
-        self.stdout = None
+def get_train_step_function(
+    loss_definition: Dict,
+    model: FENNIX,
+    evaluate: Callable,
+    optimizer: optax.GradientTransformation,
+    ema: Optional[optax.GradientTransformation] = None,
+    model_ref: Optional[FENNIX] = None,
+    jit: bool = True,
+):
+    compute_ref_coords = model_ref is not None
 
-    def __del__(self):
-        self.close()
+    def train_step(
+        data, variables, opt_st, variables_ema=None, ema_st=None, data_ref=None
+    ):
 
-    def write(self, data):
-        self.file.write(data)
-        self.stdout.write(data)
-        self.flush()
+        def loss_fn(variables):
+            if model_ref is not None:
+                output_ref = evaluate(model_ref, model_ref.variables, data)
+                # _, _, output_ref = model_ref._energy_and_forces(model_ref.variables, data)
+            output = evaluate(model, variables, data)
+            # _, _, output = model._energy_and_forces(variables, data)
+            if compute_ref_coords:
+                if data_ref is None:
+                    raise ValueError(
+                        "train_step was setup with compute_ref_coords=True but data_ref was not provided"
+                    )
+                output_data_ref = evaluate(model, variables, data_ref)
+                # _,_,output_data_ref = model._energy_and_forces(variables, data_ref)
+            nsys = jnp.sum(data["true_sys"])
+            nat = jnp.sum(data["true_atoms"])
+            loss_tot = 0.0
+            for loss_prms in loss_definition.values():
+                predicted = output[loss_prms["key"]]
+                if "remove_ref_sys" in loss_prms and loss_prms["remove_ref_sys"]:
+                    assert compute_ref_coords, "compute_ref_coords must be True"
+                    predicted = predicted - output_data_ref[loss_prms["key"]]
+                if "ref" in loss_prms:
+                    if loss_prms["ref"].startswith("model_ref/"):
+                        assert model_ref is not None, "model_ref must be provided"
+                        ref = output_ref[loss_prms["ref"][10:]] * loss_prms["mult"]
+                    elif loss_prms["ref"].startswith("model/"):
+                        ref = output[loss_prms["ref"][6:]] * loss_prms["mult"]
+                    else:
+                        ref = output[loss_prms["ref"]] * loss_prms["mult"]
+                else:
+                    ref = jnp.zeros_like(predicted)
 
-    def close(self):
-        self.file.close()
+                if loss_prms["type"] in ["ensemble_nll", "ensemble_crps"]:
+                    ensemble_axis = loss_prms.get("ensemble_axis", -1)
+                    if "ensemble_subsample" in loss_prms and "rng_key" in output:
+                        ns = min(
+                            loss_prms["ensemble_subsample"],
+                            predicted.shape[ensemble_axis],
+                        )
+                        key, subkey = jax.random.split(output["rng_key"])
+                        predicted = jax.lax.slice_in_dim(
+                            jax.random.permutation(
+                                subkey, predicted, axis=ensemble_axis, independent=True
+                            ),
+                            start_index=0,
+                            limit_index=ns,
+                            axis=ensemble_axis,
+                        )
+                        output["rng_key"] = key
+                    predicted_var = predicted.var(axis=ensemble_axis, ddof=1)
+                    predicted = predicted.mean(axis=ensemble_axis)
 
-    def flush(self):
-        self.file.flush()
+                if predicted.ndim > 1 and predicted.shape[-1] == 1:
+                    predicted = jnp.squeeze(predicted, axis=-1)
 
-    def bind_stdout(self):
-        if isinstance(sys.stdout, TeeLogger):
-            raise ValueError("stdout already bound to a Tee instance.")
-        if self.stdout is not None:
-            raise ValueError("stdout already bound.")
-        self.stdout = sys.stdout
-        sys.stdout = self
+                if ref.ndim > 1 and ref.shape[-1] == 1:
+                    ref = jnp.squeeze(ref, axis=-1)
 
-    def unbind_stdout(self):
-        if self.stdout is None:
-            raise ValueError("stdout is not bound.")
-        sys.stdout = self.stdout
+                per_atom = False
+                nel = np.prod(ref.shape)
+                shape_mask = [ref.shape[0]] + [1] * (len(ref.shape) - 1)
+                # print(loss_prms["key"],predicted.shape,loss_prms["ref"],ref.shape)
+                if ref.shape[0] == output["batch_index"].shape[0]:
+                    ## shape is number of atoms
+                    nel = nel * nat / ref.shape[0]
+                    true_atoms = data["true_atoms"].reshape(*shape_mask)
+                    ref = ref * true_atoms
+                    predicted = predicted * true_atoms
+                    truth_mask = true_atoms
+                elif ref.shape[0] == output["natoms"].shape[0]:
+                    ## shape is number of systems
+                    nel = nel * nsys / ref.shape[0]
+                    true_sys = data["true_sys"].reshape(*shape_mask)
+                    ref = ref * true_sys
+                    predicted = predicted * true_sys
+                    truth_mask = true_sys
+                    if loss_prms.get("per_atom", False):
+                        per_atom = True
+                        ref = ref / output["natoms"].reshape(*shape_mask)
+                        predicted = predicted / output["natoms"].reshape(*shape_mask)
+
+                loss_type = loss_prms["type"]
+                if loss_type == "mse":
+                    loss = jnp.sum((predicted - ref) ** 2)
+                elif loss_type == "log_cosh":
+                    loss = jnp.sum(optax.log_cosh(predicted, ref))
+                elif loss_type == "rmse+mae":
+                    loss = (jnp.sum((predicted - ref) ** 2)) ** 0.5 + jnp.sum(
+                        jnp.abs(predicted - ref)
+                    )
+                elif loss_type == "ensemble_nll":
+                    predicted_var = predicted_var * truth_mask + (1.0 - truth_mask)
+                    loss = 0.5 * jnp.sum(
+                        truth_mask
+                        * (
+                            jnp.log(predicted_var)
+                            + (ref - predicted) ** 2 / predicted_var
+                        )
+                    )
+                elif loss_type == "ensemble_crps":
+                    if per_atom:
+                        predicted_var = predicted_var / output["natoms"].reshape(
+                            *shape_mask
+                        )
+                    predicted_var = predicted_var * truth_mask + (1.0 - truth_mask)
+                    sigma = predicted_var**0.5
+                    dy = (ref - predicted) / sigma
+                    Phi = 0.5 * (1.0 + jax.scipy.special.erf(dy / 2**0.5))
+                    phi = jnp.exp(-0.5 * dy**2) / (2 * jnp.pi) ** 0.5
+                    loss = jnp.sum(
+                        truth_mask * sigma * (dy * (2 * Phi - 1.0) + 2 * phi)
+                    )
+                elif loss_type == "evidential":
+                    evidence = loss_prms["evidence_key"]
+                    nu, alpha, beta = jnp.split(output[evidence], 3, axis=-1)
+                    gamma = predicted
+                    nu = nu.reshape(shape_mask)
+                    alpha = alpha.reshape(shape_mask)
+                    beta = beta.reshape(shape_mask)
+                    nu = jnp.where(truth_mask, nu, 1.0)
+                    alpha = jnp.where(truth_mask, alpha, 1.0)
+                    beta = jnp.where(truth_mask, beta, 1.0)
+                    omega = 2 * beta * (1 + nu)
+                    lg = jax.scipy.special.gammaln(alpha) - jax.scipy.special.gammaln(
+                        alpha + 0.5
+                    )
+                    ls = 0.5 * jnp.log(jnp.pi / nu) - alpha * jnp.log(omega)
+                    lt = (alpha + 0.5) * jnp.log(omega + nu * (gamma - ref) ** 2)
+                    wst = (
+                        (beta * (1 + nu) / (alpha * nu)) ** 0.5
+                        if loss_prms.get("normalize_evidence", True)
+                        else 1.0
+                    )
+                    lr = (
+                        loss_prms.get("lambda_evidence", 1.0)
+                        * jnp.abs(gamma - ref)
+                        * nu
+                        / wst
+                    )
+                    r = loss_prms.get("evidence_ratio", 1.0)
+                    le = (
+                        loss_prms.get("lambda_evidence_diff", 0.0)
+                        * (nu - r * 2 * alpha) ** 2
+                    )
+                    lb = loss_prms.get("lambda_evidence_beta", 0.0) * beta
+                    loss = lg + ls + lt + lr + le + lb
+                    if ref.shape[0] == output["batch_index"].shape[0]:
+                        loss = loss * true_atoms
+                    elif ref.shape[0] == output["natoms"].shape[0]:
+                        loss = loss * true_sys
+
+                    loss = jnp.sum(loss)
+                elif loss_type == "raw":
+                    loss = jnp.sum(predicted)
+                else:
+                    raise ValueError(f"Unknown loss type: {loss_type}")
+
+                loss_tot = loss_tot + loss_prms["weight"] * loss / nel
+
+            return loss_tot
+
+        loss, grad = jax.value_and_grad(loss_fn)(variables)
+        updates, opt_st = optimizer.update(grad, opt_st, params=variables)
+        variables = optax.apply_updates(variables, updates)
+        if ema is not None:
+            if variables_ema is None or ema_st is None:
+                raise ValueError(
+                    "train_step was setup with ema but either variables_ema or ema_st was not provided"
+                )
+            variables_ema, ema_st = ema.update(variables, ema_st)
+            return loss, variables, opt_st, variables_ema, ema_st
+        else:
+            return loss, variables, opt_st
+
+    if jit:
+        return jax.jit(train_step)
+    return train_step
+
+
+def get_validation_function(
+    loss_definition: Dict,
+    model: FENNIX,
+    evaluate: Callable,
+    model_ref: Optional[FENNIX] = None,
+    return_targets: bool = False,
+    jit: bool = True,
+):
+    compute_ref_coords = model_ref is not None
+
+    def validation(data, variables, data_ref=None):
+        if model_ref is not None:
+            if data_ref is None:
+                raise ValueError(
+                    "validation was setup with model_ref but data_ref was not provided"
+                )
+            output_ref = evaluate(model_ref, model_ref.variables, data)
+            # _, _, output_ref = model_ref._energy_and_forces(model_ref.variables, data)
+        output = evaluate(model, variables, data)
+        # _, _, output = model._energy_and_forces(variables, data)
+        if compute_ref_coords:
+            output_data_ref = evaluate(model, variables, data_ref)
+            # _,_,output_data_ref = model._energy_and_forces(variables, data_ref)
+        nsys = jnp.sum(data["true_sys"])
+        nat = jnp.sum(data["true_atoms"])
+        rmses = {}
+        maes = {}
+        if return_targets:
+            targets = {}
+
+        for name, loss_prms in loss_definition.items():
+            do_validation = loss_prms.get("validate", True)
+            if not do_validation:
+                continue
+            predicted = output[loss_prms["key"]]
+            if "remove_ref_sys" in loss_prms and loss_prms["remove_ref_sys"]:
+                assert compute_ref_coords, "compute_ref_coords must be True"
+                predicted = predicted - output_data_ref[loss_prms["key"]]
+            if "ref" in loss_prms:
+                if loss_prms["ref"].startswith("model_ref/"):
+                    assert model_ref is not None, "model_ref must be provided"
+                    ref = output_ref[loss_prms["ref"][10:]] * loss_prms["mult"]
+                else:
+                    ref = output[loss_prms["ref"]] * loss_prms["mult"]
+            else:
+                ref = jnp.zeros_like(predicted)
+
+            if loss_prms["type"] in ["ensemble_nll", "ensemble_crps"]:
+                axis = loss_prms.get("ensemble_axis", -1)
+                predicted = predicted.mean(axis=axis)
+
+            if predicted.ndim > 1 and predicted.shape[-1] == 1:
+                predicted = jnp.squeeze(predicted, axis=-1)
+
+            if ref.ndim > 1 and ref.shape[-1] == 1:
+                ref = jnp.squeeze(ref, axis=-1)
+            # nel = ref.shape[0]
+            # nel = np.prod(ref.shape)
+            # if ref.shape[0] == data["batch_index"].shape[0]:
+            #     nel = nel * nat / ref.shape[0]
+            # elif ref.shape[0] == data["natoms"].shape[0]:
+            #     nel = nel * nsys / ref.shape[0]
+
+            nel = np.prod(ref.shape)
+            shape_mask = [ref.shape[0]] + [1] * (len(predicted.shape) - 1)
+            if ref.shape[0] == output["batch_index"].shape[0]:
+                ## shape is number of atoms
+                nel = nel * nat / ref.shape[0]
+                truth_mask = data["true_atoms"].reshape(*shape_mask)
+                ref = ref * data["true_atoms"].reshape(*shape_mask)
+                predicted = predicted * data["true_atoms"].reshape(*shape_mask)
+            elif ref.shape[0] == output["natoms"].shape[0]:
+                ## shape is number of systems
+                nel = nel * nsys / ref.shape[0]
+                truth_mask = data["true_sys"].reshape(*shape_mask)
+                ref = ref * data["true_sys"].reshape(*shape_mask)
+                predicted = predicted * data["true_sys"].reshape(*shape_mask)
+                if loss_prms.get("per_atom_validation", False):
+                    ref = ref / output["natoms"].reshape(*shape_mask)
+                    predicted = predicted / output["natoms"].reshape(*shape_mask)
+            else:
+                truth_mask = jnp.ones_like(ref, dtype=jnp.bool_)
+
+            rmse = (jnp.sum((predicted - ref) ** 2) / nel) ** 0.5
+            mae = jnp.sum(jnp.abs(predicted - ref)) / nel
+
+            rmses[name] = rmse
+            maes[name] = mae
+            if return_targets:
+                targets[name] = (predicted, ref, truth_mask)
+
+        if return_targets:
+            return rmses, maes, output, targets
+
+        return rmses, maes, output
+
+    if jit:
+        return jax.jit(validation)
+    return validation

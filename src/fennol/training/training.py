@@ -15,18 +15,18 @@ import argparse
 import torch
 import random
 
-try:
-    import tomlkit
-except ImportError:
-    tomlkit = None
-
-from .utils import (
+from .io import (
+    load_configuration,
     load_dataset,
     load_model,
-    get_optimizer,
-    get_loss_definition,
     TeeLogger,
     copy_parameters,
+)
+from .utils import (
+    get_loss_definition,
+    get_train_step_function,
+    get_validation_function,
+    get_optimizer,
 )
 from ..utils import deep_update, AtomicUnits as au
 
@@ -44,19 +44,7 @@ def main():
         open(sys.stdout.fileno(), "wb", 0), write_through=True
     )
 
-    if config_file.endswith(".json"):
-        parameters = json.load(open(config_file))
-    elif config_file.endswith(".yaml") or config_file.endswith(".yml"):
-        parameters = yaml.load(open(config_file), Loader=yaml.FullLoader)
-    elif tomlkit is not None and config_file.endswith(".toml"):
-        parameters = tomlkit.loads(open(config_file).read())
-    else:
-        supported_formats = [".json", ".yaml", ".yml"]
-        if tomlkit is not None:
-            supported_formats.append(".toml")
-        raise ValueError(
-            f"Unknown config file format. Supported formats: {supported_formats}"
-        )
+    parameters = load_configuration(config_file)
 
     ### Set the device
     device: str = parameters.get("device", "cpu")
@@ -107,6 +95,7 @@ def main():
     try:
         with jax.default_device(_device):
             if "stages" in parameters["training"]:
+                ## train in stages ##
                 params = deepcopy(parameters)
                 stages = params["training"].pop("stages")
                 assert isinstance(
@@ -120,18 +109,27 @@ def main():
                     rng_key, subkey = jax.random.split(rng_key)
                     print("")
                     print(f"### STAGE {i+1}: {stage} ###")
+                    
+                    ## remove end_event from previous stage ##
                     if i > 0 and "end_event" in params["training"]:
                         params["training"].pop("end_event")
+
+                    ## incrementally update training parameters ##
                     params = deep_update(params, {"training": stage_params})
                     if model_file_stage is not None:
+                        ## load model from previous stage ##
                         params["model_file"] = model_file_stage
+
                     if print_stages_params:
                         print("stage parameters:")
                         print(json.dumps(params, indent=2, sort_keys=False))
+
+                    ## train stage ##
                     _, model_file_stage = train(
                         subkey, params, stage=i + 1, output_directory=output_directory
                     )
             else:
+                ## single training stage ##
                 train(
                     rng_key,
                     parameters,
@@ -153,7 +151,8 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         output_directory += "/"
     stage_prefix = f"_stage_{stage}" if stage is not None else ""
 
-    model = load_model(parameters, model_file, rng_key=rng_key)
+    rng_key, model_key = jax.random.split(rng_key)
+    model = load_model(parameters, model_file, rng_key=model_key)
 
     training_parameters = parameters.get("training", {})
     model_ref = None
@@ -291,221 +290,25 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
             _, output = model._total_energy(variables, data)
             return output
 
-    @jax.jit
-    def train_step(variables, variables_ema, opt_st, ema_st, data, data_ref):
+    train_step = get_train_step_function(
+        loss_definition=loss_definition,
+        model=model,
+        model_ref=model_ref,
+        evaluate=evaluate,
+        optimizer=optimizer,
+        ema=ema,
+    )
 
-        def loss_fn(variables):
-            if model_ref is not None:
-                output_ref = evaluate(model_ref, model_ref.variables, data)
-                # _, _, output_ref = model_ref._energy_and_forces(model_ref.variables, data)
-            output = evaluate(model, variables, data)
-            # _, _, output = model._energy_and_forces(variables, data)
-            if compute_ref_coords:
-                output_data_ref = evaluate(model, variables, data_ref)
-                # _,_,output_data_ref = model._energy_and_forces(variables, data_ref)
-            nsys = jnp.sum(data["true_sys"])
-            nat = jnp.sum(data["true_atoms"])
-            loss_tot = 0.0
-            for loss_prms in loss_definition.values():
-                predicted = output[loss_prms["key"]]
-                if "remove_ref_sys" in loss_prms and loss_prms["remove_ref_sys"]:
-                    assert compute_ref_coords, "compute_ref_coords must be True"
-                    predicted = predicted - output_data_ref[loss_prms["key"]]
-                if "ref" in loss_prms:
-                    if loss_prms["ref"].startswith("model_ref/"):
-                        assert model_ref is not None, "model_ref must be provided"
-                        ref = output_ref[loss_prms["ref"][10:]] * loss_prms["mult"]
-                    elif loss_prms["ref"].startswith("model/"):
-                        ref = output[loss_prms["ref"][6:]] * loss_prms["mult"]
-                    else:
-                        ref = output[loss_prms["ref"]] * loss_prms["mult"]
-                else:
-                    ref = jnp.zeros_like(predicted)
-
-                if loss_prms["type"] in ["ensemble_nll", "ensemble_crps"]:
-                    ensemble_axis = loss_prms.get("ensemble_axis", -1)
-                    predicted_var = predicted.var(axis=ensemble_axis, ddof=1)
-                    predicted = predicted.mean(axis=ensemble_axis)
-
-
-                if predicted.ndim >1 and predicted.shape[-1] == 1:
-                    predicted = jnp.squeeze(predicted, axis=-1)
-                
-                if ref.ndim >1 and ref.shape[-1] == 1:
-                    ref = jnp.squeeze(ref, axis=-1)
-
-                nel = np.prod(ref.shape)
-                shape_mask = [ref.shape[0]] + [1] * (len(ref.shape) - 1)
-                # print(loss_prms["key"],predicted.shape,loss_prms["ref"],ref.shape)
-                if (
-                    ref.shape[0] == output["batch_index"].shape[0]
-                ):  # shape is number of atoms
-                    nel = nel * nat / ref.shape[0]
-                    true_atoms = data["true_atoms"].reshape(*shape_mask)
-                    ref = ref * true_atoms
-                    predicted = predicted * true_atoms
-                    if loss_prms.get("per_atom", False):
-                        ref = ref / output["natoms"].reshape(*shape_mask)
-                        predicted = predicted / output["natoms"].reshape(*shape_mask)
-                    truth_mask = true_atoms
-                elif (
-                    ref.shape[0] == output["natoms"].shape[0]
-                ):  # shape is number of systems
-                    nel = nel * nsys / ref.shape[0]
-                    true_sys = data["true_sys"].reshape(*shape_mask)
-                    ref = ref * true_sys
-                    predicted = predicted * true_sys
-                    truth_mask = true_sys
-
-                loss_type = loss_prms["type"]
-                if loss_type == "mse":
-                    loss = jnp.sum((predicted - ref) ** 2)
-                elif loss_type == "log_cosh":
-                    loss = jnp.sum(optax.log_cosh(predicted, ref))
-                elif loss_type == "rmse+mae":
-                    loss = (jnp.sum((predicted - ref) ** 2)) ** 0.5 + jnp.sum(
-                        jnp.abs(predicted - ref)
-                    )
-                elif loss_type == "ensemble_nll":
-                    predicted_var = predicted_var * truth_mask + (1.0 - truth_mask)
-                    loss = 0.5 * jnp.sum(
-                        truth_mask
-                        * (
-                            jnp.log(predicted_var)
-                            + (ref - predicted) ** 2 / predicted_var
-                        )
-                    )
-                elif loss_type == "ensemble_crps":
-                    predicted_var = predicted_var * truth_mask + (1.0 - truth_mask)
-                    sigma = predicted_var ** 0.5
-                    dy = (ref - predicted)/sigma
-                    Phi = 0.5 * (1.0 + jax.scipy.special.erf(dy / 2**0.5))
-                    phi = jnp.exp(-0.5 * dy**2) / (2 * jnp.pi)**0.5
-                    loss = jnp.sum(
-                        truth_mask*sigma*(dy*(2*Phi-1.) + 2*phi)
-                    )
-                elif loss_type == "evidential":
-                    evidence = loss_prms["evidence_key"]
-                    nu, alpha, beta = jnp.split(output[evidence], 3, axis=-1)
-                    gamma = predicted
-                    nu = nu.reshape(shape_mask)
-                    alpha = alpha.reshape(shape_mask)
-                    beta = beta.reshape(shape_mask)
-                    nu = jnp.where(truth_mask, nu, 1.0)
-                    alpha = jnp.where(truth_mask, alpha, 1.0)
-                    beta = jnp.where(truth_mask, beta, 1.0)
-                    omega = 2 * beta * (1 + nu)
-                    lg = jax.scipy.special.gammaln(alpha) - jax.scipy.special.gammaln(
-                        alpha + 0.5
-                    )
-                    ls = 0.5 * jnp.log(jnp.pi / nu) - alpha * jnp.log(omega)
-                    lt = (alpha + 0.5) * jnp.log(omega + nu * (gamma - ref) ** 2)
-                    wst = (
-                        (beta * (1 + nu) / (alpha * nu)) ** 0.5
-                        if loss_prms.get("normalize_evidence", True)
-                        else 1.0
-                    )
-                    lr = (
-                        loss_prms.get("lambda_evidence", 1.0)
-                        * jnp.abs(gamma - ref)
-                        * nu
-                        / wst
-                    )
-                    r = loss_prms.get("evidence_ratio", 1.0)
-                    le = (
-                        loss_prms.get("lambda_evidence_diff", 0.0)
-                        * (nu - r * 2 * alpha) ** 2
-                    )
-                    lb = loss_prms.get("lambda_evidence_beta", 0.0) * beta
-                    loss = lg + ls + lt + lr + le + lb
-                    if ref.shape[0] == output["batch_index"].shape[0]:
-                        loss = loss * true_atoms
-                    elif ref.shape[0] == output["natoms"].shape[0]:
-                        loss = loss * true_sys
-
-                    loss = jnp.sum(loss)
-                elif loss_type == "raw":
-                    loss = jnp.sum(predicted)
-                else:
-                    raise ValueError(f"Unknown loss type: {loss_type}")
-
-                loss_tot = loss_tot + loss_prms["weight"] * loss / nel
-
-            return loss_tot
-
-        loss, grad = jax.value_and_grad(loss_fn)(variables)
-        updates, opt_st = optimizer.update(grad, opt_st, params=variables)
-        variables = optax.apply_updates(variables, updates)
-        variables_ema, ema_st = ema.update(variables, ema_st)
-        return variables, variables_ema, opt_st, ema_st, loss
-
-    @jax.jit
-    def validation(variables, data, data_ref):
-        if model_ref is not None:
-            output_ref = evaluate(model_ref, model_ref.variables, data)
-            # _, _, output_ref = model_ref._energy_and_forces(model_ref.variables, data)
-        output = evaluate(model, variables, data)
-        # _, _, output = model._energy_and_forces(variables, data)
-        if compute_ref_coords:
-            output_data_ref = evaluate(model, variables, data_ref)
-            # _,_,output_data_ref = model._energy_and_forces(variables, data_ref)
-        nsys = jnp.sum(data["true_sys"])
-        nat = jnp.sum(data["true_atoms"])
-        rmses = {}
-        maes = {}
-        for name, loss_prms in loss_definition.items():
-            do_validation = loss_prms.get("validate", True)
-            if not do_validation:
-                continue
-            predicted = output[loss_prms["key"]]
-            if "remove_ref_sys" in loss_prms and loss_prms["remove_ref_sys"]:
-                assert compute_ref_coords, "compute_ref_coords must be True"
-                predicted = predicted - output_data_ref[loss_prms["key"]]
-            if "ref" in loss_prms:
-                if loss_prms["ref"].startswith("model_ref/"):
-                    assert model_ref is not None, "model_ref must be provided"
-                    ref = output_ref[loss_prms["ref"][10:]] * loss_prms["mult"]
-                else:
-                    ref = output[loss_prms["ref"]] * loss_prms["mult"]
-            else:
-                ref = jnp.zeros_like(predicted)
-
-            if loss_prms["type"] in ["ensemble_nll", "ensemble_crps"]:
-                axis = loss_prms.get("ensemble_axis", -1)
-                predicted = predicted.mean(axis=axis)
-
-            if predicted.ndim > 1 and predicted.shape[-1] == 1:
-                predicted = jnp.squeeze(predicted, axis=-1)
-            
-            if ref.ndim > 1 and ref.shape[-1] == 1:
-                ref = jnp.squeeze(ref, axis=-1)
-            # nel = ref.shape[0]
-            # nel = np.prod(ref.shape)
-            # if ref.shape[0] == data["batch_index"].shape[0]:
-            #     nel = nel * nat / ref.shape[0]
-            # elif ref.shape[0] == data["natoms"].shape[0]:
-            #     nel = nel * nsys / ref.shape[0]
-
-            nel = np.prod(ref.shape)
-            shape_mask = [ref.shape[0]] + [1] * (len(predicted.shape) - 1)
-            if ref.shape[0] == output["batch_index"].shape[0]:
-                nel = nel * nat / ref.shape[0]
-                ref = ref * data["true_atoms"].reshape(*shape_mask)
-                predicted = predicted * data["true_atoms"].reshape(*shape_mask)
-            elif ref.shape[0] == output["natoms"].shape[0]:
-                nel = nel * nsys / ref.shape[0]
-                ref = ref * data["true_sys"].reshape(*shape_mask)
-                predicted = predicted * data["true_sys"].reshape(*shape_mask)
-
-            rmse = (jnp.sum((predicted - ref) ** 2) / nel) ** 0.5
-            mae = jnp.sum(jnp.abs(predicted - ref)) / nel
-
-            rmses[name] = rmse
-            maes[name] = mae
-        return rmses, maes, output
+    validation = get_validation_function(
+        loss_definition=loss_definition,
+        model=model,
+        model_ref=model_ref,
+        evaluate=evaluate,
+        return_targets=False,
+    )
 
     if "energy_terms" in training_parameters:
-        model.set_energy_terms(training_parameters["energy_terms"],jit=False)
+        model.set_energy_terms(training_parameters["energy_terms"], jit=False)
     print("energy terms:", model.energy_terms)
 
     keep_all_bests = training_parameters.get("keep_all_bests", False)
@@ -541,6 +344,8 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
             # preprocess data
             s = time.time()
             inputs = model.preprocess(**data)
+            rng_key,subkey = jax.random.split(rng_key)
+            inputs["rng_key"] = subkey
             if compute_ref_coords:
                 data_ref = {**data, "coordinates": data[coordinates_ref_key]}
                 inputs_ref = model.preprocess(**data_ref)
@@ -558,8 +363,13 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
             opt_st.inner_states["trainable"].inner_state[-1].hyperparams[
                 "step_size"
             ] = current_lr
-            variables, model.variables, opt_st, ema_st, loss = train_step(
-                variables, model.variables, opt_st, ema_st, inputs, inputs_ref
+            loss, variables, opt_st, model.variables, ema_st = train_step(
+                data=inputs,
+                variables=variables,
+                variables_ema=model.variables,
+                opt_st=opt_st,
+                ema_st=ema_st,
+                data_ref=inputs_ref,
             )
             count += 1
             # jax.block_until_ready(state)
@@ -576,7 +386,9 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
                 inputs_ref = model.preprocess(**data_ref)
             else:
                 inputs_ref = None
-            rmses, maes, output = validation(model.variables, inputs, inputs_ref)
+            rmses, maes, output = validation(
+                data=inputs, variables=model.variables, data_ref=inputs_ref
+            )
             for k, v in rmses.items():
                 rmses_avg[k] += v
             for k, v in maes.items():
