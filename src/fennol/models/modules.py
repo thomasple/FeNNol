@@ -53,6 +53,12 @@ for mods in [misc, physics, embeddings]:
 
 ##################################################
 
+def get_modules_documentation():
+    doc = {}
+    for name, module in MODULES.items():
+        doc[name] = module.__doc__
+    return doc
+
 
 class FENNIXModules(nn.Module):
     r"""Sequential module that applies a sequence of FENNIX modules.
