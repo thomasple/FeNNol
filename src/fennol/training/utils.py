@@ -267,6 +267,7 @@ def get_train_step_function(
                 nel = np.prod(ref.shape)
                 shape_mask = [ref.shape[0]] + [1] * (len(ref.shape) - 1)
                 # print(loss_prms["key"],predicted.shape,loss_prms["ref"],ref.shape)
+                natscale = 1.0
                 if ref.shape[0] == output["batch_index"].shape[0]:
                     ## shape is number of atoms
                     nel = nel * nat / ref.shape[0]
@@ -285,20 +286,27 @@ def get_train_step_function(
                         per_atom = True
                         ref = ref / output["natoms"].reshape(*shape_mask)
                         predicted = predicted / output["natoms"].reshape(*shape_mask)
+                    if "nat_pow" in loss_prms:
+                        natscale = (
+                            1.0
+                            / output["natoms"].reshape(*shape_mask)
+                            ** loss_prms["nat_pow"]
+                        )
 
                 loss_type = loss_prms["type"]
                 if loss_type == "mse":
-                    loss = jnp.sum((predicted - ref) ** 2)
+                    loss = jnp.sum(natscale * (predicted - ref) ** 2)
                 elif loss_type == "log_cosh":
-                    loss = jnp.sum(optax.log_cosh(predicted, ref))
+                    loss = jnp.sum(natscale * optax.log_cosh(predicted, ref))
                 elif loss_type == "rmse+mae":
-                    loss = (jnp.sum((predicted - ref) ** 2)) ** 0.5 + jnp.sum(
-                        jnp.abs(predicted - ref)
-                    )
+                    loss = (
+                        jnp.sum(natscale * (predicted - ref) ** 2)
+                    ) ** 0.5 + jnp.sum(natscale * jnp.abs(predicted - ref))
                 elif loss_type == "ensemble_nll":
                     predicted_var = predicted_var * truth_mask + (1.0 - truth_mask)
                     loss = 0.5 * jnp.sum(
-                        truth_mask
+                        natscale
+                        * truth_mask
                         * (
                             jnp.log(predicted_var)
                             + (ref - predicted) ** 2 / predicted_var
@@ -315,7 +323,7 @@ def get_train_step_function(
                     Phi = 0.5 * (1.0 + jax.scipy.special.erf(dy / 2**0.5))
                     phi = jnp.exp(-0.5 * dy**2) / (2 * jnp.pi) ** 0.5
                     loss = jnp.sum(
-                        truth_mask * sigma * (dy * (2 * Phi - 1.0) + 2 * phi)
+                        natscale * truth_mask * sigma * (dy * (2 * Phi - 1.0) + 2 * phi)
                     )
                 elif loss_type == "evidential":
                     evidence = loss_prms["evidence_key"]
@@ -356,9 +364,9 @@ def get_train_step_function(
                     elif ref.shape[0] == output["natoms"].shape[0]:
                         loss = loss * true_sys
 
-                    loss = jnp.sum(loss)
+                    loss = jnp.sum(natscale * loss)
                 elif loss_type == "raw":
-                    loss = jnp.sum(predicted)
+                    loss = jnp.sum(natscale * predicted)
                 else:
                     raise ValueError(f"Unknown loss type: {loss_type}")
 
