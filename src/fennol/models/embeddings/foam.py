@@ -9,10 +9,30 @@ from typing import  Dict, Optional
 
 
 class FOAMEmbedding(nn.Module):
-    """
+    """Filtered Overlap of Atomic Moments
+    
     Very similar to SOAP embedding but for each rank l, we do not take all combinations
     of each channels but linearly project on 2 nchannels elements and then take the
     scalar product. This is then kind of a linearly filtered SOAP embedding.
+
+    FID : FOAM
+
+    Parameters
+    ----------
+    lmax : int, default=2
+        The maximum value of l.
+    nchannels : Optional[int], default=None
+        The number of channels.
+    graph_key : str, default="graph"
+        The key for the graph input.
+    embedding_key : str, default="embedding"
+        The key for the embedding output.
+    species_encoding : dict, default={}
+        The species encoding parameters.
+    radial_basis : dict, default={}
+        The radial basis parameters.
+    include_species : bool, default=True
+        Whether to concatenate the species encoding to the embedding.
     """
     _graphs_properties: Dict
     lmax: int = 2

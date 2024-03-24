@@ -11,6 +11,40 @@ from ..misc.nets import FullyConnectedNet
 
 
 class PAINNEmbedding(nn.Module):
+    """polarizable atom interaction neural network
+    
+    Reference
+    ---------
+    K.T. Schütt. P.-J. Kindermans, H. E. Sauceda, S. Chmiela, A. Tkatchenko, K.-R. Müller. SchNet - a deep learning architecture for molecules and materials. The Journal of Chemical Physics 148(24), 241722 (2018) 
+    https://doi.org/10.1063/1.5019779
+
+    Parameters
+    ----------
+    dim : int, default=128
+        The dimension of the embedding.
+    nlayers : int, default=3
+        The number of interaction layers.
+    nchannels : Optional[int], default=None
+        The number of vector channels. If None, it is set to dim.
+    message_hidden : Sequence[int], default=[128]
+        The hidden layers for the message network.
+    update_hidden : Sequence[int], default=[128]
+        The hidden layers for the update network.
+    activation : Union[Callable, str], default=nn.silu
+        The activation function.
+    graph_key : str, default="graph"
+        The key for the graph input.
+    embedding_key : str, default="embedding"
+        The key for the embedding output.
+    tensor_embedding_key : str, default="embedding_vectors"
+        The key for the tensor embedding output.
+    species_encoding : dict, default={}
+        The species encoding parameters.
+    radial_basis : dict, default={}
+        The radial basis function parameters.
+    keep_all_layers : bool, default=False
+        Whether to keep the embedding from each layer in the output.
+    """
     _graphs_properties: Dict
     dim: int = 128
     nlayers: int = 3

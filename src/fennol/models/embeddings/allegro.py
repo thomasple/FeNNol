@@ -21,26 +21,42 @@ class AllegroEmbedding(nn.Module):
 
     FID : ALLEGRO
 
-    Reference:
+    Reference
+    ---------
     Musaelian, A., Batzner, S., Johansson, A. et al. Learning local equivariant representations for large-scale atomistic dynamics.
       Nat Commun 14, 579 (2023). https://doi.org/10.1038/s41467-023-36329-y
 
-    Attributes:
-        dim (int): The dimension of the embedding. Default is 128.
-        nchannels (int): The number of equivariant channels. Default is 16.
-        nlayers (int): The number of interaction layers. Default is 3.
-        lmax (int): The maximum degree of tensorial embedding. Default is 2.
-        lmax_density (Optional[int]): The maximum degree of spherical harmonics for density.
-            If None, it will be set to lmax. Must be greater or equal to lmax. Default is None.
-        twobody_hidden (Sequence[int]): The number of hidden neurons in the two-body network. Default is [128].
-        embedding_hidden (Sequence[int]): The number of hidden neurons in the embedding network. Default is [].
-        latent_hidden (Sequence[int]): The number of hidden neurons in the latent network. Default is [128].
-        activation (Callable | str): The activation function to use. Default is nn.silu.
-        graph_key (str): The key in the input dictionary that corresponds to the graph. Default is "graph".
-        embedding_key (str): The key to use for the output embedding in the returned dictionary. Default is "embedding".
-        tensor_embedding_key (str): The key to use for the output tensor embedding in the returned dictionary. Default is "tensor_embedding".
-        species_encoding (dict): The species encoding parameters. Default is {}.
-        radial_basis (dict): The radial basis parameters. Default is {}.
+    Parameters
+    ----------
+    dim : int, default=128
+        The dimension of the embedding.
+    nchannels : int, default=16
+        The number of equivariant channels.
+    nlayers : int, default=3
+        The number of interaction layers.
+    lmax : int, default=2
+        The maximum degree of tensorial embedding.
+    lmax_density : Optional[int], default=None
+        The maximum degree of spherical harmonics for density.
+            If None, it will be set to lmax. Must be greater or equal to lmax.
+    twobody_hidden : Sequence[int], default=[128]
+        The number of hidden neurons in the two-body network.
+    embedding_hidden : Sequence[int], default=[]
+        The number of hidden neurons in the embedding network.
+    latent_hidden : Sequence[int], default=[128]
+        The number of hidden neurons in the latent network.
+    activation : Union[Callable, str], default=nn.silu
+        The activation function to use.
+    graph_key : str, default="graph"
+        The key in the input dictionary that corresponds to the graph.
+    embedding_key : str, default="embedding"
+        The key to use for the output embedding in the returned dictionary.
+    tensor_embedding_key : str, default="tensor_embedding"
+        The key to use for the output tensor embedding in the returned dictionary.
+    species_encoding : dict, default={}
+        The species encoding parameters.
+    radial_basis : dict, default={}
+        The radial basis parameters.
 
     """
 
@@ -143,28 +159,44 @@ if E3NN_AVAILABLE:
 
         in this version, equivariant operations use the e3nn library.
 
-        Reference:
+        Reference
+        ---------
         Musaelian, A., Batzner, S., Johansson, A. et al. Learning local equivariant representations for large-scale atomistic dynamics.
-          Nat Commun 14, 579 (2023). https://doi.org/10.1038/s41467-023-36329-y
+        Nat Commun 14, 579 (2023). https://doi.org/10.1038/s41467-023-36329-y
 
-        Attributes:
-            dim (int): The dimension of the embedding. Default is 128.
-            nchannels (int): The number of equivariant channels. Default is 16.
-            nlayers (int): The number of interaction layers. Default is 3.
-            irreps_Vij (str | int | e3nn.Irreps): Irreps used for the tensor embedding.
-                If an integer is provided, the irreps will be the ones of spherical harmonics of this degree. Default is 2.
-            lmax_density (Optional[int]): The maximum degree of spherical harmonics for density.
-                If None, it will be set to lmax. Must be greater or equal to lmax. Default is None.
-            twobody_hidden (Sequence[int]): The number of hidden neurons in the two-body network. Default is [128].
-            embedding_hidden (Sequence[int]): The number of hidden neurons in the embedding network. Default is [].
-            latent_hidden (Sequence[int]): The number of hidden neurons in the latent network. Default is [128].
-            activation (Callable | str): The activation function to use. Default is nn.silu.
-            graph_key (str): The key in the input dictionary that corresponds to the graph. Default is "graph".
-            embedding_key (str): The key to use for the output embedding in the returned dictionary. Default is "embedding".
-            tensor_embedding_key (str): The key to use for the output tensor embedding in the returned dictionary. Default is "tensor_embedding".
-            species_encoding (dict): The species encoding parameters. Default is {}.
-            radial_basis (dict): The radial basis parameters. Default is {}.
 
+        Parameters
+        ----------
+        dim : int, default=128
+            The dimension of the embedding.
+        nchannels : int, default=16
+            The number of equivariant channels.
+        nlayers : int, default=3
+            The number of interaction layers.
+        irreps_Vij : Union[str, int, e3nn.Irreps], default=2
+            Irreps used for the tensor embedding.
+            If an integer is provided, the irreps will be the ones of spherical harmonics of this degree.
+        lmax_density : Optional[int], default=None
+            The maximum degree of spherical harmonics for density.
+            If None, it will be set to lmax. Must be greater or equal to lmax.
+        twobody_hidden : Sequence[int], default=[128]
+            The number of hidden neurons in the two-body network.
+        embedding_hidden : Sequence[int], default=[]
+            The number of hidden neurons in the embedding network.
+        latent_hidden : Sequence[int], default=[128]
+            The number of hidden neurons in the latent network.
+        activation : Union[Callable, str], default=nn.silu
+            The activation function to use.
+        graph_key : str, default="graph"
+            The key in the input dictionary that corresponds to the graph.
+        embedding_key : str, default="embedding"
+            The key to use for the output embedding in the returned dictionary.
+        tensor_embedding_key : str, default="tensor_embedding"
+            The key to use for the output tensor embedding in the returned dictionary.
+        species_encoding : dict, default={}
+            The species encoding parameters.
+        radial_basis : dict, default={}
+            The radial basis parameters.
         """
 
         _graphs_properties: Dict

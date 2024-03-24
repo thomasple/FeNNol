@@ -11,6 +11,40 @@ from ..misc.nets import FullyConnectedNet
 
 
 class HIPNNEmbedding(nn.Module):
+    """Hierarchically Interacting Particle Neural Network
+
+    Adapted from N. Lubbers, J. S. Smith and K. Barros, Hierarchical modeling of molecular energies using a deep neural network
+    J. Chem. Phys. 148, 241715 (2018) (J. Chem. Phys. 148, 241715 (2018))
+
+    Parameters
+    ----------
+    dim : int, default=80
+        The dimension of the embedding.
+    n_onsite : int, default=3
+        The number of onsite layers per interaction layer.
+    nlayers : int, default=2
+        The number of interaction layers.
+    lmax : int, default=0
+        The maximum value of l for spherical harmonics.
+    n_message : int, default=0
+        The number of layers for the message NN.
+        If 0, the message is formed from a filtered tensorial combination of radial and chemical features.
+    activation : Union[Callable, str], default=nn.silu
+        The activation function.
+    graph_key : str, default="graph"
+        The key for the graph input.
+    embedding_key : str, default="embedding"
+        The key for the embedding output.
+    species_encoding : dict, default={}
+        The species encoding parameters.
+    radial_basis : dict, default={"dim": 20}
+        The radial basis parameters.
+    keep_all_layers : bool, default=True
+        Whether to keep embeddings from each layer in the output.
+    graph_l_key : str, default="graph"
+        The key for the graph input for the spherical harmonics.
+    
+    """
     _graphs_properties: Dict
     dim: int = 80
     n_onsite: int = 3

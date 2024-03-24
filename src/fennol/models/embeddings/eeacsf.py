@@ -10,6 +10,37 @@ from ..misc.encodings import SpeciesEncoding, RadialBasis
 
 
 class EEACSF(nn.Module):
+    """element-embracing Atom-Centered Symmetry Functions 
+
+    FID : EEACSF
+
+    This is loosely inspired from M. Eckhoff and M. Reiher, Lifelong Machine Learning Potentials,
+    J. Chem. Theory Comput. 2023, 19, 12, 3509–3525, https://doi.org/10.1021/acs.jctc.3c00279
+
+    This is an embedding similar to ANI that include simple chemical information in the AEVs
+    without trainable parameters (fixed embedding).
+    The angle embedding is computed using a low-order Fourier expansion.
+
+    Parameters
+    ----------
+    graph_angle_key : str
+        The key in the input dictionary that corresponds to the angular graph.
+    nmax_angle : int, default=4
+        The maximum fourier order for the angle representation.
+    embedding_key : str, default="embedding"
+        The key to use for the output embedding in the returned dictionary.
+    graph_key : str, default="graph"
+        The key in the input dictionary that corresponds to the radial graph.
+    species_encoding : dict, default={}
+        The species encoding parameters.
+    radial_basis : dict, default={}
+        The radial basis parameters the radial AEV.
+    radial_basis_angle : dict, default={}
+        The radial basis parameters for the angular AEV.
+    angle_combine_pairs : bool, default=False
+        If True, the angular AEV is computed by combining pairs of radial AEV.
+
+    """
 
     _graphs_properties: Dict
     graph_angle_key: str

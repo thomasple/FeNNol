@@ -12,6 +12,40 @@ from ..misc.nets import FullyConnectedNet, ResMLP
 
 
 class SpookyNetEmbedding(nn.Module):
+    """SpookyNet equivariant message-passing embedding with electronic encodings (charge + spin).
+
+    FID : SPOOKYNET
+
+    Warning : non-local attention interaction is not yet implemented !
+
+    Reference
+    ---------
+    Unke, O.T., Chmiela, S., Gastegger, M. et al. SpookyNet: Learning force fields with electronic degrees of freedom and nonlocal effects. Nat Commun 12, 7273 (2021). https://doi.org/10.1038/s41467-021-27504-0
+
+    Parameters
+    ----------
+    dim : int, default=128
+        The dimension of the embedding.
+    nlayers : int, default=3
+        The number of interaction layers.
+    graph_key : str, default="graph"
+        The key for the graph input.
+    embedding_key : str, default="embedding"
+        The key for the embedding output.
+    species_encoding : dict, default={"encoding": "electronic_structure"}
+        The species encoding parameters.
+    radial_basis : dict, default={"basis": "spooky"}
+        The radial basis parameters.
+    kernel_init : Union[Callable, str], default=scaled_orthogonal(scale=1.0, mode="fan_avg")
+        The kernel initializer for Dense operations.
+    use_spin_encoding : bool, default=True
+        Whether to use spin encoding.
+    use_charge_encoding : bool, default=True
+        Whether to use charge encoding.
+
+
+    """
+
     _graphs_properties: Dict
     dim: int = 128
     nlayers: int = 3
@@ -22,9 +56,10 @@ class SpookyNetEmbedding(nn.Module):
     )
     radial_basis: dict = dataclasses.field(default_factory=lambda: {"basis": "spooky"})
     kernel_init: Union[Callable, str] = scaled_orthogonal(scale=1.0, mode="fan_avg")
+    use_spin_encoding: bool = True
+    use_charge_encoding: bool = True
 
     FID: str = "SPOOKYNET"
-
 
     @nn.compact
     def __call__(self, inputs):
@@ -51,7 +86,7 @@ class SpookyNetEmbedding(nn.Module):
             encoding="random", dim=self.dim, name="RandSpeciesEncoding"
         )(species)
 
-        xi = (
+        eZ = (
             nn.Dense(
                 self.dim,
                 name="species_linear",
@@ -60,6 +95,48 @@ class SpookyNetEmbedding(nn.Module):
             )(onehot)
             + zrand
         )
+        xi = eZ
+
+        # encode charge information
+        batch_index = inputs["batch_index"]
+        natoms = inputs["natoms"]
+        if self.use_charge_encoding and (
+            "total_charge" in inputs or self.is_initializing()
+        ):
+            Q = inputs.get("total_charge", jnp.zeros(natoms.shape[0], dtype=xi.dtype))
+            kq_pos, kq_neg, vq_pos, vq_neg = self.param(
+                "kv_charge",
+                lambda key, shape: jax.random.normal(key, shape, dtype=xi.dtype),
+                (4, self.dim),
+            )
+            qi = nn.Dense(self.dim, kernel_init=kernel_init, name="q_linear")(eZ)
+            pos_mask = Q >= 0
+            kq = jnp.where(pos_mask[:,None], kq_pos[None, :], kq_neg[None, :])
+            vq = jnp.where(pos_mask[:,None], vq_pos[None, :], vq_neg[None, :])
+            qik = (qi * kq[batch_index]).sum(axis=-1) / self.dim**0.5
+            wi = jnp.log(1 + jnp.exp(qik))
+            wnorm = jax.ops.segment_sum(wi, batch_index, Q.shape[0])
+            avi = wi[:,None] * ((Q / wnorm)[:, None] * vq)[batch_index]
+            eQ = ResMLP(use_bias=False, name="eQ", kernel_init=kernel_init)(avi)
+            xi = xi + eQ
+
+        # encode spin information
+        if self.use_spin_encoding and (
+            "total_spin" in inputs or self.is_initializing()
+        ):
+            S = inputs.get("total_spin", jnp.zeros(natoms.shape[0], dtype=xi.dtype))
+            ks, vs = self.param(
+                "kv_spin",
+                lambda key, shape: jax.random.normal(key, shape, dtype=xi.dtype),
+                (2, self.dim),
+            )
+            si = nn.Dense(self.dim, kernel_init=kernel_init, name="s_linear")(eZ)
+            sik = (si * ks[None, :]).sum(axis=-1) / self.dim**0.5
+            wi = jnp.log(1 + jnp.exp(sik))
+            wnorm = jax.ops.segment_sum(wi, batch_index, S.shape[0])
+            avi = wi[:,None] * ((S / wnorm)[:, None] * vs[None, :])[batch_index]
+            eS = ResMLP(use_bias=False, name="eS", kernel_init=kernel_init)(avi)
+            xi = xi + eS
 
         distances = graph["distances"]
         switch = graph["switch"][:, None]
@@ -142,4 +219,8 @@ class SpookyNetEmbedding(nn.Module):
             **inputs,
             self.embedding_key: y,
         }
+        if self.use_charge_encoding and "total_charge" in inputs:
+            output[self.embedding_key + "_eQ"] = eQ
+        if self.use_spin_encoding and "total_spin" in inputs:
+            output[self.embedding_key + "_eS"] = eS
         return output

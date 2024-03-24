@@ -20,22 +20,35 @@ class CHGNetEmbedding(nn.Module):
 
     FID : CHGNET
 
-    Reference:
+    Reference
+    ----------
     Deng, B., Zhong, P., Jun, K. et al. CHGNet as a pretrained universal neural network potential for charge-informed atomistic modelling.
         Nat Mach Intell 5, 1031–1041 (2023). https://doi.org/10.1038/s42256-023-00716-3
     
-    Parameters:
-        dim (int): The dimension of the embedding. Default is 64.
-        nmax_angle (int): The maximum fourier order for the angle representation. Default is 4.
-        nlayers (int): The number of layers. Default is 3.
-        graph_key (str): The key for the graph input. Default is "graph".
-        graph_angle_key (Optional[str]): The key for the angular graph input. Default is None.
-        embedding_key (str): The key for the embedding output. Default is "embedding".
-        species_encoding (dict): The species encoding parameters. Default is an empty dictionary.
-        radial_basis (dict): The radial basis parameters. Default is an empty dictionary.
-        radial_basis_angle (Optional[dict]): The radial basis parameters for angles. Default is None.
-        keep_all_layers (bool): Whether to keep all layers in the output. Default is False.
-        kernel_init (Union[str, Callable]): The kernel initializer for Dense operations. Default is nn.linear.default_kernel_init.
+    Parameters
+    ----------
+    dim : int, default=64
+        The dimension of the embedding.
+    nmax_angle : int, default=4
+        The maximum fourier order for the angle representation.
+    nlayers : int, default=3
+        The number of layers.
+    graph_key : str, default="graph"
+        The key for the graph input.
+    graph_angle_key : Optional[str], default=None
+        The key for the angular graph input.
+    embedding_key : str, default="embedding"
+        The key for the embedding output.
+    species_encoding : dict, default={}
+        The species encoding parameters.
+    radial_basis : dict, default={}
+        The radial basis parameters.
+    radial_basis_angle : Optional[dict], default=None
+        The radial basis parameters for angles.
+    keep_all_layers : bool, default=False
+        Whether to keep all layers in the output.
+    kernel_init : Union[str, Callable], default=nn.linear.default_kernel_init
+        The kernel initializer for Dense operations.
 
     """
     _graphs_properties: Dict

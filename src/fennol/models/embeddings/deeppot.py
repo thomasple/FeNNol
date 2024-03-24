@@ -12,6 +12,43 @@ from ..misc.encodings import SpeciesEncoding, RadialBasis
 
 
 class DeepPotEmbedding(nn.Module):
+    """Deep Potential embedding
+
+    FID : DEEPPOT
+
+    Reference
+    ----------
+    Zhang, L., Han, J., Wang, H., Car, R., & E, W. (2018). Deep Potential Molecular dynamics: A scalable model with the accuracy of quantum mechanics. Phys. Rev. Lett., 120(14), 143001. https://doi.org/10.1103/PhysRevLett.120.143001
+
+    Parameters
+    ----------
+    dim : int, default=64
+        The dimension of the embedding.
+    subdim : int, default=8
+        The first dimensions to select for the embedding tensor product.
+    radial_dim : Optional[int], default=None
+        The dimension of the radial embedding for tensor combination. 
+        If None, we use a neural net to combine chemical and radial information, like in the original DeepPot.
+    embedding_key : str, default="embedding"
+        The key to use for the output embedding in the returned dictionary.
+    graph_key : str, default="graph"
+        The key in the input dictionary that corresponds to the radial graph.
+    species_encoding : dict, default={}
+        The species encoding parameters.
+    radial_basis : Optional[dict], default=None
+        The radial basis parameters. If None, the radial basis is the s_ij like in the original DeepPot.
+    embedding_hidden : Sequence[int], default=[64, 64, 64]
+        The hidden layers of the embedding network.
+    activation : Union[Callable, str], default=nn.silu
+        The activation function.
+    concatenate_species : bool, default=False
+        Whether to concatenate the species encoding with the embedding.
+    divide_distances : bool, default=True
+        Whether to divide the switch by the distance in s_ij.
+    species_order : Optional[Sequence[str]], default=None
+        Species considered by the network when using species-specialized embedding network.
+
+    """
     _graphs_properties: Dict
     dim: int = 64
     subdim: int = 8
@@ -114,6 +151,35 @@ class DeepPotEmbedding(nn.Module):
 
 
 class DeepPotE3Embedding(nn.Module):
+    """Deep Potential embedding with angle information
+
+    FID : DEEPPOT_E3
+
+    Reference
+    ----------
+    L. Zhang, J. Han, H. Wang, W. A. Saidi, R. Car, Weinan E, End-to-end Symmetry Preserving Inter-atomic Potential Energy Model for Finite and Extended Systems,
+    Conference on Neural Information Processing Systems (NeurIPS), 2018,
+    https://doi.org/10.48550/arXiv.1805.09003
+
+    Parameters
+    ----------
+    dim : int, default=64
+        The dimension of the embedding.
+    embedding_key : str, default="embedding"
+        The key to use for the output embedding in the returned dictionary.
+    graph_key : str, default="graph"
+        The key in the input dictionary that corresponds to the radial graph.
+    species_encoding : dict, default={}
+        The species encoding parameters.
+    embedding_hidden : Sequence[int], default=[64, 64, 64]
+        The hidden layers of the embedding network.
+    activation : Union[Callable, str], default=nn.silu
+        The activation function.
+    concatenate_species : bool, default=False
+        Whether to concatenate the species encoding with the embedding.
+    divide_distances : bool, default=True
+        Whether to divide the switch by the distance in s_ij.
+    """
     _graphs_properties: Dict
     dim: int = 64
     embedding_key: str = "embedding"

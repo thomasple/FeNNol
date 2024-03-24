@@ -16,13 +16,18 @@ class GaussianMomentsEmbedding(nn.Module):
     The construction of this embedding is similar to ACE but with a fixed lmax=3 and
     a subset of tensor product paths chosen by hand.
 
-    Args:
-        nchannels (int): The number of chemical-radial (chemrad) channels for the density representation.
-        cutoff (float): The distance cutoff for the radial embedding.
-        graph_key (str): The key in the input dictionary that corresponds to the molecular graph.
-        embedding_key (str): The key in the output dictionary where the computed embedding will be stored.
-        species_encoding (dict): A dictionary of parameters for the species encoding.
-        radial_basis (dict): A dictionary of parameters for the radial basis.
+    Parameters
+    ----------
+    nchannels : int, default=7
+        The number of chemical-radial (chemrad) channels for the density representation.
+    graph_key : str, default="graph"
+        The key in the input dictionary that corresponds to the molecular graph.
+    embedding_key : str, default="embedding"
+        The key in the output dictionary where the computed embedding will be stored.
+    species_encoding : dict, default={}
+        A dictionary of parameters for the species encoding.
+    radial_basis : dict, default={}
+        A dictionary of parameters for the radial basis.
     """
 
     _graphs_properties: Dict

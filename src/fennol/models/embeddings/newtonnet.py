@@ -11,6 +11,38 @@ from ..misc.nets import FullyConnectedNet
 
 
 class NewtonNetEmbedding(nn.Module):
+    """ Newtonian message passing network
+
+    Reference
+    ---------
+    Haghighatlari et al., NewtonNet: a Newtonian message passing network for deep learning of interatomic potentials and forces
+    https://doi.org/10.1039/D2DD00008C
+
+    Parameters
+    ----------
+    dim : int, default=128
+        The dimension of the embedding.
+    nlayers : int, default=3
+        The number of interaction layers.
+    nchannels : Optional[int], default=None
+        The number of vector channels.
+    embedding_hidden : Sequence[int], default=[128]
+        The hidden layers for the embedding networks.
+    latent_hidden : Sequence[int], default=[128]
+        The hidden layers for the latent update network.
+    activation : Union[Callable, str], default=nn.silu
+        The activation function.
+    graph_key : str, default="graph"
+        The key for the graph input.
+    embedding_key : str, default="embedding"
+        The key for the output embedding.
+    species_encoding : dict, default={}
+        The species encoding parameters.
+    radial_basis : dict, default={} 
+        The radial basis parameters.
+    keep_all_layers : bool, default=False
+        Whether to keep embeddings from each layer in the output.
+    """
     _graphs_properties: Dict
     dim: int = 128
     nlayers: int = 3

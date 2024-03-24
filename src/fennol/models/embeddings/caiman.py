@@ -19,27 +19,38 @@ class CaimanEmbedding(nn.Module):
     and then uses multiple self-interaction tensor products to generate a tensorial embedding
     along with a scalar embedding (similar to the tensor/scalar tracks in allegro).
 
-    By default, the model is purely local so that multiple iterations are similar to one MACE layer
-    with multiple tensor products. Optionally, the model can use message-passing to update the
-    neighborhood density.
-
-    Parameters:
-        dim (int): The dimension of the embedding. Default is 128.
-        nchannels (int): The number of channels. Default is 16.
-        nchannels_density (Optional[int]): The number of density channels. Default is None.
-        nlayers (int): The number of layers. Default is 3.
-        lmax (int): The maximum value of l. Default is 2.
-        twobody_hidden (Sequence[int]): The hidden layers for the two-body interaction. Default is [128].
-        embedding_hidden (Sequence[int]): The hidden layers for the embedding. Default is [].
-        latent_hidden (Sequence[int]): The hidden layers for the latent network. Default is [128].
-        activation (Union[Callable, str]): The activation function. Default is nn.silu.
-        graph_key (str): The key for the graph input. Default is "graph".
-        embedding_key (str): The key for the embedding output. Default is "embedding".
-        tensor_embedding_key (str): The key for the tensor embedding output. Default is "tensor_embedding".
-        species_encoding (dict): The species encoding parameters. Default is an empty dictionary.
-        radial_basis (dict): The radial basis parameters. Default is an empty dictionary.
-        message_passing (bool): Whether to use message passing. Default is False.
-        FID (str): The FID value. Default is "CAIMAN".
+    Parameters
+    ----------
+    dim : int, default=128
+        The dimension of the embedding.
+    nchannels : int, default=16
+        The number of channels.
+    nchannels_density : Optional[int], default=None
+        The number of density channels.
+    nlayers : int, default=3
+        The number of layers.
+    lmax : int, default=2
+        The maximum value of l.
+    twobody_hidden : Sequence[int], default=[128]
+        The hidden layers for the two-body interaction.
+    embedding_hidden : Sequence[int], default=[]
+        The hidden layers for the embedding.
+    latent_hidden : Sequence[int], default=[128]
+        The hidden layers for the latent network.
+    activation : Union[Callable, str], default=nn.silu
+        The activation function.
+    graph_key : str, default="graph"
+        The key for the graph input.
+    embedding_key : str, default="embedding"
+        The key for the embedding output.
+    tensor_embedding_key : str, default="tensor_embedding"
+        The key for the tensor embedding output.
+    species_encoding : dict, default={}
+        The species encoding parameters.
+    radial_basis : dict, default={}
+        The radial basis parameters.
+    message_passing : bool, default=False
+        Whether to use message passing.
 
     """
 

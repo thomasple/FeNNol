@@ -24,76 +24,128 @@ class CRATEmbedding(nn.Module):
     It is used to encode atomic environments using multiple sources of information
       (radial, angular, E(3), message-passing, LODE, etc...)
 
-    Parameters:
-        dim (int): The size of the embedding vectors. Default is 256.
-        dim_src (int): The size of the source embedding vectors. Default is 64.
-        dim_dst (int): The size of the destination embedding vectors. Default is 32.
-        dim_angle (int): The size of the pairwise vectors use for triplet combinations. Default is 8.
-        nmax_angle (int): The maximum fourier order for the angle representation. Default is 4.
-        att_dim (int): The hidden size for the attention mechanism (only used when message-passing is disabled). Default is 1.
-        nlayers (int): The number of interaction layers in the model. Default is 2.
-        zeta (float): The zeta parameter for the model ANI angular representation. Default is 14.1.
-        lmax (int): The maximum order of spherical tensors. Default is 0.
-        nchannels_l (int): The number of channels for spherical tensors. Default is 16.
-        n_tp (int): The number of tensor products performed at each layer. Default is 1.
-        mixing_hidden (Sequence[int]): The hidden layer sizes for the mixing network. Default is [].
-        activation (Union[Callable, str]): The activation function for the mixing network. Default is nn.silu.
-        graph_key (str): The key for the graph data in the inputs dictionary. Default is "graph".
-        graph_angle_key (Optional[str]): The key for the angle graph data in the inputs dictionary. Default is None.
-        embedding_key (Optional[str]): The key for the embedding data in the output dictionary. Default is `self.name`.
-        species_encoding (dict): The dictionary of parameters for species encoding. Default is an empty dictionary.
-        radial_basis (dict): The dictionary of parameters for radial basis functions. Default is an empty dictionary.
-        radial_basis_angle (Optional[dict]): The dictionary of parameters for radial basis functions for angle embedding. Default is None.
-            If None, the radial basis for angles is the same as the radial basis for distances.
-        keep_all_layers (bool): Whether to output all layers in the model. Default is False.
-        message_passing (bool): Whether to use message passing in the model. Default is True.
-        angle_style (str): The style of angle representation. Available values are ["fourier",ani"]. Default is "fourier".
-        angle_combine_pairs (bool): Whether to combine angle pairs instead of average distance embedding like in ANI. Default is True.
-        kernel_init (Union[str, Callable]): The kernel initialization function for Dense operations. Default is nn.linear.default_kernel_init.
-        activation_mixing (Union[Callable, str]): The activation function applied after mixing. Default is tssr2.
-        graph_lode (Optional[str]): The key for the lode graph data in the inputs dictionary. Default is None.
-        lode_channels (int): The number of channels for lode. Default is 16.
-        lode_hidden (Sequence[int]): The hidden layer sizes for the lode network. Default is [].
-        lode_switch (float): The switch parameter for lode. Default is 2.0.
-        lode_shift (float): The shift parameter for lode. Default is 1.0.
-        charge_embedding (bool): Whether to include charge embedding. Default is False.
-        use_zacnet (bool): Whether to use ZacNet. Default is False.
+    Parameters
+    ----------
+    dim : int, default=256
+        The size of the embedding vectors.
+    nlayers : int, default=2
+        The number of interaction layers in the model.
+    keep_all_layers : bool, default=False
+        Whether to output all layers in the model.
+
+    dim_src : int, default=64
+        The size of the source embedding vectors.
+    dim_dst : int, default=32
+        The size of the destination embedding vectors.
+
+    angle_style : str, default="fourier"
+        The style of angle representation. Available values are ["fourier",ani"].
+    dim_angle : int, default=8
+        The size of the pairwise vectors use for triplet combinations.
+    nmax_angle : int, default=4
+        The maximum fourier order for the angle representation.
+    zeta : float, default=14.1
+        The zeta parameter for the model ANI angular representation.
+    angle_combine_pairs : bool, default=True
+        Whether to combine angle pairs instead of average distance embedding like in ANI.
+
+    message_passing : bool, default=True
+        Whether to use message passing in the model.
+    att_dim : int, default=1
+        The hidden size for the attention mechanism (only used when message-passing is disabled).
+
+    lmax : int, default=0
+        The maximum order of spherical tensors.
+    nchannels_l : int, default=16
+        The number of channels for spherical tensors.
+    n_tp : int, default=1
+        The number of tensor products performed at each layer.
+
+    mixing_hidden : Sequence[int], default=[]
+        The hidden layer sizes for the mixing network.
+    activation : Union[Callable, str], default=nn.silu
+        The activation function for the mixing network.
+    kernel_init : Union[str, Callable], default=nn.linear.default_kernel_init
+        The kernel initialization function for Dense operations.
+    activation_mixing : Union[Callable, str], default=tssr2
+        The activation function applied after mixing.
+    use_zacnet : bool, default=False
+        Whether to use ZacNet.
+
+    graph_key : str, default="graph"
+        The key for the graph data in the inputs dictionary.
+    graph_angle_key : Optional[str], default=None
+        The key for the angle graph data in the inputs dictionary.
+    embedding_key : Optional[str], default=`self.name`
+        The key for the embedding data in the output dictionary.
+
+    species_encoding : dict, default={}
+        The dictionary of parameters for species encoding.
+    radial_basis : dict, default={}
+        The dictionary of parameters for radial basis functions.
+    radial_basis_angle : Optional[dict], default=None
+        The dictionary of parameters for radial basis functions for angle embedding.
+        If None, the radial basis for angles is the same as the radial basis for distances.
+    
+    graph_lode : Optional[str], default=None
+        The key for the lode graph data in the inputs dictionary.
+    lode_channels : int, default=16
+        The number of channels for lode.
+    lode_hidden : Sequence[int], default=[]
+        The hidden layer sizes for the lode network.
+    lode_switch : float, default=2.0
+        The switch parameter for lode.
+    lode_shift : float, default=1.0
+        The shift parameter for lode.
+
+    charge_embedding : bool, default=False
+        Whether to include charge embedding.
 
     """
 
     _graphs_properties: Dict
+
     dim: int = 256
+    nlayers: int = 2
+    keep_all_layers: bool = False
+
     dim_src: int = 64
     dim_dst: int = 32
+    
+    angle_style: str = "fourier"
     dim_angle: int = 8
     nmax_angle: int = 4
-    att_dim: int = 1
-    nlayers: int = 2
     zeta: float = 14.1
+    angle_combine_pairs: bool = True
+
+    message_passing: bool = True
+    att_dim: int = 1
+
     lmax: int = 0
     nchannels_l: int = 16
     n_tp: int = 1
+
     mixing_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [])
     activation: Union[Callable, str] = nn.silu
+    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+    activation_mixing: Union[Callable, str] = tssr2
+    use_zacnet: bool = False
+
     graph_key: str = "graph"
     graph_angle_key: Optional[str] = None
     embedding_key: Optional[str] = None
+
     species_encoding: dict = dataclasses.field(default_factory=dict)
     radial_basis: dict = dataclasses.field(default_factory=dict)
     radial_basis_angle: Optional[dict] = None
-    keep_all_layers: bool = False
-    message_passing: bool = True
-    angle_style: str = "fourier"
-    angle_combine_pairs: bool = True
-    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
-    activation_mixing: Union[Callable, str] = tssr2
+
     graph_lode: Optional[str] = None
     lode_channels: int = 16
     lode_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [])
     lode_switch: float = 2.0
     lode_shift: float = 1.0
+
     charge_embedding: bool = False
-    use_zacnet: bool = False
 
     FID: str | Tuple[str] = ("CRATE","MACARON")
 

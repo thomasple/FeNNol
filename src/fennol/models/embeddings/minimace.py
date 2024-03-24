@@ -11,6 +11,52 @@ from ..misc.e3 import FilteredTensorProduct, ChannelMixingE3, ChannelMixing
 
 
 class MiniMaceEmbedding(nn.Module):
+    """Minimal MACE Embedding
+
+    FID : MINIMACE
+
+    This is a simplified version of the MACE embedding from the paper:
+    Batatia et al., MACE: Higher Order Equivariant Message Passing Neural Networks for Fast and Accurate Force Fields
+    https://doi.org/10.48550/arXiv.2206.07697
+
+    It is designed to neglect the most costly operations (such as pairwise tensor products)
+    and filter the results at each atomic tensor products to control the number of tensors.
+
+    Parameters
+    ----------
+    dim : int, default=128
+        The dimension of the embedding.
+    nchannels : int, default=16
+        The number of tensor channels.
+    message_dim : int, default=16
+        The dimension of the message formed from the current embedding.
+    nlayers : int, default=2
+        The number of interaction layers.
+    ntp : int, default=2
+        The number of tensor products per layer. Related to body-order in MACE.
+    lmax : int, default=2
+        The maximum angular momentum of spherical tensors.
+    embedding_hidden : Sequence[int], default=[]
+        The hidden layers for the species embedding network.
+    latent_hidden : Sequence[int], default=[128]
+        The hidden layers for the latent update network.
+    activation : Union[Callable, str], default=nn.silu
+        The activation function.
+    graph_key : str, default="graph"
+        The key for the graph input.
+    embedding_key : str, default="embedding"
+        The key for the embedding output.
+    tensor_embedding_key : str, default="tensor_embedding"
+        The key for the tensor embedding output.
+    species_encoding : dict, default={}
+        The species encoding parameters.
+    radial_basis : dict, default={}
+        The radial basis parameters.
+    ignore_parity : bool, default=True
+        Whether to ignore parity in the tensor products 
+        (i.e. take all paths that produce a certain l, irrespective of its parity).
+        
+    """
     _graphs_properties: Dict
     dim: int = 128
     nchannels: int = 16
