@@ -46,6 +46,10 @@ def tssr2(x):
 def pow(x, a):
     return x**a
 
+@jax.jit
+def ssp(x):
+    return jnp.logaddexp(x + math.log(0.5), math.log(0.5))
+
 
 def chain(*activations):
     # @jax.jit
@@ -79,6 +83,7 @@ def activation_from_str(activation: Union[str,Callable,None])->Callable:
                 "aptx": aptx,
                 "tssr": tssr,
                 "tssr2": tssr2,
+                "ssp": ssp,
             },
         )
     except Exception as e:
