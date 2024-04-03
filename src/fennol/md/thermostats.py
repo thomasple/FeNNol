@@ -29,7 +29,7 @@ def get_thermostat(
     postprocess = lambda x: x
 
     thermostat_name = str(thermostat_name).upper()
-    if thermostat_name in ["LGV", "LANGEVIN"]:
+    if thermostat_name in ["LGV", "LANGEVIN", "FFLGV"]:
         assert rng_key is not None, "rng_key must be provided for QTB thermostat"
         assert kT is not None, "kT must be specified for QTB thermostat"
         assert gamma is not None, "gamma must be specified for QTB thermostat"
@@ -57,10 +57,48 @@ def get_thermostat(
 
         state["rng_key"] = rng_key
 
+        if thermostat_name == "FFLGV":
+
+            def thermostat(vel, state):
+                rng_key, noise_key = jax.random.split(state["rng_key"])
+                noise = jax.random.normal(noise_key, vel.shape, dtype=vel.dtype)
+                norm_vel = jnp.linalg.norm(vel, axis=-1, keepdims=True)
+                dirvel = vel / norm_vel
+                vel = a1 * vel + a2 * noise
+                new_norm_vel = jnp.linalg.norm(vel, axis=-1, keepdims=True)
+                vel = dirvel * new_norm_vel
+                return vel, {**state, "rng_key": rng_key}
+
+        else:
+
+            def thermostat(vel, state):
+                rng_key, noise_key = jax.random.split(state["rng_key"])
+                noise = jax.random.normal(noise_key, vel.shape, dtype=vel.dtype)
+                vel = a1 * vel + a2 * noise
+                return vel, {**state, "rng_key": rng_key}
+
+    elif thermostat_name in ["BUSSI"]:
+        assert rng_key is not None, "rng_key must be provided for QTB thermostat"
+        assert kT is not None, "kT must be specified for QTB thermostat"
+        assert gamma is not None, "gamma must be specified for QTB thermostat"
+        assert nbeads is None, "Bussi thermostat is not compatible with PIMD"
+        rng_key, v_key = jax.random.split(rng_key)
+
+        a1 = math.exp(-gamma * dt)
+        a2 = (1 - a1) * kT
+        vel = jax.random.normal(v_key, (mass.shape[0], 3)) * (kT / mass[:, None]) ** 0.5
+
+        state["rng_key"] = rng_key
+
         def thermostat(vel, state):
             rng_key, noise_key = jax.random.split(state["rng_key"])
             noise = jax.random.normal(noise_key, vel.shape, dtype=vel.dtype)
-            vel = a1 * vel + a2 * noise
+            R2 = jnp.sum(noise ** 2)
+            R1 = noise[0,0]
+            c = a2 / (mass[:, None] * vel**2).sum()
+            d = (a1 * c) ** 0.5
+            scale = (a1 + c * R2 + 2 * d * R1) ** 0.5
+            vel = scale * vel
             return vel, {**state, "rng_key": rng_key}
 
     elif thermostat_name in [
@@ -213,11 +251,11 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
 
     # spectra parameters
     omegasmear = np.pi / dt / 100.0
-    Tseg = qtb_parameters.get("tseg", 1.0 / au.PS)*au.FS
+    Tseg = qtb_parameters.get("tseg", 1.0 / au.PS) * au.FS
     nseg = int(Tseg / dt)
     Tseg = nseg * dt
     dom = 2 * np.pi / (3 * Tseg)
-    omegacut = qtb_parameters.get("omegacut", 15000.0 / au.CM1)/au.FS
+    omegacut = qtb_parameters.get("omegacut", 15000.0 / au.CM1) / au.FS
     nom = int(omegacut / dom)
     omega = dom * np.arange((3 * nseg) // 2 + 1)
     cutoff = jnp.asarray(1.0 / (1.0 + np.exp((omega - omegacut) / omegasmear)))
@@ -235,13 +273,12 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
     # Ornstein-Uhlenbeck correction for colored noise
     a1 = np.exp(-gamma * dt)
     OUcorr = jnp.asarray(
-        (1.0 - 2.0 * a1 * np.cos(omega * dt) + a1**2)
-        / (dt**2 * (gamma**2 + omega**2))
+        (1.0 - 2.0 * a1 * np.cos(omega * dt) + a1**2) / (dt**2 * (gamma**2 + omega**2))
     )
 
     # hbar schedule
     classical_kernel = qtb_parameters.get("classical_kernel", False)
-    hbar = qtb_parameters.get("hbar", 1.0)*au.FS
+    hbar = qtb_parameters.get("hbar", 1.0) * au.FS
     u = 0.5 * hbar * np.abs(omega) / kT
     theta = kT * np.ones_like(omega)
     if hbar > 0:
@@ -288,7 +325,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
             adaptation_method in authorized_methods
         ), f"adaptation_method must be one of {authorized_methods}"
         if adaptation_method == "SIMPLE":
-            agamma = qtb_parameters.get("agamma", 1.0e-3)/au.FS
+            agamma = qtb_parameters.get("agamma", 1.0e-3) / au.FS
             assert agamma > 0, "agamma must be positive"
             a1_ad = agamma * Tseg  #  * gamma
             print(f"ADQTB SIMPLE: agamma = {agamma*au.FS:.3f}")
@@ -300,8 +337,8 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
                 return {**state, "gammar": gammar}
 
         elif adaptation_method == "RATIO":
-            tau_ad = qtb_parameters.get("tau_ad", 5.0 / au.PS)*au.FS
-            tau_s = qtb_parameters.get("tau_s", 10 * tau_ad)*au.FS
+            tau_ad = qtb_parameters.get("tau_ad", 5.0 / au.PS) * au.FS
+            tau_s = qtb_parameters.get("tau_s", 10 * tau_ad) * au.FS
             assert tau_ad > 0, "tau_ad must be positive"
             print(
                 f"ADQTB RATIO: tau_ad = {tau_ad*1e-3:.2f} ps, tau_s = {tau_s*1e-3:.2f} ps"
@@ -331,8 +368,8 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
 
         elif adaptation_method == "ADABELIEF":
             agamma = qtb_parameters.get("agamma", 0.1)
-            tau_ad = qtb_parameters.get("tau_ad", 1.0 / au.PS)*au.FS
-            tau_s = qtb_parameters.get("tau_s", 100 * tau_ad)*au.FS
+            tau_ad = qtb_parameters.get("tau_ad", 1.0 / au.PS) * au.FS
+            tau_s = qtb_parameters.get("tau_s", 100 * tau_ad) * au.FS
             assert tau_ad > 0, "tau_ad must be positive"
             assert tau_s > 0, "tau_s must be positive"
             assert agamma > 0, "agamma must be positive"
@@ -340,7 +377,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
                 f"ADQTB ADABELIEF: agamma = {agamma:.3f}, tau_ad = {tau_ad*1.e-3:.2f} ps, tau_s = {tau_s*1.e-3:.2f} ps"
             )
 
-            a1_ad = agamma  * gamma # * Tseg #* gamma
+            a1_ad = agamma * gamma  # * Tseg #* gamma
             b1 = np.exp(-Tseg / tau_ad)
             b2 = np.exp(-Tseg / tau_s)
             state["dFDT_m"] = jnp.zeros((nspecies, nom), dtype=np.float32)
