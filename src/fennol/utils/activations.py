@@ -50,6 +50,14 @@ def pow(x, a):
 def ssp(x):
     return jnp.logaddexp(x + math.log(0.5), math.log(0.5))
 
+@jax.jit
+def smooth_floor(x,eps=0.99):
+   return x-0.5-jnp.atan(-eps*jnp.sin((-2*jnp.pi)*x)/(eps*jnp.cos((2*jnp.pi)*x)-1.))/jnp.pi
+
+@jax.jit
+def smooth_round(x,eps=0.99):
+   return x-jnp.atan(-eps*jnp.sin(-2*jnp.pi*(x-0.5))/(eps*jnp.cos(2*jnp.pi*(x-0.5))-1.))/jnp.pi
+
 
 def chain(*activations):
     # @jax.jit
