@@ -50,28 +50,7 @@ def get_loss_definition(
             - rename_refs (list): A list of renamed references.
     """
     default_loss_type = training_parameters.get("default_loss_type", "log_cosh")
-    loss_definition = deepcopy(
-        training_parameters.get(
-            "loss",
-            {
-                "energy": {
-                    "key": "total_energy",
-                    "ref": "e_formation_dft",
-                    "type": "log_cosh",
-                    "weight": 1.0,
-                    "threshold": 2.0,
-                    "unit": "kcalpermol",
-                },
-                "forces": {
-                    "ref": "true_forces",
-                    "type": "log_cosh",
-                    "weight": 1000.0,
-                    "threshold": 10.0,
-                    "unit": "kcalpermol",
-                },
-            },
-        )
-    )
+    loss_definition = deepcopy(training_parameters["loss"])
     used_keys = []
     for k in loss_definition.keys():
         loss_prms = loss_definition[k]
@@ -275,6 +254,9 @@ def get_train_step_function(
                     ref = ref * true_atoms
                     predicted = predicted * true_atoms
                     truth_mask = true_atoms
+                    if "ds_weight" in loss_prms:
+                        weight_key = loss_prms["ds_weight"]
+                        natscale = data[weight_key][output["batch_index"]].reshape(*shape_mask)
                 elif ref.shape[0] == output["natoms"].shape[0]:
                     ## shape is number of systems
                     nel = nel * nsys / ref.shape[0]
@@ -292,6 +274,9 @@ def get_train_step_function(
                             / output["natoms"].reshape(*shape_mask)
                             ** loss_prms["nat_pow"]
                         )
+                    if "ds_weight" in loss_prms:
+                        weight_key = loss_prms["ds_weight"]
+                        natscale = natscale * data[weight_key].reshape(*shape_mask)
 
                 loss_type = loss_prms["type"]
                 if loss_type == "mse":

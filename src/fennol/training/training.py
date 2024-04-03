@@ -72,9 +72,10 @@ def main():
         output_directory = ""
 
     # copy config_file to output directory
-    config_name = Path(config_file).name
+    # config_name = Path(config_file).name
+    config_ext = Path(config_file).suffix
     with open(config_file) as f_in:
-        with open(output_directory + "/" + config_name, "w") as f_out:
+        with open(output_directory + "/config" + config_ext, "w") as f_out:
             f_out.write(f_in.read())
 
     # set log file
