@@ -444,41 +444,45 @@ def compute_cell_list_fixed(coords,cutoff,batch_index,natoms,max_occupancy,max_p
 
     return src[idx],neighbors[idx],d12[idx],max_count,npairs
 
-@partial(jax.jit, static_argnums=(1,4,5))
+@partial(jax.jit, static_argnums=(4,5))
 def compute_nblist_fixed(coords,cutoff,batch_index,natoms,max_nat,max_pairs,padding_value):
     p1,p2=jnp.triu_indices(max_nat, 1)
-    mask = ((p1[None,:]<natoms[:,None])*(p2[None,:]<natoms[:,None])).flatten()
-
     if natoms.shape[0]==1:
         shift=jnp.array([0])
+        mask_p12 = None
     else:
+        mask_p12 = ((p1[None,:]<natoms[:,None])*(p2[None,:]<natoms[:,None])).flatten()
         shift=jnp.concatenate((jnp.array([0]),jnp.cumsum(natoms[:-1])))
+        p1 = jnp.where(mask_p12,(p1[None,:]+shift[:,None]).flatten(), -1) 
+        p2 = jnp.where(mask_p12,(p2[None,:]+shift[:,None]).flatten(), -1) 
 
-    p1 = jnp.where(mask,(p1[None,:]+shift[:,None]).flatten(), -1) 
-    p2 = jnp.where(mask,(p2[None,:]+shift[:,None]).flatten(), -1) 
     d12=jnp.sum((coords[p2]-coords[p1])**2,axis=-1)
 
-    mask = mask*(d12<cutoff**2)
+    if natoms.shape[0]==1:
+        mask = d12<cutoff**2
+    else:
+        mask = mask_p12*(d12<cutoff**2)
     d12 = jnp.where(mask,d12,cutoff**2)
     edge_src = jnp.where(mask,p1,padding_value)
     edge_dst = jnp.where(mask,p2,padding_value)
     npairs=jnp.sum(mask)
     idx = jnp.argsort(d12) #[:max_pairs]
 
-    return edge_src[idx],edge_dst[idx],d12[idx],npairs,(p1,p2)
+    return edge_src[idx],edge_dst[idx],d12[idx],npairs,(p1,p2,mask_p12)
 
-@partial(jax.jit, static_argnums=(1,4,5))
+@partial(jax.jit, static_argnums=(4,5))
 def compute_nblist_fixed_minimage(coords,cutoff,batch_index,natoms,max_nat,max_pairs,padding_value,cells,reciprocal_cells):
     p1,p2=jnp.triu_indices(max_nat, 1)
-    mask = ((p1[None,:]<natoms[:,None])*(p2[None,:]<natoms[:,None])).flatten()
 
     if natoms.shape[0]==1:
         shift=jnp.array([0])
+        mask_p12 = None
     else:
+        mask_p12 = ((p1[None,:]<natoms[:,None])*(p2[None,:]<natoms[:,None])).flatten()
         shift=jnp.concatenate((jnp.array([0]),jnp.cumsum(natoms[:-1])))
 
-    p1 = jnp.where(mask,(p1[None,:]+shift[:,None]).flatten(), -1) 
-    p2 = jnp.where(mask,(p2[None,:]+shift[:,None]).flatten(), -1) 
+        p1 = jnp.where(mask_p12,(p1[None,:]+shift[:,None]).flatten(), -1) 
+        p2 = jnp.where(mask_p12,(p2[None,:]+shift[:,None]).flatten(), -1) 
 
     batch_indexvec=batch_index[p1]
     vec = coords[p2]-coords[p1]
@@ -487,7 +491,10 @@ def compute_nblist_fixed_minimage(coords,cutoff,batch_index,natoms,max_nat,max_p
     vecpbc = jnp.einsum("sij,sj->si",cells[batch_indexvec],vecpbc+pbc_shifts) #jnp.dot(cells[batch_indexvec],vecpbc.T).T
     d12=jnp.sum(vecpbc**2,axis=-1)
 
-    mask = mask*(d12<cutoff**2)
+    if natoms.shape[0]==1:
+        mask = d12<cutoff**2
+    else:
+        mask = mask_p12*(d12<cutoff**2)
     d12 = jnp.where(mask,d12,cutoff**2)
     edge_src = jnp.where(mask,p1,padding_value)
     edge_dst = jnp.where(mask,p2,padding_value)
@@ -495,7 +502,7 @@ def compute_nblist_fixed_minimage(coords,cutoff,batch_index,natoms,max_nat,max_p
     npairs=jnp.sum(mask)
     idx = jnp.argsort(d12) #[:max_pairs]
 
-    return edge_src[idx],edge_dst[idx],d12[idx],pbc_shifts[idx],npairs,(p1,p2)
+    return edge_src[idx],edge_dst[idx],d12[idx],pbc_shifts[idx],npairs,(p1,p2,mask_p12)
 
 # @partial(jax.jit, static_argnums=(1,4,5))
 # def compute_nblist_fixed_fullpbc(coords,cutoff,batch_index,natoms,max_nat,max_pairs,padding_value,cells,reciprocal_cells):

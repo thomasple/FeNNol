@@ -37,6 +37,7 @@ class GraphGenerator:
     kmax: int = 30
     kthr: float = 1e-6
     k_space: bool = False
+    # covalent_cutoff: bool = False
 
     def init(self):
         return {
@@ -134,7 +135,7 @@ class GraphGenerator:
                     bewald = in_graph["b_ewald"]
                 else:
                     ks, _, _, bewald = get_reciprocal_space_parameters(
-                        reciprocal_cells, cutoff, self.kmax, self.kthr
+                        reciprocal_cells, self.cutoff, self.kmax, self.kthr
                     )
                 out[self.graph_key]["k_points"] = ks
                 out[self.graph_key]["b_ewald"] = bewald
@@ -152,6 +153,11 @@ class GraphGenerator:
     def get_updater(self) -> Tuple[nn.Module, Dict]:
         raise NotImplementedError(
             "GraphGenerator does not have an updater. Use GraphGeneratorFixed instead."
+        )
+
+    def get_skin_updater(self):
+        raise NotImplementedError(
+            "GraphGenerator does not have a skin updater. Use GraphGeneratorFixed instead."
         )
 
     def get_graph_properties(self):
@@ -175,7 +181,7 @@ class GraphGeneratorFixed:
         }
 
     def __call__(self, inputs: Dict, state={}) -> Union[dict, jax.Array]:
-        cutoff = self.cutoff  # + state.get("nblist_skin", 0.0)
+        cutoff = self.cutoff + inputs.get("nblist_skin", 0.0)
 
         mult_size = float(state.get("nblist_mult_size", self.mult_size))
 
@@ -203,16 +209,18 @@ class GraphGeneratorFixed:
             minimage = inputs.get("minimum_image", True)
             assert minimage, "Fixed nblist only works with minimum image convention"
 
-            edge_src, edge_dst, d12, pbc_shifts, npairs, p12 = compute_nblist_fixed_minimage(
-                coords,
-                cutoff,
-                batch_index,
-                natoms,
-                max_nat,
-                prev_nblist_size_,
-                padding_value,
-                cells,
-                reciprocal_cells,
+            edge_src, edge_dst, d12, pbc_shifts, npairs, p12 = (
+                compute_nblist_fixed_minimage(
+                    coords,
+                    cutoff,
+                    batch_index,
+                    natoms,
+                    max_nat,
+                    prev_nblist_size_,
+                    padding_value,
+                    cells,
+                    reciprocal_cells,
+                )
             )
         else:
             edge_src, edge_dst, d12, npairs, p12 = compute_nblist_fixed(
@@ -234,6 +242,30 @@ class GraphGeneratorFixed:
         if "cells" in inputs:
             pbc_shifts = pbc_shifts[:prev_nblist_size_]
 
+        if "nblist_skin" in inputs:
+            edge_src_skin = edge_src
+            edge_dst_skin = edge_dst
+            if "cells" in inputs:
+                pbc_shifts_skin = pbc_shifts
+            mask = d12 < self.cutoff**2
+            npairs_skin = mask.sum()
+            prev_nblist_size_skin = state.get("prev_nblist_size_skin", 0)
+            if npairs_skin > prev_nblist_size_skin:
+                prev_nblist_size_skin = int(mult_size * npairs_skin) + 1
+            state["prev_nblist_size_skin"] = prev_nblist_size_skin
+            mask = mask[:prev_nblist_size_skin]
+            edge_src = np.where(
+                mask, edge_src_skin[:prev_nblist_size_skin], coords.shape[0]
+            )
+            edge_dst = np.where(
+                mask, edge_dst_skin[:prev_nblist_size_skin], coords.shape[0]
+            )
+            d12 = np.where(mask, d12[:prev_nblist_size_skin], self.cutoff**2)
+
+            if "cells" in inputs:
+                pbc_shifts = np.where(
+                    mask[:, None], pbc_shifts_skin[:prev_nblist_size_skin], 0.0
+                )
         # iedge = np.arange(len(edge_src))
         # isym = np.concatenate((iedge + iedge.shape[0], iedge))
         edge_src, edge_dst = np.concatenate((edge_src, edge_dst)), np.concatenate(
@@ -261,6 +293,12 @@ class GraphGeneratorFixed:
                 # "isym": isym,
             },
         }
+        if "nblist_skin" in inputs:
+            out[self.graph_key]["edge_src_skin"] = edge_src_skin
+            out[self.graph_key]["edge_dst_skin"] = edge_dst_skin
+            if "cells" in inputs:
+                out[self.graph_key]["pbc_shifts_skin"] = pbc_shifts_skin
+
         if "cells" in inputs:
             out["cells"] = cells
             out["reciprocal_cells"] = reciprocal_cells
@@ -270,17 +308,14 @@ class GraphGeneratorFixed:
                     ks = in_graph["k_points"]
                     bewald = in_graph["b_ewald"]
                 else:
-                    print("Computing k-points", cutoff, self.kmax, self.kthr)
+                    print("Computing k-points", self.cutoff, self.kmax, self.kthr)
                     ks, _, _, bewald = get_reciprocal_space_parameters(
-                        reciprocal_cells, cutoff, self.kmax, self.kthr
+                        reciprocal_cells, self.cutoff, self.kmax, self.kthr
                     )
                     print("n k-points", ks.shape)
                 out[self.graph_key]["k_points"] = ks
                 out[self.graph_key]["b_ewald"] = bewald
-        
-        # state["graph_updater"] = get_graph_updater() 
-        # TODO : add updater which is built with sizes determined here
-        #         => this will facilitate neighborlist skin
+
         return out, state
 
     def get_processor(self) -> Tuple[nn.Module, Dict]:
@@ -291,12 +326,23 @@ class GraphGeneratorFixed:
             "name": f"{self.graph_key}_Processor",
         }
 
-    def get_updater(self) -> Tuple[nn.Module, Dict]:
-        return get_graph_updater(**{
-            "cutoff": self.cutoff,
-            "graph_key": self.graph_key,
-            "switch_params": self.switch_params,
-        })
+    def get_updater(self):
+        return get_graph_updater(
+            **{
+                "cutoff": self.cutoff,
+                "graph_key": self.graph_key,
+                "switch_params": self.switch_params,
+            }
+        )
+
+    def get_skin_updater(self):
+        return get_graph_skin_updater(
+            **{
+                "cutoff": self.cutoff,
+                "graph_key": self.graph_key,
+                "switch_params": self.switch_params,
+            }
+        )
 
     def get_graph_properties(self):
         return {self.graph_key: {"cutoff": self.cutoff, "directed": True}}
@@ -310,16 +356,24 @@ class GraphGeneratorFixed:
 #     @nn.compact
 #     def __call__(self, inputs: Union[dict, Tuple[jax.Array, dict]]):
 
+
 def get_graph_updater(cutoff, graph_key, switch_params):
     def graph_updater(inputs):
         graph = {**inputs[graph_key]}
 
-        assert (
-            "p12" in graph
-        ), "p12 must be present in the graph to dynamically rebuild the nblist"
-        p1, p2 = graph["p12"]
-        max_pairs = graph["edge_src"].shape[0] // 2
         coords = inputs["coordinates"]
+        if "p12" in graph:
+            p1, p2, mask_p12 = graph["p12"]
+        else:
+            assert inputs["natoms"].shape[0] == 1, "Only one system is supported if p12 is not present"
+            p1,p2=jnp.triu_indices(coords.shape[0], 1)
+            mask_p12 = None
+            
+        if "nblist_skin" in inputs:
+            max_pairs = graph["edge_src_skin"].shape[0]
+        else:
+            max_pairs = graph["edge_src"].shape[0] // 2
+            
         vec = coords[p2] - coords[p1]
         if "cells" in inputs:
             batch_indexvec = inputs["batch_index"][p1]
@@ -329,21 +383,63 @@ def get_graph_updater(cutoff, graph_key, switch_params):
             pbc_shifts = -jnp.round(vecpbc)
             vec = vec + jnp.einsum("sij,sj->si", cells[batch_indexvec], pbc_shifts)
         # vec = jnp.where((p1 < coords.shape[0])[:,None], vec, cutoff)
-        d12 = jnp.sum(vec **2, axis=-1)
-        mask = d12 < cutoff**2
+        d12 = jnp.sum(vec**2, axis=-1)
+        cutoff_skin = cutoff + inputs.get("nblist_skin", 0.0)
+        if mask_p12 is not None:
+            d12 = jnp.where(mask, d12, cutoff_skin**2)
+        mask = d12 < cutoff_skin**2
         npairs = mask.sum()
         overflow = npairs > max_pairs
-        idx = jnp.argsort(d12)
-        mask = mask[idx][:max_pairs]
-        edge_src = jnp.where(mask,p1[idx][:max_pairs],coords.shape[0])
-        edge_dst = jnp.where(mask,p2[idx][:max_pairs],coords.shape[0])
-        d12 = jnp.where(mask,d12[idx][:max_pairs],cutoff**2)
+        idx = jnp.argsort(d12)[:max_pairs]
+        mask = mask[idx]
+        edge_src = p1[idx]
+        edge_dst = p2[idx]
+        d12 = d12[idx]
+        if "cells" in inputs:
+            pbc_shifts = pbc_shifts[idx]
+        # edge_src = jnp.where(mask, p1[idx][:max_pairs], coords.shape[0])
+        # edge_dst = jnp.where(mask, p2[idx][:max_pairs], coords.shape[0])
+        # d12 = jnp.where(mask, d12[idx][:max_pairs], cutoff_skin**2)
+        # if "cells" in inputs:
+        #     pbc_shifts = jnp.where(mask[:, None], pbc_shifts[idx][:max_pairs], 0)
+
+        d12_padding = cutoff_skin**2
+        if "nblist_skin" in inputs:
+            edge_src_skin = edge_src
+            edge_dst_skin = edge_dst
+            if "cells" in inputs:
+                pbc_shifts_skin = pbc_shifts
+            max_pairs_skin = graph["edge_src"].shape[0] // 2
+            mask = d12 < cutoff**2
+            npairs_skin = mask.sum()
+            mask = mask[:max_pairs_skin]
+            edge_src = edge_src_skin[:max_pairs_skin]
+            edge_dst = edge_dst_skin[:max_pairs_skin]
+            d12 = d12[:max_pairs_skin]
+            if "cells" in inputs:
+                pbc_shifts = pbc_shifts_skin[:max_pairs_skin]
+            # edge_src = jnp.where(mask, edge_src_skin[:max_pairs_skin], coords.shape[0])
+            # edge_dst = jnp.where(mask, edge_dst_skin[:max_pairs_skin], coords.shape[0])
+            # d12 = jnp.where(mask, d12[:max_pairs_skin], cutoff**2)
+            # if "cells" in inputs:
+            #     pbc_shifts = jnp.where(
+            #         mask[:, None], pbc_shifts_skin[:max_pairs_skin], 0
+            #     )
+            overflow = jnp.logical_or(overflow, npairs_skin > max_pairs_skin)
+            d12_padding = cutoff**2
+
+
+        edge_src = jnp.where(mask, edge_src, coords.shape[0])
+        edge_dst = jnp.where(mask, edge_dst, coords.shape[0])
+        d12 = jnp.where(mask, d12, d12_padding)
+        if "cells" in inputs:
+            pbc_shifts = jnp.where(mask[:, None], pbc_shifts, 0)
+
         edge_src, edge_dst = jnp.concatenate((edge_src, edge_dst)), jnp.concatenate(
             (edge_dst, edge_src)
         )
         d12 = jnp.concatenate((d12, d12))
         if "cells" in inputs:
-            pbc_shifts = jnp.where(mask[:,None],pbc_shifts[idx][:max_pairs],0)
             pbc_shifts = jnp.concatenate((pbc_shifts, -pbc_shifts))
 
         graph_out = {
@@ -353,9 +449,71 @@ def get_graph_updater(cutoff, graph_key, switch_params):
             "d12": d12,
             "overflow": overflow,
         }
+        if "nblist_skin" in inputs:
+            graph_out["edge_src_skin"] = edge_src_skin
+            graph_out["edge_dst_skin"] = edge_dst_skin
+            if "cells" in inputs:
+                graph_out["pbc_shifts_skin"] = pbc_shifts_skin
+
         if "cells" in inputs:
             graph_out["pbc_shifts"] = pbc_shifts
         return {**inputs, graph_key: graph_out}
+
+    return graph_updater
+
+
+def get_graph_skin_updater(cutoff, graph_key, switch_params):
+    def graph_updater(inputs):
+        graph = inputs[graph_key]
+        natoms = inputs["species"].shape[0]
+        max_pairs = graph["edge_src"].shape[0] // 2
+
+        edge_src_skin = graph["edge_src_skin"]
+        edge_dst_skin = graph["edge_dst_skin"]
+        coords = inputs["coordinates"]
+        vec = coords.at[edge_dst_skin].get(mode="fill", fill_value=cutoff) - coords.at[
+            edge_src_skin
+        ].get(mode="fill", fill_value=0.0)
+        if "cells" in inputs:
+            pbc_shifts_skin = graph["pbc_shifts_skin"]
+            batch_indexvec = (
+                inputs["batch_index"].at[edge_src_skin].get(mode="fill", fill_value=-1)
+            )
+            # reciprocal_cells = inputs["reciprocal_cells"][batch_indexvec]
+            # vecpbc = jnp.einsum("sij,sj->si", reciprocal_cells, vec)
+            # pbc_shifts_skin = -jnp.round(vecpbc)
+            cells = inputs["cells"][batch_indexvec]
+            vec = vec + jnp.einsum("sij,sj->si", cells, pbc_shifts_skin)
+        d12 = jnp.sum(vec**2, axis=-1)
+        mask = d12 < cutoff**2
+        npairs = mask.sum()
+
+        filter_indices = jnp.argsort(d12)[:max_pairs]
+
+        mask = mask[filter_indices]
+        edge_src = jnp.where(mask, edge_src_skin[filter_indices], natoms)
+        edge_dst = jnp.where(mask, edge_dst_skin[filter_indices], natoms)
+        d12 = jnp.where(mask, d12[filter_indices], cutoff**2)
+        if "cells" in inputs:
+            pbc_shifts = jnp.where(mask[:, None], pbc_shifts_skin[filter_indices], 0.0)
+
+        # edge_src = edge_src[filter_indices]
+        # edge_dst = graph_in["edge_dst"][filter_indices]
+        # d12 = d12[filter_indices]
+
+        overflow = npairs > max_pairs
+
+        new_graph = {
+            **graph,
+            "edge_src": jnp.concatenate((edge_src, edge_dst)),
+            "edge_dst": jnp.concatenate((edge_dst, edge_src)),
+            "d12": jnp.concatenate((d12, d12)),
+            "overflow": jnp.logical_or(overflow, graph.get("overflow", False)),
+        }
+        if "cells" in inputs:
+            new_graph["pbc_shifts"] = jnp.concatenate((pbc_shifts, -pbc_shifts))
+        return {**inputs, graph_key: new_graph}
+
     return graph_updater
 
 
@@ -445,7 +603,7 @@ class GraphFilter:
         nattot = inputs["species"].shape[0]
         nblist_size = edge_src.shape[0]
         if nblist_size > prev_nblist_size_:
-            prev_nblist_size_ = int(mult_size * nblist_size)
+            prev_nblist_size_ = int(mult_size * nblist_size) +1
 
         edge_src = np.append(
             edge_src, nattot * np.ones(prev_nblist_size_ - nblist_size, dtype=np.int64)
@@ -505,13 +663,18 @@ class GraphFilter:
             "switch_params": self.switch_params,
         }
 
-    def get_updater(self) -> Tuple[nn.Module, Dict]:
-        return get_graph_filter_updater(**{
-            "cutoff": self.cutoff,
-            "graph_key": self.graph_key,
-            "graph_out": self.graph_out,
-            "remove_hydrogens": self.remove_hydrogens,
-        })
+    def get_updater(self):
+        return get_graph_filter_updater(
+            **{
+                "cutoff": self.cutoff,
+                "graph_key": self.graph_key,
+                "graph_out": self.graph_out,
+                "remove_hydrogens": self.remove_hydrogens,
+            }
+        )
+
+    def get_skin_updater(self):
+        return self.get_updater()
 
     def get_graph_properties(self):
         return {
@@ -521,6 +684,7 @@ class GraphFilter:
                 "original_graph": self.graph_key,
             }
         }
+
 
 def get_graph_filter_updater(cutoff, graph_out, graph_key, remove_hydrogens):
     def graph_filter_updater(inputs):
@@ -534,18 +698,18 @@ def get_graph_filter_updater(cutoff, graph_out, graph_key, remove_hydrogens):
         if remove_hydrogens:
             species = inputs["species"]
             mask = species[edge_src] > 1
-            d12 = jnp.where(mask, d12, (cutoff+1)**2)
+            d12 = jnp.where(mask, d12, (cutoff + 1) ** 2)
         mask = d12 < cutoff**2
         npairs = mask.sum()
 
         filter_indices = jnp.argsort(d12)[:max_pairs]
 
         mask = mask[filter_indices]
-        edge_src = jnp.where(mask,edge_src[filter_indices],natoms)
-        edge_dst = jnp.where(mask,graph_in["edge_dst"][filter_indices],natoms)
-        d12 = jnp.where(mask,d12[filter_indices],cutoff**2)
-        filter_indices = jnp.where(mask,filter_indices,graph_in["edge_src"].shape[0])
-        
+        edge_src = jnp.where(mask, edge_src[filter_indices], natoms)
+        edge_dst = jnp.where(mask, graph_in["edge_dst"][filter_indices], natoms)
+        d12 = jnp.where(mask, d12[filter_indices], cutoff**2)
+        filter_indices = jnp.where(mask, filter_indices, graph_in["edge_src"].shape[0])
+
         # edge_src = edge_src[filter_indices]
         # edge_dst = graph_in["edge_dst"][filter_indices]
         # d12 = d12[filter_indices]
@@ -559,8 +723,10 @@ def get_graph_filter_updater(cutoff, graph_out, graph_key, remove_hydrogens):
             "d12": d12,
             "filter_indices": filter_indices,
             "overflow": overflow,
+            "filter_overflow":(npairs, max_pairs),
         }
         return {**inputs, graph_out: new_graph}
+
     return graph_filter_updater
 
 
@@ -615,12 +781,14 @@ class GraphFilterProcessor(nn.Module):
 class GraphAngularExtension:
     mult_size: float = 1.1
     graph_key: str = "graph"
+    max_neigh_add: int = 10
 
     def init(self):
         return {
             "prev_angle_size": 0,
             "max_neigh": 0,
             "nblist_mult_size": self.mult_size,
+            "max_neigh_add": self.max_neigh_add,
         }
 
     def __call__(self, inputs: Dict, state={}) -> Union[dict, jax.Array]:
@@ -641,11 +809,12 @@ class GraphAngularExtension:
         prev_angle_size_ = prev_angle_size
         angle_size = angle_src.shape[0]
         if angle_size > prev_angle_size_:
-            prev_angle_size_ = int(mult_size * angle_size)
+            prev_angle_size_ = int(mult_size * angle_size) +1
 
         prev_max_neigh = state.get("max_neigh", 0)
         if max_neigh > prev_max_neigh:
-            prev_max_neigh = int(mult_size * max_neigh)
+            max_neigh_add = int(state.get("max_neigh_add", self.max_neigh_add))
+            prev_max_neigh = max_neigh + max_neigh_add
 
         max_neigh_array = np.empty(prev_max_neigh, dtype=np.int8)
 
@@ -674,7 +843,7 @@ class GraphAngularExtension:
                 "angle_dst": angle_dst,
                 "central_atom": central_atom_index,
                 "max_neigh": max_neigh_array,
-                "overflow": graph.get("overflow",False),
+                "overflow": graph.get("overflow", False),
             },
         }
         return out, state
@@ -685,10 +854,11 @@ class GraphAngularExtension:
             "name": f"{self.graph_key}_AngleProcessor",
         }
 
-    def get_updater(self) -> Tuple[nn.Module, Dict]:
-        return get_graph_angle_updater(**{
-            "graph_key":self.graph_key
-        })
+    def get_updater(self):
+        return get_graph_angle_updater(**{"graph_key": self.graph_key})
+
+    def get_skin_updater(self):
+        return self.get_updater()
 
     def get_graph_properties(self):
         return {
@@ -703,6 +873,7 @@ class GraphAngularExtension:
 
 #     @nn.compact
 #     def __call__(self, inputs: Union[dict, Tuple[jax.Array, dict]]):
+
 
 def get_graph_angle_updater(graph_key):
     def graph_angle_updater(inputs):
@@ -758,9 +929,10 @@ def get_graph_angle_updater(graph_key):
         angle_src = jnp.where(angle_mask, angle_src[:nangles_max], edge_src.shape[0])
         angle_dst = jnp.where(angle_mask, angle_dst[:nangles_max], edge_src.shape[0])
 
-        overflow = jnp.logical_or(nangles > nangles_max
-            , max_neigh > max_neigh_max)
-        overflow =  jnp.logical_or(overflow,jnp.asarray(graph.get("overflow", False)))
+        angle_overflow = nangles > nangles_max
+        neigh_overflow = max_neigh > max_neigh_max
+        overflow = jnp.logical_or(angle_overflow, neigh_overflow)
+        # overflow = jnp.logical_or(overflow, jnp.asarray(graph.get("overflow", False)))
 
         return {
             **inputs,
@@ -769,9 +941,12 @@ def get_graph_angle_updater(graph_key):
                 "angle_src": angle_src,
                 "angle_dst": angle_dst,
                 "central_atom": central_atom_index,
-                "overflow": overflow,
+                "overflow": jnp.logical_or(overflow, jnp.asarray(graph.get("overflow", False))),
+                "angle_overflow": (nangles, nangles_max),
+                "neigh_overflow": (max_neigh, max_neigh_max),
             },
         }
+
     return graph_angle_updater
 
 
@@ -969,6 +1144,7 @@ def check_input(inputs):
     )
     return {**inputs, "natoms": natoms, "batch_index": batch_index}
 
+
 def convert_to_jax(data):
     def convert(x):
         if isinstance(x, np.ndarray):
@@ -976,7 +1152,9 @@ def convert_to_jax(data):
             #     return jnp.asarray(x, dtype=jnp.float32)
             return jnp.asarray(x)
         return x
+
     return jax.tree_util.tree_map(convert, data)
+
 
 class JaxConverter(nn.Module):
     def __call__(self, data):
@@ -1030,6 +1208,15 @@ class PreprocessingChain:
         for layer in self.layers:
             if hasattr(layer, "get_updater"):
                 updaters.append(layer.get_updater())
+        if return_list:
+            return updaters
+        return chain(*updaters)
+
+    def get_skin_updaters(self, return_list=False):
+        updaters = [convert_to_jax]
+        for layer in self.layers:
+            if hasattr(layer, "get_skin_updater"):
+                updaters.append(layer.get_skin_updater())
         if return_list:
             return updaters
         return chain(*updaters)

@@ -47,6 +47,7 @@ def main():
     device: str = simulation_parameters.get("device", "cpu")
     if device == "cpu":
         device = "cpu"
+        os.environ["CUDA_VISIBLE_DEVICES"] = ''
     elif device.startswith("cuda"):
         num = device.split(":")[-1]
         os.environ["CUDA_VISIBLE_DEVICES"] = num
@@ -204,9 +205,14 @@ def dynamic(simulation_parameters, device, fprec):
     )
 
     ### CONFIGURE PREPROCESSING
-    nblist_stride = int(simulation_parameters.get("nblist_stride", 1))
-    nblist_warmup = int(simulation_parameters.get("nblist_warmup", 10000))
-    nblist_skin = simulation_parameters.get("nblist_skin", 0.0)
+    nblist_stride = int(simulation_parameters.get("nblist_stride", 20))
+    nblist_warmup = int(simulation_parameters.get("nblist_warmup", 1000))
+    nblist_stride_check = int(simulation_parameters.get("nblist_stride_check", 1))
+    nblist_skin = simulation_parameters.get("nblist_skin", None)
+    if nblist_skin is not None:
+        print(f"nblist_skin: {nblist_skin:.2f} A, nblist_stride: {nblist_stride} steps")
+    else:
+        nblist_stride = 1
 
     def configure_nblist(preproc_state, nblist_skin, nblist_stride=0):
         preproc_state = deepcopy(preproc_state)
@@ -217,33 +223,48 @@ def dynamic(simulation_parameters, device, fprec):
         #         st["skin_count"] = nblist_stride
             if "nblist_mult_size" in simulation_parameters:
                 st["nblist_mult_size"] = simulation_parameters["nblist_mult_size"]
+            
+            if "max_neigh_add" in simulation_parameters:
+                st["max_neigh_add"] = simulation_parameters["max_neigh_add"]
         return preproc_state
 
     preproc_state = configure_nblist(model.preproc_state, nblist_skin, nblist_stride)
 
     nblist_updater = jax.jit(model.preprocessing.get_updaters())
+    if nblist_skin is not None:
+        nblist_skin_updater = jax.jit(model.preprocessing.get_skin_updaters())
     graphs_keys = list(model._graphs_properties.keys())
+
     print("graphs_keys: ", graphs_keys)
 
-    @jax.jit
+    # @jax.jit
+    # def nblist_overflow(system):
+    #     """ check if any of the graphs has overflowed"""
+    #     overflow = False
+    #     for k in graphs_keys:
+    #         graph = system[k]
+    #         # if graph["overflow"]:
+    #         #     return True
+    #         overflow = jnp.logical_or(overflow,graph["overflow"])
+    #     return overflow
+
     def nblist_overflow(system):
         """ check if any of the graphs has overflowed"""
-        overflow = False
         for k in graphs_keys:
             graph = system[k]
-            # if graph["overflow"]:
-            #     return True
-            overflow = jnp.logical_or(overflow,graph["overflow"])
-        return overflow
+            if graph["overflow"]:
+                return k
+        return None
 
     ## initial preprocessing    
     preproc_state["check_input"] = True
-    if cell is None:
-        system,preproc_state = model.preprocessing(dict(species=species, coordinates=coordinates), preproc_state)
-    else:
-        system, preproc_state = model.preprocessing(
-            dict(species=species, coordinates=coordinates, cells=cell[None, :, :]), preproc_state
-        )
+    system = dict(species=species, coordinates=coordinates)
+    if cell is not None:
+        system["cells"] = cell[None, :, :]
+    if nblist_skin is not None:
+        system["nblist_skin"] = nblist_skin
+    system,preproc_state = model.preprocessing(system, preproc_state)
+
     preproc_state["check_input"] = False    
 
     ### print model
@@ -371,9 +392,12 @@ def dynamic(simulation_parameters, device, fprec):
     tstart_dyn = t0
     istep = 0
     tpre = 0
+    tup = 0
     tstep = 0
+    t0full = time.time()
     print_timings = simulation_parameters.get("print_timings", False)
     force_preprocess = False
+    nb_warmup_start = 0
     for istep in range(1, nsteps + 1):
         ### BAOAB evolution
         # if istep % nblist_stride == 0 or force_preprocess:
@@ -383,12 +407,39 @@ def dynamic(simulation_parameters, device, fprec):
         ## take a half step (update positions, nblist and half velocities)
         system, state = stepA(system, state)
 
-        system = nblist_updater(system)
-        ### check nblist overflow
-        if nblist_overflow(system):
-            ## if nblist overflowed during step, reallocate nblist and redo the step
-            print("nblist overflow => reallocating nblist")
-            system, preproc_state = model.preprocessing(system, preproc_state)
+        if print_timings:
+            system["coordinates"].block_until_ready()
+            tstep += time.time() - tstep0
+            tstep0 = time.time()
+
+
+
+        if istep % nblist_stride == 0 or force_preprocess : #or (istep<nblist_warmup):
+            system = nblist_updater(system)
+            force_preprocess = False
+            ### check nblist overflow
+            graph_ov = nblist_overflow(system)
+            if graph_ov is not None:
+                ## if nblist overflowed during step, reallocate nblist and redo the step
+                print("step",istep,", nblist overflow in graph ",graph_ov,"=> reallocating nblist")
+                system, preproc_state = model.preprocessing(system, preproc_state)
+                nb_warmup_start = istep
+                system = nblist_updater(system)
+            
+            if print_timings:
+                system["coordinates"].block_until_ready()
+                tpre += time.time() - tstep0
+                tstep0 = time.time()
+
+        else:
+            system = nblist_skin_updater(system)
+
+            if print_timings:
+                system["coordinates"].block_until_ready()
+                tup += time.time() - tstep0
+                tstep0 = time.time()
+      
+
         
         ## finish step
         system, state = stepB(system, state)
@@ -408,6 +459,7 @@ def dynamic(simulation_parameters, device, fprec):
                     system["coordinates"], cell, reciprocal_cell
                 )
                 print("Wrap atoms into box")
+                force_preprocess = True
             print("Write XYZ frame")
             write_arc_frame(fout, symbols, np.asarray(system["coordinates"]))
             print("ns/day: ", nsperday)
@@ -420,7 +472,7 @@ def dynamic(simulation_parameters, device, fprec):
             if jnp.any(jnp.isnan(state["vel"])) or jnp.any(
                 jnp.isnan(system["coordinates"])
             ):
-                raise ValueError("dynamics crashed.")
+                raise ValueError(f"dynamics crashed at step {istep}.")
             t1 = time.time()
             tperstep = (t1 - t0) / nprint
             t0 = t1
@@ -435,9 +487,13 @@ def dynamic(simulation_parameters, device, fprec):
             print(line)
 
             if print_timings:
-                print(f"tpre: {tpre/nprint:.5f}; tstep: {tstep/nprint:.5f}")
+                tfull = time.time() - t0full
+                tother = tfull - tpre - tstep - tup
+                print(f"tpre: {tpre:.5f} ({tpre/tfull*100:.2f} %); tup: {tup:.5f} ({tup/tfull*100:.2f} %); tstep: {tstep:.5f} ({tstep/tfull*100:.2f} %); tother: {tother:.5f} ({tother/tfull*100:.2f} %)")
                 tpre = 0
                 tstep = 0
+                tup = 0
+                t0full = time.time()
 
     print(f"Run done in {(time.time()-tstart_dyn)/60.0} minutes")
     ### close trajectory file
