@@ -12,7 +12,6 @@ from flax.core.frozen_dict import freeze, unfreeze
 
 from .preprocessing import (
     GraphGenerator,
-    GraphGeneratorFixed,
     PreprocessingChain,
     PREPROCESSING,
     JaxConverter,
@@ -44,7 +43,7 @@ class FENNIX:
 
     """
 
-    cutoff: float
+    cutoff: float | None
     modules: FENNIXModules
     variables: Dict
     preprocessing: PreprocessingChain
@@ -68,7 +67,6 @@ class FENNIX:
         variables: Optional[dict] = None,
         energy_terms=["energy"],
         use_atom_padding: bool = False,
-        fixed_preprocessing: bool = False,
         graph_config: Dict = {},
         **kwargs,
     ) -> None:
@@ -83,34 +81,34 @@ class FENNIX:
 
         # add non-differentiable/non-jittable modules
         preprocessing = deepcopy(preprocessing)
-        prep_keys = list(preprocessing.keys())
-        graph_params = {"cutoff": cutoff, "graph_key": "graph"}
-        if len(prep_keys) > 0 and prep_keys[0] == "graph":
-            graph_params = {
-                **graph_params,
-                **preprocessing.pop("graph"),
-            }
-        graph_params = {**graph_params, **graph_config}
-
-        if fixed_preprocessing:
-            preprocessing_modules = [
-                GraphGeneratorFixed(**graph_params),
-            ]
+        if cutoff is None:
+            preprocessing_modules = []
         else:
+            prep_keys = list(preprocessing.keys())
+            graph_params = {"cutoff": cutoff, "graph_key": "graph"}
+            if len(prep_keys) > 0 and prep_keys[0] == "graph":
+                graph_params = {
+                    **graph_params,
+                    **preprocessing.pop("graph"),
+                }
+            graph_params = {**graph_params, **graph_config}
+
             preprocessing_modules = [
                 GraphGenerator(**graph_params),
             ]
+
         for name, params in preprocessing.items():
             key = str(params.pop("module_name")) if "module_name" in params else name
             key = str(params.pop("FID")) if "FID" in params else key
             mod = PREPROCESSING[key.upper()](**params)
             preprocessing_modules.append(mod)
 
-        self.preprocessing = PreprocessingChain(preprocessing_modules, use_atom_padding)
+        self.preprocessing = PreprocessingChain(tuple(preprocessing_modules), use_atom_padding)
         graphs_properties = self.preprocessing.get_graphs_properties()
         self._graphs_properties = freeze(graphs_properties)
         # add preprocessing modules that should be differentiated/jitted
-        mods = [(JaxConverter, {})] + self.preprocessing.get_processors(return_list=True)
+        # mods = [(JaxConverter, {})] + self.preprocessing.get_processors(return_list=True)
+        mods = self.preprocessing.get_processors(return_list=True)
 
         # build the model
         modules = deepcopy(modules)
@@ -258,7 +256,7 @@ class FENNIX:
         """apply preprocessing to the input data
 
         !!! This is not a pure function => do not apply jax transforms !!!"""
-        out, preproc_state = self.preprocessing(inputs, self.preproc_state)
+        preproc_state, out = self.preprocessing(self.preproc_state,inputs)
         object.__setattr__(self, "preproc_state", preproc_state)
         return out
 
@@ -275,7 +273,7 @@ class FENNIX:
             rng_key_sys, rng_key_pre = jax.random.split(rng_key_pre)
             example_data = self.generate_dummy_system(rng_key_sys, n_atoms=10)
 
-        inputs, preproc_state = self.preprocessing.init_with_output(example_data)
+        preproc_state, inputs = self.preprocessing.init_with_output(example_data)
         object.__setattr__(self, "preproc_state", preproc_state)
         return inputs, rng_key
 
@@ -422,7 +420,6 @@ class FENNIX:
         cls,
         filename,
         use_atom_padding=False,
-        fixed_preprocessing=False,
         graph_config={},
     ):
         with open(filename, "rb") as f:
@@ -433,5 +430,4 @@ class FENNIX:
             **state_dict,
             graph_config=graph_config,
             use_atom_padding=use_atom_padding,
-            fixed_preprocessing=fixed_preprocessing,
         )

@@ -16,8 +16,9 @@ from ...utils.periodic_table import (
 def apply_switch(x: jax.Array, switch: jax.Array):
     shape = x.shape
     return (
-        jnp.expand_dims(x, axis=-1).reshape(shape[0], -1) * switch[:, None]
+        jnp.expand_dims(x, axis=-1).reshape(*switch.shape, -1) * switch[..., None]
     ).reshape(shape)
+
 
 class ApplySwitch(nn.Module):
     key: str
@@ -50,13 +51,13 @@ class ScatterEdges(nn.Module):
     graph_key: str = "graph"
     switch: bool = False
     switch_key: Optional[str] = None
+    sparse: bool = False
 
     FID: str = "SCATTER_EDGES"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
         graph = inputs[self.graph_key]
-        edge_src, edge_dst = graph["edge_src"], graph["edge_dst"]
         nat = inputs["species"].shape[0]
         x = inputs[self.key]
 
@@ -64,11 +65,17 @@ class ScatterEdges(nn.Module):
             switch = (
                 graph["switch"] if self.switch_key is None else inputs[self.switch_key]
             )
+            if self.sparse:
+                switch = switch.flatten()[graph["sparse_index"]]
             x = apply_switch(x, switch)
 
-        output = jax.ops.segment_sum(x,edge_src,nat) #jnp.zeros((nat, *x.shape[1:])).at[edge_src].add(x,mode="drop")
-        if not self._graphs_properties[self.graph_key]["directed"]:
-            output = output + jax.ops.segment_sum(x,edge_dst,nat)
+        if self.sparse:
+            edge_src, edge_dst = graph["edge_src"], graph["edge_dst"]
+            output = jax.ops.segment_sum(x,edge_src,nat) #jnp.zeros((nat, *x.shape[1:])).at[edge_src].add(x,mode="drop")
+            if not self._graphs_properties[self.graph_key]["directed"]:
+                output = output + jax.ops.segment_sum(x,edge_dst,nat)
+        else:
+            output = x.sum(axis=1)
 
         output_key = self.key if self.output_key is None else self.output_key
         return {**inputs, output_key: output}
@@ -360,11 +367,12 @@ class SwitchFunction(nn.Module):
             else:
                 cutoff = graph["cutoff"]
         else:
-            distances = inputs
+            # distances = inputs
+            distances, edge_mask = inputs
             assert (
                 self.cutoff is not None
             ), "cutoff must be specified if no graph is given"
-            edge_mask = distances < self.cutoff
+            # edge_mask = distances < self.cutoff
             cutoff = self.cutoff
 
         if self.switch_start > 1.0e-5:
@@ -419,4 +427,4 @@ class SwitchFunction(nn.Module):
             else:
                 return {**inputs, self.graph_key: {**graph, "switch": switch}}
         else:
-            return switch, edge_mask
+            return switch #, edge_mask

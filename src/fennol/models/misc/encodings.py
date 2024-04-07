@@ -190,6 +190,9 @@ class RadialBasis(nn.Module):
             x = inputs[self.graph_key]["distances"]
         else:
             x = inputs["distances"] if isinstance(inputs, dict) else inputs
+        
+        shape = x.shape
+        x = x.reshape(-1)
 
         basis = self.basis.lower()
         ############################
@@ -367,6 +370,8 @@ class RadialBasis(nn.Module):
         else:
             raise NotImplementedError(f"Unknown radial basis {basis}.")
         ############################
+
+        out = out.reshape((*shape, self.dim))
 
         if self.graph_key is not None:
             output_key = self.name if self.output_key is None else self.output_key

@@ -10,6 +10,8 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 
+from flax.core import freeze, unfreeze
+
 
 from ..models import FENNIX
 from ..utils.io import write_arc_frame, last_xyz_frame
@@ -33,7 +35,7 @@ def wrapbox(x, cell, reciprocal_cell):
 
 
 def main():
-    os.environ["OMP_NUM_THREADS"] = "1"
+    # os.environ["OMP_NUM_THREADS"] = "1"
     sys.stdout = io.TextIOWrapper(
         open(sys.stdout.fileno(), "wb", 0), write_through=True
     )
@@ -47,7 +49,7 @@ def main():
     device: str = simulation_parameters.get("device", "cpu")
     if device == "cpu":
         device = "cpu"
-        os.environ["CUDA_VISIBLE_DEVICES"] = ''
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
     elif device.startswith("cuda"):
         num = device.split(":")[-1]
         os.environ["CUDA_VISIBLE_DEVICES"] = num
@@ -82,11 +84,8 @@ def dynamic(simulation_parameters, device, fprec):
         raise FileNotFoundError(f"model file {model_file} not found")
     else:
         graph_config = simulation_parameters.get("graph_config", {})
-        model = FENNIX.load(
-            model_file, fixed_preprocessing=True, graph_config=graph_config
-        )  # \
+        model = FENNIX.load(model_file, graph_config=graph_config)  # \
         print(f"model_file: {model_file}")
-        # .train(False).requires_grad_(False).to(prec)
 
     if "energy_terms" in simulation_parameters:
         model.set_energy_terms(simulation_parameters["energy_terms"])
@@ -177,18 +176,18 @@ def dynamic(simulation_parameters, device, fprec):
     window_size = simulation_parameters.get("tau_avg", 0.0) * au.FS
     win_b1 = np.exp(-dt / window_size) if window_size > 0 else 0.0
 
-    state["window_avg"] = {}
-    state["window_avg"]["n"] = 0
-    state["window_avg"]["ek"] = 0.0
-    state["window_avg"]["pressure"] = 0.0
-    state["window_avg"]["Pkin"] = 0.0
-    state["window_avg"]["Pvir"] = 0.0
-    state["window_avg"]["epot"] = 0.0
-    state["window_avg"]["ek_m"] = 0.0
-    state["window_avg"]["pressure_m"] = 0.0
-    state["window_avg"]["Pkin_m"] = 0.0
-    state["window_avg"]["Pvir_m"] = 0.0
-    state["window_avg"]["epot_m"] = 0.0
+    # state["window_avg"] = {}
+    # state["window_avg"]["n"] = 0
+    # state["window_avg"]["ek"] = 0.0
+    # state["window_avg"]["pressure"] = 0.0
+    # state["window_avg"]["Pkin"] = 0.0
+    # state["window_avg"]["Pvir"] = 0.0
+    # state["window_avg"]["epot"] = 0.0
+    # state["window_avg"]["ek_m"] = 0.0
+    # state["window_avg"]["pressure_m"] = 0.0
+    # state["window_avg"]["Pkin_m"] = 0.0
+    # state["window_avg"]["Pvir_m"] = 0.0
+    # state["window_avg"]["epot_m"] = 0.0
 
     ### Set the thermostat
     rng_key, t_key = jax.random.split(rng_key)
@@ -215,24 +214,29 @@ def dynamic(simulation_parameters, device, fprec):
         nblist_stride = 1
 
     def configure_nblist(preproc_state, nblist_skin, nblist_stride=0):
-        preproc_state = deepcopy(preproc_state)
+        preproc_state = unfreeze(preproc_state)
+        layer_state = []
         for st in preproc_state["layers_state"]:
-        #     st["nblist_skin"] = nblist_skin
-        #     if nblist_stride > 1:
-        #         st["skin_stride"] = nblist_stride
-        #         st["skin_count"] = nblist_stride
+            stnew = unfreeze(st)
+            #     st["nblist_skin"] = nblist_skin
+            #     if nblist_stride > 1:
+            #         st["skin_stride"] = nblist_stride
+            #         st["skin_count"] = nblist_stride
+            if "nblist_skin" in simulation_parameters:
+                stnew["nblist_skin"] = simulation_parameters["nblist_skin"]
             if "nblist_mult_size" in simulation_parameters:
-                st["nblist_mult_size"] = simulation_parameters["nblist_mult_size"]
-            
-            if "max_neigh_add" in simulation_parameters:
-                st["max_neigh_add"] = simulation_parameters["max_neigh_add"]
-        return preproc_state
+                stnew["nblist_mult_size"] = simulation_parameters["nblist_mult_size"]
+            if "nblist_add_neigh" in simulation_parameters:
+                stnew["add_neigh"] = simulation_parameters["nblist_add_neigh"]
+            layer_state.append(freeze(stnew))
+        preproc_state["layers_state"] = layer_state
+        return freeze(preproc_state)
 
     preproc_state = configure_nblist(model.preproc_state, nblist_skin, nblist_stride)
 
-    nblist_updater = jax.jit(model.preprocessing.get_updaters())
-    if nblist_skin is not None:
-        nblist_skin_updater = jax.jit(model.preprocessing.get_skin_updaters())
+    # nblist_updater = jax.jit(model.preprocessing.get_updaters())
+    # if nblist_skin is not None:
+    #     nblist_skin_updater = jax.jit(model.preprocessing.get_skin_updaters())
     graphs_keys = list(model._graphs_properties.keys())
 
     print("graphs_keys: ", graphs_keys)
@@ -248,33 +252,36 @@ def dynamic(simulation_parameters, device, fprec):
     #         overflow = jnp.logical_or(overflow,graph["overflow"])
     #     return overflow
 
-    def nblist_overflow(system):
-        """ check if any of the graphs has overflowed"""
-        for k in graphs_keys:
-            graph = system[k]
-            if graph["overflow"]:
-                return k
-        return None
+    # def nblist_overflow(system):
+    #     """ check if any of the graphs has overflowed"""
+    #     for k in graphs_keys:
+    #         graph = system[k]
+    #         if graph["overflow"]:
+    #             return k
+    #     return None
 
-    ## initial preprocessing    
-    preproc_state["check_input"] = True
+    ## initial preprocessing
+    preproc_state = preproc_state.copy({"check_input": True})
     system = dict(species=species, coordinates=coordinates)
     if cell is not None:
         system["cells"] = cell[None, :, :]
-    if nblist_skin is not None:
-        system["nblist_skin"] = nblist_skin
-    system,preproc_state = model.preprocessing(system, preproc_state)
+    preproc_state, system = model.preprocessing(preproc_state, system)
 
-    preproc_state["check_input"] = False    
+    preproc_state = preproc_state.copy({"check_input": False})
+    # preproc_state["check_input"] = False
+    print("preproc_state:",preproc_state)
 
     ### print model
     if simulation_parameters.get("print_model", False):
         print(model.summarize(example_data=system))
     ## initial energy and forces
     print("Computing initial energy and forces")
-    e, f, _ = model._energy_and_forces(model.variables, system)
+    e, f, output = model._energy_and_forces(model.variables, system)
     print(f"Initial energy: {e[0]} Ha")
     minmaxone(jnp.abs(f), "forces min/max/rms:")
+    eat = np.array(output["atomic_energies"][:, None])
+    f = np.array(f)
+    # np.savetxt("initial_energy_forces.txt",np.column_stack((eat,f)),fmt="%.5f")
 
     # rng_key, v_key = jax.random.split(rng_key)
     # vel = (
@@ -329,13 +336,13 @@ def dynamic(simulation_parameters, device, fprec):
         x = x + dt2 * v
         # system = nblist_updater({**system, "coordinates": x})
 
-        return {**system, "coordinates":x}, {**state, "vel": v, "thermostat": state_th}
-    
+        return {**system, "coordinates": x}, {**state, "vel": v, "thermostat": state_th}
+
     @jax.jit
     def stepB(system, state):
         v = state["vel"]
         state_th = state["thermostat"]
-        
+
         if estimate_pressure:
             epot, f, vir_t, _ = model._energy_and_forces_and_virial(
                 model.variables, system
@@ -350,34 +357,38 @@ def dynamic(simulation_parameters, device, fprec):
             "vel": v,
             "forces": f,
             "ek": ek,
-            "epot": epot,
+            "epot": epot[0],
             # "thermostat": state_th,
         }
 
-        n = state["window_avg"]["n"] + 1
-        state_avg = {**state["window_avg"], "n": n}
-        state_avg["ek_m"] = state_avg["ek_m"] * win_b1 + ek * (1 - win_b1)
-        state_avg["ek"] = state_avg["ek_m"] / (1 - win_b1**n)
-        state_avg["epot_m"] = state_avg["epot_m"] * win_b1 + epot[0] * (1 - win_b1)
-        state_avg["epot"] = state_avg["epot_m"] / (1 - win_b1**n)
+        # n = state["window_avg"]["n"] + 1
+        # state_avg = {**state["window_avg"], "n": n}
+        # state_avg["ek_m"] = state_avg["ek_m"] * win_b1 + ek * (1 - win_b1)
+        # state_avg["ek"] = state_avg["ek_m"] / (1 - win_b1**n)
+        # state_avg["epot_m"] = state_avg["epot_m"] * win_b1 + epot[0] * (1 - win_b1)
+        # state_avg["epot"] = state_avg["epot_m"] / (1 - win_b1**n)
         if estimate_pressure:
             vir = jnp.trace(vir_t[0])
             Pkin = (2 * pscale) * ek
             Pvir = (-pscale) * vir
             state["virial"] = vir
             state["pressure"] = Pkin + Pvir
-            state_avg["Pkin_m"] = state_avg["Pkin_m"] * win_b1 + Pkin * (1 - win_b1)
-            state_avg["Pkin"] = state_avg["Pkin_m"] / (1 - win_b1**n)
-            state_avg["Pvir_m"] = state_avg["Pvir_m"] * win_b1 + Pvir * (1 - win_b1)
-            state_avg["Pvir"] = state_avg["Pvir_m"] / (1 - win_b1**n)
-            state_avg["pressure_m"] = state_avg["pressure_m"] * win_b1 + state[
-                "pressure"
-            ] * (1 - win_b1)
-            state_avg["pressure"] = state_avg["pressure_m"] / (1 - win_b1**n)
+            # state_avg["Pkin_m"] = state_avg["Pkin_m"] * win_b1 + Pkin * (1 - win_b1)
+            # state_avg["Pkin"] = state_avg["Pkin_m"] / (1 - win_b1**n)
+            # state_avg["Pvir_m"] = state_avg["Pvir_m"] * win_b1 + Pvir * (1 - win_b1)
+            # state_avg["Pvir"] = state_avg["Pvir_m"] / (1 - win_b1**n)
+            # state_avg["pressure_m"] = state_avg["pressure_m"] * win_b1 + state[
+            #     "pressure"
+            # ] * (1 - win_b1)
+            # state_avg["pressure"] = state_avg["pressure_m"] / (1 - win_b1**n)
 
-        state["window_avg"] = state_avg
+        # state["window_avg"] = state_avg
 
         return system, state
+
+    @jax.jit
+    def check_nan(system, state):
+        return jnp.any(jnp.isnan(state["vel"])) | jnp.any(jnp.isnan(system["coordinates"]))
 
     ### Print header
     nprint = int(simulation_parameters.get("nprint", 10))
@@ -398,6 +409,7 @@ def dynamic(simulation_parameters, device, fprec):
     print_timings = simulation_parameters.get("print_timings", False)
     force_preprocess = False
     nb_warmup_start = 0
+    nblist_countdown = 0
     for istep in range(1, nsteps + 1):
         ### BAOAB evolution
         # if istep % nblist_stride == 0 or force_preprocess:
@@ -412,35 +424,31 @@ def dynamic(simulation_parameters, device, fprec):
             tstep += time.time() - tstep0
             tstep0 = time.time()
 
+        if nblist_countdown <= 0 or force_preprocess:  # or (istep<nblist_warmup):
+            nblist_countdown = nblist_stride - 1
+            system = model.preprocessing.process(preproc_state, system)
+            (preproc_state, state_up), system, overflow = (
+                model.preprocessing.check_reallocate(preproc_state, system)
+            )
+            if overflow:
+                print("step", istep, ", nblist overflow => reallocating nblist")
+                print("size updates:", state_up)
 
-
-        if istep % nblist_stride == 0 or force_preprocess : #or (istep<nblist_warmup):
-            system = nblist_updater(system)
-            force_preprocess = False
-            ### check nblist overflow
-            graph_ov = nblist_overflow(system)
-            if graph_ov is not None:
-                ## if nblist overflowed during step, reallocate nblist and redo the step
-                print("step",istep,", nblist overflow in graph ",graph_ov,"=> reallocating nblist")
-                system, preproc_state = model.preprocessing(system, preproc_state)
-                nb_warmup_start = istep
-                system = nblist_updater(system)
-            
             if print_timings:
                 system["coordinates"].block_until_ready()
                 tpre += time.time() - tstep0
                 tstep0 = time.time()
 
         else:
-            system = nblist_skin_updater(system)
+            nblist_countdown -= 1
+            # system = nblist_skin_updater(system)
+            system = model.preprocessing.update_skin(system)
 
             if print_timings:
                 system["coordinates"].block_until_ready()
                 tup += time.time() - tstep0
                 tstep0 = time.time()
-      
 
-        
         ## finish step
         system, state = stepB(system, state)
 
@@ -452,6 +460,9 @@ def dynamic(simulation_parameters, device, fprec):
             tstep += time.time() - tstep0
 
         if istep % ndump == 0:
+            if check_nan(system, state):
+                raise ValueError(f"dynamics crashed at step {istep}.")
+            
             tperstep = (time.time() - t0dump) / ndump
             nsperday = (24 * 60 * 60 / tperstep) * dt / 1e6
             if do_wrap_box:
@@ -469,27 +480,28 @@ def dynamic(simulation_parameters, device, fprec):
             # model.reinitialize_preprocessing()
 
         if istep % nprint == 0:
-            if jnp.any(jnp.isnan(state["vel"])) or jnp.any(
-                jnp.isnan(system["coordinates"])
-            ):
-                raise ValueError(f"dynamics crashed at step {istep}.")
             t1 = time.time()
             tperstep = (t1 - t0) / nprint
             t0 = t1
             nsperday = (24 * 60 * 60 / tperstep) * dt / 1e6
-            ek = state["window_avg"]["ek"]
-            e = state["window_avg"]["epot"]
+            # ek = state["window_avg"]["ek"]
+            # e = state["window_avg"]["epot"]
+            ek = state["ek"]
+            e = state["epot"]
 
             line = f"{istep:10} {(start_time+istep*dt)/1000:10.3f} {(ek+e):10.5f} {e:10.3f} {ek:10.3f} {2*ek/(3.*nat)*au.KELVIN:10.3f} {nsperday:10.3f} {1./tperstep:10.3f}"
             if estimate_pressure:
-                line += f' {state["window_avg"]["pressure"]:10.3f}'
+                line += f' {state["pressure"]:10.3f}'
+            #     line += f' {state["window_avg"]["pressure"]:10.3f}'
 
             print(line)
 
             if print_timings:
                 tfull = time.time() - t0full
                 tother = tfull - tpre - tstep - tup
-                print(f"tpre: {tpre:.5f} ({tpre/tfull*100:.2f} %); tup: {tup:.5f} ({tup/tfull*100:.2f} %); tstep: {tstep:.5f} ({tstep/tfull*100:.2f} %); tother: {tother:.5f} ({tother/tfull*100:.2f} %)")
+                print(
+                    f"tpre: {tpre:.5f} ({tpre/tfull*100:.2f} %); tup: {tup:.5f} ({tup/tfull*100:.2f} %); tstep: {tstep:.5f} ({tstep/tfull*100:.2f} %); tother: {tother:.5f} ({tother/tfull*100:.2f} %)"
+                )
                 tpre = 0
                 tstep = 0
                 tup = 0
