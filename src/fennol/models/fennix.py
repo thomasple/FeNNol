@@ -100,7 +100,7 @@ class FENNIX:
         for name, params in preprocessing.items():
             key = str(params.pop("module_name")) if "module_name" in params else name
             key = str(params.pop("FID")) if "FID" in params else key
-            mod = PREPROCESSING[key.upper()](**params)
+            mod = PREPROCESSING[key.upper()](**freeze(params))
             preprocessing_modules.append(mod)
 
         self.preprocessing = PreprocessingChain(tuple(preprocessing_modules), use_atom_padding)

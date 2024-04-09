@@ -51,7 +51,6 @@ class ScatterEdges(nn.Module):
     graph_key: str = "graph"
     switch: bool = False
     switch_key: Optional[str] = None
-    sparse: bool = False
 
     FID: str = "SCATTER_EDGES"
 
@@ -65,17 +64,12 @@ class ScatterEdges(nn.Module):
             switch = (
                 graph["switch"] if self.switch_key is None else inputs[self.switch_key]
             )
-            if self.sparse:
-                switch = switch.flatten()[graph["sparse_index"]]
             x = apply_switch(x, switch)
 
-        if self.sparse:
-            edge_src, edge_dst = graph["edge_src"], graph["edge_dst"]
-            output = jax.ops.segment_sum(x,edge_src,nat) #jnp.zeros((nat, *x.shape[1:])).at[edge_src].add(x,mode="drop")
-            if not self._graphs_properties[self.graph_key]["directed"]:
-                output = output + jax.ops.segment_sum(x,edge_dst,nat)
-        else:
-            output = x.sum(axis=1)
+        edge_src, edge_dst = graph["edge_src"], graph["edge_dst"]
+        output = jax.ops.segment_sum(x,edge_src,nat) #jnp.zeros((nat, *x.shape[1:])).at[edge_src].add(x,mode="drop")
+        if not self._graphs_properties[self.graph_key]["directed"]:
+            output = output + jax.ops.segment_sum(x,edge_dst,nat)
 
         output_key = self.key if self.output_key is None else self.output_key
         return {**inputs, output_key: output}

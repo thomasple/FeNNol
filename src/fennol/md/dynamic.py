@@ -427,7 +427,7 @@ def dynamic(simulation_parameters, device, fprec):
         if nblist_countdown <= 0 or force_preprocess:  # or (istep<nblist_warmup):
             nblist_countdown = nblist_stride - 1
             system = model.preprocessing.process(preproc_state, system)
-            (preproc_state, state_up), system, overflow = (
+            preproc_state, state_up, system, overflow = (
                 model.preprocessing.check_reallocate(preproc_state, system)
             )
             if overflow:

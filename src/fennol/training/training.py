@@ -385,7 +385,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
             s = time.time()
             # inputs = model.preprocess(**data)
             inputs = model.preprocessing.process(preproc_state, data)
-            (preproc_state, state_up), inputs, overflow = (
+            preproc_state, state_up, inputs, overflow = (
                 model.preprocessing.check_reallocate(preproc_state, inputs)
             )
             if overflow:
@@ -397,7 +397,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
             if compute_ref_coords:
                 data_ref = {**data, "coordinates": data[coordinates_ref_key]}
                 inputs_ref = model.preprocessing.process(preproc_state, data_ref)
-                (preproc_state, state_up), inputs_ref, overflow = (
+                preproc_state, state_up, inputs_ref, overflow = (
                     model.preprocessing.check_reallocate(preproc_state, inputs_ref)
                 )
             else:
@@ -433,14 +433,11 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         rmses_avg = defaultdict(lambda: 0.0)
         maes_avg = defaultdict(lambda: 0.0)
         for _ in range(nbatch_per_validation):
-            data = next(validation_iterator)
-            data = check_input(data)
-            padder_state, data = atom_padder(padder_state, data)
-            data = convert_to_jax(data)
+            padder_state, data = next_batch(padder_state)
 
             # inputs = model.preprocess(**data)
             inputs = model.preprocessing.process(preproc_state, data)
-            (preproc_state, state_up), inputs, overflow = (
+            preproc_state, state_up, inputs, overflow = (
                 model.preprocessing.check_reallocate(preproc_state, inputs)
             )
             if overflow:
@@ -449,7 +446,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
             if compute_ref_coords:
                 data_ref = {**data, "coordinates": data[coordinates_ref_key]}
                 inputs_ref = model.preprocessing.process(preproc_state, data_ref)
-                (preproc_state, state_up), inputs_ref, overflow = (
+                preproc_state, state_up, inputs_ref, overflow = (
                     model.preprocessing.check_reallocate(preproc_state, inputs_ref)
                 )
             else:
