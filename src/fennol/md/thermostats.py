@@ -26,7 +26,7 @@ def get_thermostat(
     nbeads=None,
 ):
     state = {}
-    postprocess = lambda x: x
+    postprocess = None
 
     thermostat_name = str(thermostat_name).upper()
     if thermostat_name in ["LGV", "LANGEVIN", "FFLGV"]:
@@ -223,6 +223,7 @@ def get_thermostat(
 
 def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adaptive):
     state = {}
+    post_state = {}
     verbose = qtb_parameters.get("verbose", False)
 
     mass = jnp.asarray(mass, dtype=jnp.float32)
@@ -245,9 +246,9 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
     if do_corr_kin:
         corr_kin = 1.0
     state["corr_kin"] = corr_kin
-    state["corr_kin_prev"] = corr_kin
-    state["do_corr_kin"] = do_corr_kin
-    state["isame_kin"] = 0
+    post_state["corr_kin_prev"] = corr_kin
+    post_state["do_corr_kin"] = do_corr_kin
+    post_state["isame_kin"] = 0
 
     # spectra parameters
     omegasmear = np.pi / dt / 100.0
@@ -268,7 +269,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
         gamma < 0.5 * omegacut
     ), "gamma must be much smaller than omegacut (at most 0.5*omegacut)"
     gammar_min = qtb_parameters.get("gammar_min", 0.1)
-    state["gammar"] = jnp.asarray(np.ones((nspecies, nom), dtype=np.float32))
+    post_state["gammar"] = jnp.asarray(np.ones((nspecies, nom), dtype=np.float32))
 
     # Ornstein-Uhlenbeck correction for colored noise
     a1 = np.exp(-gamma * dt)
@@ -285,18 +286,17 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
         theta[1:] *= u[1:] / np.tanh(u[1:])
     theta = jnp.asarray(theta, dtype=jnp.float32)
 
-    noise_key, state["rng_key"] = jax.random.split(rng_key)
+    noise_key, post_state["rng_key"] = jax.random.split(rng_key)
     del rng_key
-    state["white_noise"] = jax.random.normal(
+    post_state["white_noise"] = jax.random.normal(
         noise_key, (3 * nseg, nat, 3), dtype=jnp.float32
     )
-    state["force"] = jnp.zeros((nseg, nat, 3), dtype=jnp.float32)
 
     startsave = qtb_parameters.get("startsave", 1)
     counter = Counter(nseg, startsave=startsave)
     state["istep"] = 0
-    state["nadapt"] = 0
-    state["nsample"] = 0
+    post_state["nadapt"] = 0
+    post_state["nsample"] = 0
 
     write_spectra = qtb_parameters.get("write_spectra", True)
     do_compute_spectra = write_spectra or adaptive
@@ -304,17 +304,19 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
     if do_compute_spectra:
         state["vel"] = jnp.zeros((nseg, nat, 3), dtype=jnp.float32)
 
-        state["dFDT"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
-        state["mCvv"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
-        state["Cvf"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
-        state["Cff"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
-        state["dFDT_avg"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
-        state["mCvv_avg"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
-        state["Cvfg_avg"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
-        state["Cff_avg"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
+        post_state["dFDT"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
+        post_state["mCvv"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
+        post_state["Cvf"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
+        post_state["Cff"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
+        post_state["dFDT_avg"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
+        post_state["mCvv_avg"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
+        post_state["Cvfg_avg"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
+        post_state["Cff_avg"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
 
-    # adaptation parameters
-    if adaptive:
+    if not adaptive:
+        update_gammar = lambda x: x
+    else:
+        # adaptation parameters
         skipseg = qtb_parameters.get("skipseg", 1)
 
         adaptation_method = (
@@ -330,11 +332,11 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
             a1_ad = agamma * Tseg  #  * gamma
             print(f"ADQTB SIMPLE: agamma = {agamma*au.FS:.3f}")
 
-            def update_gammar(state):
-                g = state["dFDT"]
-                gammar = state["gammar"] - a1_ad * g
+            def update_gammar(post_state):
+                g = post_state["dFDT"]
+                gammar = post_state["gammar"] - a1_ad * g
                 gammar = jnp.maximum(gammar_min, gammar)
-                return {**state, "gammar": gammar}
+                return {**post_state, "gammar": gammar}
 
         elif adaptation_method == "RATIO":
             tau_ad = qtb_parameters.get("tau_ad", 5.0 / au.PS) * au.FS
@@ -345,21 +347,21 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
             )
             b1 = np.exp(-Tseg / tau_ad)
             b2 = np.exp(-Tseg / tau_s)
-            state["mCvv_m"] = jnp.zeros((nspecies, nom), dtype=np.float32)
-            state["Cvf_m"] = jnp.zeros((nspecies, nom), dtype=np.float32)
-            state["n_adabelief"] = 0
+            post_state["mCvv_m"] = jnp.zeros((nspecies, nom), dtype=np.float32)
+            post_state["Cvf_m"] = jnp.zeros((nspecies, nom), dtype=np.float32)
+            post_state["n_adabelief"] = 0
 
-            def update_gammar(state):
-                n_adabelief = state["n_adabelief"] + 1
-                mCvv_m = state["mCvv_m"] * b1 + state["mCvv"] * (1.0 - b1)
-                Cvf_m = state["Cvf_m"] * b2 + state["Cvf"] * (1.0 - b2)
+            def update_gammar(post_state):
+                n_adabelief = post_state["n_adabelief"] + 1
+                mCvv_m = post_state["mCvv_m"] * b1 + post_state["mCvv"] * (1.0 - b1)
+                Cvf_m = post_state["Cvf_m"] * b2 + post_state["Cvf"] * (1.0 - b2)
                 mCvv = mCvv_m / (1.0 - b1**n_adabelief)
                 Cvf = Cvf_m / (1.0 - b2**n_adabelief)
-                # g = Cvf/(mCvv+1.e-8)-state["gammar"]
+                # g = Cvf/(mCvv+1.e-8)-post_state["gammar"]
                 gammar = Cvf / (mCvv + 1.0e-8)
                 gammar = jnp.maximum(gammar_min, gammar)
                 return {
-                    **state,
+                    **post_state,
                     "gammar": gammar,
                     "mCvv_m": mCvv_m,
                     "Cvf_m": Cvf_m,
@@ -380,32 +382,30 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
             a1_ad = agamma * gamma  # * Tseg #* gamma
             b1 = np.exp(-Tseg / tau_ad)
             b2 = np.exp(-Tseg / tau_s)
-            state["dFDT_m"] = jnp.zeros((nspecies, nom), dtype=np.float32)
-            state["dFDT_s"] = jnp.zeros((nspecies, nom), dtype=np.float32)
-            state["n_adabelief"] = 0
+            post_state["dFDT_m"] = jnp.zeros((nspecies, nom), dtype=np.float32)
+            post_state["dFDT_s"] = jnp.zeros((nspecies, nom), dtype=np.float32)
+            post_state["n_adabelief"] = 0
 
-            def update_gammar(state):
-                n_adabelief = state["n_adabelief"] + 1
-                dFDT = state["dFDT"]
-                dFDT_m = state["dFDT_m"] * b1 + dFDT * (1.0 - b1)
+            def update_gammar(post_state):
+                n_adabelief = post_state["n_adabelief"] + 1
+                dFDT = post_state["dFDT"]
+                dFDT_m = post_state["dFDT_m"] * b1 + dFDT * (1.0 - b1)
                 dFDT_s = (
-                    state["dFDT_s"] * b2 + (dFDT - dFDT_m) ** 2 * (1.0 - b2) + 1.0e-8
+                    post_state["dFDT_s"] * b2 + (dFDT - dFDT_m) ** 2 * (1.0 - b2) + 1.0e-8
                 )
                 # bias correction
                 mt = dFDT_m / (1.0 - b1**n_adabelief)
                 st = dFDT_s / (1.0 - b2**n_adabelief)
-                gammar = state["gammar"] - a1_ad * mt / (st**0.5 + 1.0e-8)
+                gammar = post_state["gammar"] - a1_ad * mt / (st**0.5 + 1.0e-8)
                 gammar = jnp.maximum(gammar_min, gammar)
                 return {
-                    **state,
+                    **post_state,
                     "gammar": gammar,
                     "dFDT_m": dFDT_m,
                     "n_adabelief": n_adabelief,
                     "dFDT_s": dFDT_s,
                 }
-
-    else:
-        update_gammar = lambda x: x
+        
 
     def compute_corr_pot(niter=20, verbose=False):
         if classical_kernel or hbar == 0:
@@ -431,15 +431,15 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
         )
         return corr_pot
 
-    def compute_corr_kin(state, niter=7, verbose=False):
-        if not state["do_corr_kin"]:
-            return state
+    def compute_corr_kin(post_state, niter=7, verbose=False):
+        if not post_state["do_corr_kin"]:
+            return post_state
         if classical_kernel or hbar == 0:
             return 1.0
 
-        K_D = state.get("K_D", None)
-        mCvv = (state["mCvv_avg"][:, :nom] * n_of_type[:, None]).sum(axis=0) / nat
-        s_0 = np.array(mCvv * kT / theta[:nom] / state["corr_pot"])
+        K_D = post_state.get("K_D", None)
+        mCvv = (post_state["mCvv_avg"][:, :nom] * n_of_type[:, None]).sum(axis=0) / nat
+        s_0 = np.array(mCvv * kT / theta[:nom] / post_state["corr_pot"])
         s_out, s_rec, K_D = deconvolute_spectrum(
             s_0,
             omega[:nom],
@@ -452,7 +452,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
             K_D=K_D,
         )
         s_out = s_out * theta[:nom] / kT
-        s_rec = s_rec * theta[:nom] / kT * state["corr_pot"]
+        s_rec = s_rec * theta[:nom] / kT * post_state["corr_pot"]
         mCvvsum = mCvv.sum()
         rec_ratio = mCvvsum / s_rec.sum()
         if rec_ratio < 0.95 or rec_ratio > 1.05:
@@ -460,22 +460,21 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
             return
 
         corr_kin = mCvvsum / s_out.sum()
-        if np.abs(corr_kin - state["corr_kin_prev"]) < 1.0e-4:
-            isame_kin = state["isame_kin"] + 1
+        if np.abs(corr_kin - post_state["corr_kin_prev"]) < 1.0e-4:
+            isame_kin = post_state["isame_kin"] + 1
         else:
             isame_kin = 0
 
         print("corr_kin: ", corr_kin)
-        do_corr_kin = state["do_corr_kin"]
+        do_corr_kin = post_state["do_corr_kin"]
         if isame_kin > 10:
             print(
                 "INFO: corr_kin is converged (it did not change for 10 consecutive segments)"
             )
             do_corr_kin = False
 
-        return {
-            **state,
-            "corr_kin": corr_kin,
+        return corr_kin,{
+            **post_state,
             "corr_kin_prev": corr_kin,
             "isame_kin": isame_kin,
             "do_corr_kin": do_corr_kin,
@@ -483,14 +482,14 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
         }
 
     @jax.jit
-    def ff_kernel(state):
+    def ff_kernel(post_state):
         if classical_kernel:
             kernel = cutoff * (2 * gamma * kT / dt)
         else:
             kernel = theta * cutoff * OUcorr * (2 * gamma / dt)
         gamma_ratio = jnp.concatenate(
             (
-                state["gammar"].T * state["corr_pot"][:, None],
+                post_state["gammar"].T * post_state["corr_pot"][:, None],
                 jnp.ones((kernel.shape[0] - nom, nspecies)),
             ),
             axis=0,
@@ -498,55 +497,55 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
         return kernel[:, None] * gamma_ratio * mass_idx[None, :]
 
     @jax.jit
-    def refresh_force(state):
-        rng_key, noise_key = jax.random.split(state["rng_key"])
+    def refresh_force(post_state):
+        rng_key, noise_key = jax.random.split(post_state["rng_key"])
         white_noise = jnp.concatenate(
             (
-                state["white_noise"][nseg:],
+                post_state["white_noise"][nseg:],
                 jax.random.normal(noise_key, (nseg, nat, 3), dtype=jnp.float32),
             ),
             axis=0,
         )
-        amplitude = ff_kernel(state) ** 0.5
+        amplitude = ff_kernel(post_state) ** 0.5
         s = jnp.fft.rfft(white_noise, 3 * nseg, axis=0) * amplitude[:, type_idx, None]
         force = jnp.fft.irfft(s, 3 * nseg, axis=0)[nseg : 2 * nseg]
-        return {**state, "rng_key": rng_key, "white_noise": white_noise, "force": force}
+        return force, {**post_state, "rng_key": rng_key, "white_noise": white_noise}
 
     @jax.jit
-    def compute_spectra(state):
-        sf = jnp.fft.rfft(state["force"] / gamma, 3 * nseg, axis=0, norm="ortho")
-        sv = jnp.fft.rfft(state["vel"], 3 * nseg, axis=0, norm="ortho")
+    def compute_spectra(force,vel,post_state):
+        sf = jnp.fft.rfft(force / gamma, 3 * nseg, axis=0, norm="ortho")
+        sv = jnp.fft.rfft(vel, 3 * nseg, axis=0, norm="ortho")
         Cvv = jnp.sum(jnp.abs(sv[:nom]) ** 2, axis=-1).T
         Cff = jnp.sum(jnp.abs(sf[:nom]) ** 2, axis=-1).T
         Cvf = jnp.sum(jnp.real(sv[:nom] * jnp.conj(sf[:nom])), axis=-1).T
 
         mCvv = (
             (dt / 3.0)
-            * jnp.zeros_like(state["mCvv"]).at[type_idx].add(Cvv)
+            * jnp.zeros_like(post_state["mCvv"]).at[type_idx].add(Cvv)
             * mass_idx[:, None]
             / n_of_type[:, None]
         )
         Cvf = (
             (dt / 3.0)
-            * jnp.zeros_like(state["Cvf"]).at[type_idx].add(Cvf)
+            * jnp.zeros_like(post_state["Cvf"]).at[type_idx].add(Cvf)
             / n_of_type[:, None]
         )
         Cff = (
             (dt / 3.0)
-            * jnp.zeros_like(state["Cff"]).at[type_idx].add(Cff)
+            * jnp.zeros_like(post_state["Cff"]).at[type_idx].add(Cff)
             / n_of_type[:, None]
         )
-        dFDT = mCvv * state["gammar"] - Cvf
+        dFDT = mCvv * post_state["gammar"] - Cvf
 
-        nsinv = 1.0 / state["nsample"]
+        nsinv = 1.0 / post_state["nsample"]
         b1 = 1.0 - nsinv
-        dFDT_avg = state["dFDT_avg"] * b1 + dFDT * nsinv
-        mCvv_avg = state["mCvv_avg"] * b1 + mCvv * nsinv
-        Cvfg_avg = state["Cvfg_avg"] * b1 + Cvf / state["gammar"] * nsinv
-        Cff_avg = state["Cff_avg"] * b1 + Cff * nsinv
+        dFDT_avg = post_state["dFDT_avg"] * b1 + dFDT * nsinv
+        mCvv_avg = post_state["mCvv_avg"] * b1 + mCvv * nsinv
+        Cvfg_avg = post_state["Cvfg_avg"] * b1 + Cvf / post_state["gammar"] * nsinv
+        Cff_avg = post_state["Cff_avg"] * b1 + Cff * nsinv
 
         return {
-            **state,
+            **post_state,
             "mCvv": mCvv,
             "Cvf": Cvf,
             "Cff": Cff,
@@ -557,13 +556,13 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
             "Cff_avg": Cff_avg,
         }
 
-    def write_spectra_to_file(state):
-        mCvv_avg = np.array(state["mCvv_avg"])
-        Cvfg_avg = np.array(state["Cvfg_avg"])
-        Cff_avg = np.array(state["Cff_avg"]) * 3.0 / dt / (gamma**2)
-        dFDT_avg = np.array(state["dFDT_avg"])
-        gammar = np.array(state["gammar"])
-        Cff_theo = np.array(ff_kernel(state))[:nom].T
+    def write_spectra_to_file(post_state):
+        mCvv_avg = np.array(post_state["mCvv_avg"])
+        Cvfg_avg = np.array(post_state["Cvfg_avg"])
+        Cff_avg = np.array(post_state["Cff_avg"]) * 3.0 / dt / (gamma**2)
+        dFDT_avg = np.array(post_state["dFDT_avg"])
+        gammar = np.array(post_state["gammar"])
+        Cff_theo = np.array(ff_kernel(post_state))[:nom].T
         for i, sp in enumerate(species_set):
             ff_scale = au.KELVIN / ((2 * gamma / dt) * mass_idx[i])
             columns = np.column_stack(
@@ -594,37 +593,39 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
             vel2 = state["vel"].at[istep].set(vel * a1**0.5 + 0.5 * dvel)
             return vel * a1 + dvel, {
                 **state,
+                "istep": istep + 1,
                 "vel": vel2,
             }
         else:
-            return vel * a1 + dvel, state
+            return vel * a1 + dvel, {**state, "istep": istep + 1}
 
     @jax.jit
-    def postprocess_work(state):
+    def postprocess_work(state,post_state):
         if do_compute_spectra:
-            state = compute_spectra(state)
+            post_state = compute_spectra(state["force"],state["vel"],post_state)
         if adaptive:
-            state = jax.lax.cond(
-                state["nadapt"] > skipseg, update_gammar, lambda x: x, state
+            post_state = jax.lax.cond(
+                post_state["nadapt"] > skipseg, update_gammar, lambda x: x, post_state
             )
-        state = refresh_force(state)
-        return state
+        new_force,post_state = refresh_force(post_state)
+        return {**state, "force":new_force},post_state
 
-    def postprocess(state):
+    def postprocess(state, post_state):
         counter.increment()
-        state = {**state, "istep": counter.count}
         if not counter.is_reset_step:
-            return state
-        state["nadapt"] += 1
-        state["nsample"] = max(state["nadapt"] - startsave + 1, 1)
+            return state,post_state
+        post_state["nadapt"] += 1
+        post_state["nsample"] = max(post_state["nadapt"] - startsave + 1, 1)
         if verbose:
             print("Refreshing QTB forces.")
-        state = postprocess_work(state)
-        state = compute_corr_kin(state)
+        state,post_state = postprocess_work(state,post_state)
+        state["corr_kin"],post_state = compute_corr_kin(post_state)
+        state["istep"] = 0
         if write_spectra:
-            write_spectra_to_file(state)
-        return state
+            write_spectra_to_file(post_state)
+        return state,post_state
 
-    state["corr_pot"] = jnp.asarray(compute_corr_pot(), dtype=jnp.float32)
-
-    return thermostat, postprocess, refresh_force(state)
+    post_state["corr_pot"] = jnp.asarray(compute_corr_pot(), dtype=jnp.float32)
+    
+    state["force"],post_state = refresh_force(post_state)
+    return thermostat, (postprocess,post_state), state

@@ -204,15 +204,27 @@ def dynamic(simulation_parameters, device, fprec):
         simulation_parameters=simulation_parameters,
         species=species,
     )
+    do_thermostat_post = thermostat_post is not None
+    if do_thermostat_post:
+        thermostat_post, post_state = thermostat_post
 
     ### CONFIGURE PREPROCESSING
-    nblist_stride = int(simulation_parameters.get("nblist_stride", 20))
+    minimum_image = simulation_parameters.get("minimum_image", True)
+    nblist_verbose = simulation_parameters.get("nblist_verbose", True)
+    nblist_stride = int(simulation_parameters.get("nblist_stride", -1))
     nblist_warmup_time = simulation_parameters.get("nblist_warmup_time", 0.)*au.FS
     nblist_warmup = int(nblist_warmup_time/dt)
-    nblist_skin = simulation_parameters.get("nblist_skin", None)
-    if nblist_skin is not None:
-        print(f"nblist_skin: {nblist_skin:.2f} A, nblist_stride: {nblist_stride} steps")
-    else:
+    nblist_skin = simulation_parameters.get("nblist_skin", -1.)
+    if nblist_skin > 0:
+        if nblist_stride <= 0:
+            ## reference skin parameters at 300K (from Tinker-HP) 
+            ##   => skin of 2 A gives you 40 fs without complete rebuild
+            t_ref = 40. # FS
+            nblist_skin_ref = 2. # A
+            nblist_stride = int(math.floor(nblist_skin/nblist_skin_ref*t_ref/dt))
+        print(f"nblist_skin: {nblist_skin:.2f} A, nblist_stride: {nblist_stride} steps, nblist_warmup: {nblist_warmup} steps")
+
+    if nblist_skin <= 0:
         nblist_stride = 1
 
     def configure_nblist(preproc_state, nblist_skin, nblist_stride=0):
@@ -224,8 +236,10 @@ def dynamic(simulation_parameters, device, fprec):
             #     if nblist_stride > 1:
             #         st["skin_stride"] = nblist_stride
             #         st["skin_count"] = nblist_stride
-            if "nblist_skin" in simulation_parameters:
-                stnew["nblist_skin"] = simulation_parameters["nblist_skin"]
+            if cell is not None:
+                stnew["minimum_image"] = minimum_image
+            if nblist_skin > 0:
+                stnew["nblist_skin"] = nblist_skin
             if "nblist_mult_size" in simulation_parameters:
                 stnew["nblist_mult_size"] = simulation_parameters["nblist_mult_size"]
             if "nblist_add_neigh" in simulation_parameters:
@@ -271,7 +285,8 @@ def dynamic(simulation_parameters, device, fprec):
 
     preproc_state = preproc_state.copy({"check_input": False})
     # preproc_state["check_input"] = False
-    print("preproc_state:",preproc_state)
+    if nblist_verbose:
+        print("nblist state:",preproc_state)
 
     ### print model
     if simulation_parameters.get("print_model", False):
@@ -416,6 +431,7 @@ def dynamic(simulation_parameters, device, fprec):
     force_preprocess = False
     nb_warmup_start = 0
     nblist_countdown = 0
+    print_skin_activation = True
     for istep in range(1, nsteps + 1):
         ### BAOAB evolution
         # if istep % nblist_stride == 0 or force_preprocess:
@@ -436,7 +452,7 @@ def dynamic(simulation_parameters, device, fprec):
             preproc_state, state_up, system, overflow = (
                 model.preprocessing.check_reallocate(preproc_state, system)
             )
-            if overflow:
+            if nblist_verbose and overflow:
                 print("step", istep, ", nblist overflow => reallocating nblist")
                 print("size updates:", state_up)
 
@@ -446,6 +462,10 @@ def dynamic(simulation_parameters, device, fprec):
                 tstep0 = time.time()
 
         else:
+            if print_skin_activation:
+                if nblist_verbose:
+                    print("step", istep, ", end of nblist warmup phase => activating skin updates")
+                print_skin_activation = False
             nblist_countdown -= 1
             # system = nblist_skin_updater(system)
             system = model.preprocessing.update_skin(system)
@@ -459,7 +479,8 @@ def dynamic(simulation_parameters, device, fprec):
         system, state = stepB(system, state)
 
         ## end of state update (mostly for adQTB)
-        state["thermostat"] = thermostat_post(state["thermostat"])
+        if do_thermostat_post:
+            state["thermostat"],post_state = thermostat_post(state["thermostat"],post_state)
 
         if print_timings:
             system["coordinates"].block_until_ready()
@@ -480,6 +501,10 @@ def dynamic(simulation_parameters, device, fprec):
             print("Write XYZ frame")
             write_arc_frame(fout, symbols, np.asarray(system["coordinates"]))
             print("ns/day: ", nsperday)
+            if  nblist_verbose:
+                print()
+                print("nblist state:",preproc_state)
+                print()
             print(header)
             t0dump = time.time()
 

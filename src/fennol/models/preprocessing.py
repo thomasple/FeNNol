@@ -13,6 +13,7 @@ from flax.core.frozen_dict import FrozenDict
 
 from ..utils.activations import chain
 from ..utils import deep_update, mask_filter_1d
+from ..utils.nblist import get_reciprocal_space_parameters
 from .modules import FENNIXModules
 from .misc.misc import SwitchFunction
 
@@ -63,8 +64,8 @@ class GraphGenerator:
             }
         }
 
-    def __call__(self, state, inputs, return_state_update=False,add_margin=False):
-        """ build a nblist on cpu with numpy and dynamic shapes + store max shapes """
+    def __call__(self, state, inputs, return_state_update=False, add_margin=False):
+        """build a nblist on cpu with numpy and dynamic shapes + store max shapes"""
         coords = np.array(inputs["coordinates"])
         natoms = np.array(inputs["natoms"])
         batch_index = np.array(inputs["batch_index"])
@@ -77,6 +78,8 @@ class GraphGenerator:
         if true_max_nat > max_nat:
             state_up["max_nat"] = (true_max_nat, max_nat)
             new_state["max_nat"] = true_max_nat
+
+        cutoff_skin = self.cutoff + state.get("nblist_skin", 0.0)
 
         ### compute indices of all pairs
         p1, p2 = np.triu_indices(true_max_nat, 1)
@@ -91,30 +94,87 @@ class GraphGenerator:
             p1 = np.where(mask_p12, (p1[None, :] + shift[:, None]).flatten(), -1)
             p2 = np.where(mask_p12, (p2[None, :] + shift[:, None]).flatten(), -1)
 
-        ## compute vectors
-        vec = coords[p2] - coords[p1]
-
-        ## apply PBC (minimum image convention only for now)
-        if "cells" in inputs:
+        apply_pbc = "cells" in inputs
+        if not apply_pbc:
+            ### NO PBC
+            vec = coords[p2] - coords[p1]
+        else:
             cells = np.array(inputs["cells"])
             reciprocal_cells = np.array(inputs["reciprocal_cells"])
-
-            if cells.shape[0] == 1:
-                vecpbc = np.dot(vec, reciprocal_cells[0].T)
-                pbc_shifts = -np.round(vecpbc)
-                vec = vec + np.dot(pbc_shifts, cells[0].T)
+            minimage = state.get("minimum_image", True)
+            if minimage:
+                ## MINIMUM IMAGE CONVENTION
+                vec = coords[p2] - coords[p1]
+                if cells.shape[0] == 1:
+                    vecpbc = np.dot(vec, reciprocal_cells[0].T)
+                    pbc_shifts = -np.round(vecpbc)
+                    vec = vec + np.dot(pbc_shifts, cells[0].T)
+                else:
+                    batch_index_vec = batch_index[p1]
+                    cells_ = np.swapaxes(cells, -2, -1)[batch_index_vec]
+                    reciprocal_cells_ = np.swapaxes(reciprocal_cells, -2, -1)[
+                        batch_index_vec
+                    ]
+                    vecpbc = np.einsum("aj,aji->ai", vec, reciprocal_cells_)
+                    pbc_shifts = -np.round(vecpbc)
+                    vec = vec + np.einsum("aj,aji->ai", pbc_shifts, cells_)
             else:
-                batch_index_vec = batch_index[p1]
-                cells = np.swapaxes(cells, -2, -1)[batch_index_vec]
-                reciprocal_cells = np.swapaxes(reciprocal_cells, -2, -1)[
-                    batch_index_vec
-                ]
-                vecpbc = np.einsum("aj,aji->ai", vec, reciprocal_cells)
-                pbc_shifts = -np.round(vecpbc)
-                vec = vec + np.einsum("aj,aji->ai", pbc_shifts, cells)
+                ### GENERAL PBC
+                ## put all atoms in central box
+                if cells.shape[0] > 1:
+                    coords_pbc = np.dot(coords, reciprocal_cells[0].T)
+                    at_shifts = -np.floor(coords_pbc)
+                    coords_pbc = coords + np.dot(at_shifts, cells[0].T)
+                else:
+                    cells_ = np.swapaxes(cells, -2, -1)[batch_index]
+                    reciprocal_cells_ = np.swapaxes(reciprocal_cells, -2, -1)[
+                        batch_index
+                    ]
+                    coords_pbc = np.einsum("aj,aji->ai", coords, reciprocal_cells_)
+                    at_shifts = -np.floor(coords_pbc)
+                    coords_pbc = coords + np.einsum("aj,aji->ai", at_shifts, cells_)
+
+                ## compute maximum number of repeats
+                inv_distances = (np.sum(reciprocal_cells**2, axis=1)) ** 0.5
+                num_repeats_all = np.ceil(cutoff_skin * inv_distances).astype(np.int32)
+                num_repeats = np.max(num_repeats_all, axis=0)
+                num_repeats_prev = np.array(state.get("num_repeats_pbc", (0, 0, 0)))
+                if np.any(num_repeats > num_repeats_prev):
+                    num_repeats_new = np.maximum(num_repeats, num_repeats_prev)
+                    state_up["num_repeats_pbc"] = (tuple(num_repeats_new), tuple(num_repeats_prev))
+                    new_state["num_repeats_pbc"] = tuple(num_repeats_new)
+                ## build all possible shifts
+                cell_shift_pbc = np.array(
+                    np.meshgrid(*[np.arange(-n, n + 1) for n in num_repeats])
+                ).T.reshape(-1, 3)
+                ## shift applied to vectors
+                if cells.shape[0] == 1:
+                    dvec = np.dot(cell_shift_pbc, cells[0].T)[None, :, :]
+                else:
+                    batch_index_vec = batch_index[p1]
+                    dvec = np.einsum("sij,bj->sbi", cells, cell_shift_pbc)[
+                        batch_index_vec
+                    ]
+                ## compute vectors
+                vec = (
+                    coords_pbc[p2, None, :] - coords_pbc[p1, None, :] + dvec
+                ).reshape(-1, 3)
+                pbc_shifts = np.broadcast_to(
+                    cell_shift_pbc[None, :, :],
+                    (p1.shape[0], cell_shift_pbc.shape[0], 3),
+                ).reshape(-1, 3)
+                p1 = np.broadcast_to(
+                    p1[:, None], (p1.shape[0], cell_shift_pbc.shape[0])
+                ).flatten()
+                p2 = np.broadcast_to(
+                    p2[:, None], (p2.shape[0], cell_shift_pbc.shape[0])
+                ).flatten()
+                if natoms.shape[0] > 1:
+                    mask_p12 = np.broadcast_to(
+                        mask_p12[:, None], (mask_p12.shape[0], cell_shift_pbc.shape[0])
+                    ).flatten()
 
         ## compute distances
-        cutoff_skin = self.cutoff + state.get("nblist_skin", 0.0)
         d12 = (vec**2).sum(axis=-1)
         if natoms.shape[0] > 1:
             d12 = np.where(mask_p12, d12, cutoff_skin**2)
@@ -127,7 +187,7 @@ class GraphGenerator:
         if npairs > max_pairs or add_margin:
             mult_size = state.get("nblist_mult_size", self.mult_size)
             prev_max_pairs = max_pairs
-            max_pairs = int(mult_size * max(npairs,max_pairs)) + 1
+            max_pairs = int(mult_size * max(npairs, max_pairs)) + 1
             state_up["npairs"] = (max_pairs, prev_max_pairs)
             new_state["npairs"] = max_pairs
 
@@ -139,16 +199,23 @@ class GraphGenerator:
         edge_dst[:npairs] = p2[idx]
         d12_[:npairs] = d12[idx]
         d12 = d12_
-        if "cells" in inputs:
-            pbc_shifts_ = np.full((max_pairs, 3), 0.0)
+
+        if apply_pbc:
+            pbc_shifts_ = np.zeros((max_pairs, 3))
             pbc_shifts_[:npairs] = pbc_shifts[idx]
             pbc_shifts = pbc_shifts_
+            if not minimage:
+                pbc_shifts[:npairs] = (
+                    pbc_shifts[:npairs]
+                    + at_shifts[edge_dst[:npairs]]
+                    - at_shifts[edge_src[:npairs]]
+                )
 
         if "nblist_skin" in state:
             # edge_mask_skin = edge_mask
             edge_src_skin = edge_src
             edge_dst_skin = edge_dst
-            if "cells" in inputs:
+            if apply_pbc:
                 pbc_shifts_skin = pbc_shifts
             max_pairs_skin = state.get("npairs_skin", 1)
             mask = d12 < self.cutoff**2
@@ -157,7 +224,7 @@ class GraphGenerator:
             if npairs_skin > max_pairs_skin or add_margin:
                 mult_size = state.get("nblist_mult_size", self.mult_size)
                 prev_max_pairs_skin = max_pairs_skin
-                max_pairs_skin = int(mult_size * max(npairs_skin,max_pairs_skin)) + 1
+                max_pairs_skin = int(mult_size * max(npairs_skin, max_pairs_skin)) + 1
                 state_up["npairs_skin"] = (max_pairs_skin, prev_max_pairs_skin)
                 new_state["npairs_skin"] = max_pairs_skin
             edge_src = np.full(max_pairs_skin, nat, dtype=np.int32)
@@ -167,7 +234,7 @@ class GraphGenerator:
             edge_dst[:npairs_skin] = edge_dst_skin[idx]
             d12_[:npairs_skin] = d12[idx]
             d12 = d12_
-            if "cells" in inputs:
+            if apply_pbc:
                 pbc_shifts = np.full((max_pairs_skin, 3), 0.0)
                 pbc_shifts[:npairs_skin] = pbc_shifts_skin[idx]
 
@@ -176,10 +243,10 @@ class GraphGenerator:
             (edge_dst, edge_src)
         )
         d12 = np.concatenate((d12, d12))
-        if "cells" in inputs:
+        if apply_pbc:
             pbc_shifts = np.concatenate((pbc_shifts, -pbc_shifts))
 
-        graph = inputs[self.graph_key] if self.graph_key in inputs else {}
+        graph = inputs.get(self.graph_key, {})
         graph_out = {
             **graph,
             "edge_src": edge_src,
@@ -191,8 +258,16 @@ class GraphGenerator:
         if "nblist_skin" in state:
             graph_out["edge_src_skin"] = edge_src_skin
             graph_out["edge_dst_skin"] = edge_dst_skin
-            if "cells" in inputs:
+            if apply_pbc:
                 graph_out["pbc_shifts_skin"] = pbc_shifts_skin
+
+        if self.k_space and apply_pbc:
+            if "k_points" not in graph:
+                ks, _, _, bewald = get_reciprocal_space_parameters(
+                    reciprocal_cells, self.cutoff, self.kmax, self.kthr
+                )
+            graph_out["k_points"] = ks
+            graph_out["b_ewald"] = bewald
 
         output = {**inputs, self.graph_key: graph_out}
 
@@ -201,18 +276,20 @@ class GraphGenerator:
         return FrozenDict(new_state), output
 
     def check_reallocate(self, state, inputs, parent_overflow=False):
-        """ check for overflow and reallocate nblist if necessary """
+        """check for overflow and reallocate nblist if necessary"""
         overflow = parent_overflow or inputs[self.graph_key].get("overflow", False)
         if not overflow:
-            return state,{}, inputs, False
+            return state, {}, inputs, False
 
         add_margin = inputs[self.graph_key].get("overflow", False)
-        state, inputs, state_up = self(state, inputs, return_state_update=True,add_margin=add_margin)
+        state, inputs, state_up = self(
+            state, inputs, return_state_update=True, add_margin=add_margin
+        )
         return state, state_up, inputs, True
 
     @partial(jax.jit, static_argnums=(0, 1))
     def process(self, state, inputs):
-        """ build a nblist on acceleratir with jax and precomputed shapes """
+        """build a nblist on acceleratir with jax and precomputed shapes"""
         coords = inputs["coordinates"]
         natoms = inputs["natoms"]
         batch_index = inputs["batch_index"]
@@ -233,28 +310,81 @@ class GraphGenerator:
             p2 = jnp.where(mask_p12, (p2[None, :] + shift[:, None]).flatten(), -1)
 
         ## compute vectors
-        vec = coords[p2] - coords[p1]
-
-        ## apply PBC (minimum image convention only for now)
-        if "cells" in inputs:
+        if "cells" not in inputs:
+            vec = coords[p2] - coords[p1]
+        else:
             cells = inputs["cells"]
             reciprocal_cells = inputs["reciprocal_cells"]
+            minimage = state.get("minimum_image", True)
 
-            def compute_pbc(vec, reciprocal_cell, cell):
+            def compute_pbc(vec, reciprocal_cell, cell, mode="round"):
                 vecpbc = jnp.dot(vec, reciprocal_cell)
-                pbc_shifts = -jnp.round(vecpbc)
+                if mode == "round":
+                    pbc_shifts = -jnp.round(vecpbc)
+                elif mode == "floor":
+                    pbc_shifts = -jnp.floor(vecpbc)
+                else:
+                    raise NotImplementedError(f"Unknown mode {mode} for compute_pbc.")
                 return vec + jnp.dot(pbc_shifts, cell), pbc_shifts
 
-            if cells.shape[0] == 1:
-                cells = cells[0].T
-                vec, pbc_shifts = compute_pbc(vec, reciprocal_cells[0].T, cells)
+            if minimage:
+                ## minimum image convention
+                vec = coords[p2] - coords[p1]
+
+                if cells.shape[0] == 1:
+                    cells = cells[0].T
+                    vec, pbc_shifts = compute_pbc(vec, reciprocal_cells[0].T, cells)
+                else:
+                    batch_index_vec = batch_index[p1]
+                    cells_ = jnp.swapaxes(cells, -2, -1)[batch_index_vec]
+                    reciprocal_cells_ = jnp.swapaxes(reciprocal_cells, -2, -1)[
+                        batch_index_vec
+                    ]
+                    vec, pbc_shifts = jax.vmap(compute_pbc)(
+                        vec, reciprocal_cells_, cells_
+                    )
             else:
-                batch_index_vec = batch_index[p1]
-                cells = jnp.swapaxes(cells, -2, -1)[batch_index_vec]
-                reciprocal_cells = jnp.swapaxes(reciprocal_cells, -2, -1)[
-                    batch_index_vec
-                ]
-                vec, pbc_shifts = jax.vmap(compute_pbc)(vec, reciprocal_cells, cells)
+                ### general PBC only for single cell yet
+                if cells.shape[0] > 1:
+                    raise NotImplementedError(
+                        "General PBC not implemented for batches on accelerator."
+                    )
+                cell = cells[0].T
+                reciprocal_cell = reciprocal_cells[0].T
+
+                ## put all atoms in central box
+                coords_pbc, at_shifts = compute_pbc(
+                    coords, reciprocal_cell, cell, mode="floor"
+                )
+                num_repeats = state.get("num_repeats_pbc", None)
+                if num_repeats is None:
+                    raise ValueError(
+                        "num_repeats_pbc should be provided for general PBC on accelerator. Call the numpy routine (self.__call__) first."
+                    )
+                cell_shift_pbc = jnp.asarray(
+                    np.array(
+                        np.meshgrid(*[np.arange(-n, n + 1) for n in num_repeats])
+                    ).T.reshape(-1, 3)
+                )
+                vec = (
+                    coords_pbc[p2, None, :]
+                    - coords_pbc[p1, None, :]
+                    + jnp.dot(cell_shift_pbc, cell)[None, :, :]
+                ).reshape(-1, 3)
+                pbc_shifts = jnp.broadcast_to(
+                    cell_shift_pbc[None, :, :],
+                    (p1.shape[0], cell_shift_pbc.shape[0], 3),
+                ).reshape(-1, 3)
+                p1 = jnp.broadcast_to(
+                    p1[:, None], (p1.shape[0], cell_shift_pbc.shape[0])
+                ).flatten()
+                p2 = jnp.broadcast_to(
+                    p2[:, None], (p2.shape[0], cell_shift_pbc.shape[0])
+                ).flatten()
+                if natoms.shape[0] > 1:
+                    mask_p12 = jnp.broadcast_to(
+                        mask_p12[:, None], (mask_p12.shape[0], cell_shift_pbc.shape[0])
+                    ).flatten()
 
         ## compute distances
         cutoff_skin = self.cutoff + state.get("nblist_skin", 0.0)
@@ -278,6 +408,12 @@ class GraphGenerator:
                 .at[scatter_idx]
                 .set(pbc_shifts, mode="drop")
             )
+            if not minimage:
+                pbc_shifts = (
+                    pbc_shifts
+                    + at_shifts.at[edge_dst].get(fill_value=0.0)
+                    - at_shifts.at[edge_src].get(fill_value=0.0)
+                )
 
         ## check for overflow
         if natoms.shape[0] == 1:
@@ -334,11 +470,16 @@ class GraphGenerator:
             if "cells" in inputs:
                 graph_out["pbc_shifts_skin"] = pbc_shifts_skin
 
+        if self.k_space and "cells" in inputs:
+            if "k_points" not in graph:
+                raise NotImplementedError(
+                    "k_space generation not implemented on accelerator. Call the numpy routine (self.__call__) first."
+                )
         return {**inputs, self.graph_key: graph_out}
 
     @partial(jax.jit, static_argnums=(0,))
     def update_skin(self, inputs):
-        """ update the nblist without recomputing the full nblist """
+        """update the nblist without recomputing the full nblist"""
         graph = inputs[self.graph_key]
 
         edge_src_skin = graph["edge_src_skin"]
@@ -385,6 +526,12 @@ class GraphGenerator:
         }
         if "cells" in inputs:
             graph_out["pbc_shifts"] = jnp.concatenate((pbc_shifts, -pbc_shifts))
+
+        if self.k_space and "cells" in inputs:
+            if "k_points" not in graph:
+                raise NotImplementedError(
+                    "k_space generation not implemented on accelerator. Call the numpy routine (self.__call__) first."
+                )
 
         return {**inputs, self.graph_key: graph_out}
 
@@ -468,8 +615,8 @@ class GraphFilter:
             }
         }
 
-    def __call__(self, state, inputs, return_state_update=False,add_margin=False):
-        """ filter a nblist on cpu with numpy and dynamic shapes + store max shapes """
+    def __call__(self, state, inputs, return_state_update=False, add_margin=False):
+        """filter a nblist on cpu with numpy and dynamic shapes + store max shapes"""
         graph_in = inputs[self.parent_graph]
         nat = inputs["species"].shape[0]
 
@@ -480,7 +627,7 @@ class GraphFilter:
         d12 = np.array(graph_in["d12"])
         if self.remove_hydrogens:
             species = inputs["species"]
-            src_idx = (edge_src < nat).nonzero()[0]  
+            src_idx = (edge_src < nat).nonzero()[0]
             mask = np.zeros(edge_src.shape[0], dtype=bool)
             mask[src_idx] = (species > 1)[edge_src[src_idx]]
             d12 = np.where(mask, d12, self.cutoff**2)
@@ -492,7 +639,7 @@ class GraphFilter:
         if npairs > max_pairs or add_margin:
             mult_size = state.get("nblist_mult_size", self.mult_size)
             prev_max_pairs = max_pairs
-            max_pairs = int(mult_size * max(npairs,max_pairs)) + 1
+            max_pairs = int(mult_size * max(npairs, max_pairs)) + 1
             state_up["npairs"] = (max_pairs, prev_max_pairs)
             new_state["npairs"] = max_pairs
 
@@ -522,18 +669,20 @@ class GraphFilter:
         return FrozenDict(new_state), output
 
     def check_reallocate(self, state, inputs, parent_overflow=False):
-        """ check for overflow and reallocate nblist if necessary"""
+        """check for overflow and reallocate nblist if necessary"""
         overflow = parent_overflow or inputs[self.graph_key].get("overflow", False)
         if not overflow:
             return state, {}, inputs, False
 
         add_margin = inputs[self.graph_key].get("overflow", False)
-        state, inputs, state_up = self(state, inputs, return_state_update=True,add_margin=add_margin)
+        state, inputs, state_up = self(
+            state, inputs, return_state_update=True, add_margin=add_margin
+        )
         return state, state_up, inputs, True
 
     @partial(jax.jit, static_argnums=(0, 1))
     def process(self, state, inputs):
-        """ filter a nblist on accelerator with jax and precomputed shapes """
+        """filter a nblist on accelerator with jax and precomputed shapes"""
         graph_in = inputs[self.parent_graph]
         if state is None:
             # skin update mode
@@ -654,8 +803,8 @@ class GraphAngularExtension:
             }
         }
 
-    def __call__(self, state, inputs, return_state_update=False,add_margin=False):
-        """ build angle nblist on cpu with numpy and dynamic shapes + store max shapes """
+    def __call__(self, state, inputs, return_state_update=False, add_margin=False):
+        """build angle nblist on cpu with numpy and dynamic shapes + store max shapes"""
         graph = inputs[self.graph_key]
         edge_src = np.array(graph["edge_src"])
 
@@ -672,7 +821,9 @@ class GraphAngularExtension:
         max_neigh = state.get("max_neigh", self.add_neigh)
         if max_count > max_neigh or add_margin:
             prev_max_neigh = max_neigh
-            max_neigh = max(max_count,max_neigh) + state.get("add_neigh", self.add_neigh)
+            max_neigh = max(max_count, max_neigh) + state.get(
+                "add_neigh", self.add_neigh
+            )
             state_up["max_neigh"] = (max_neigh, prev_max_neigh)
             new_state["max_neigh"] = max_neigh
 
@@ -717,7 +868,7 @@ class GraphAngularExtension:
         if nangles > max_angles or add_margin:
             mult_size = state.get("nblist_mult_size", self.mult_size)
             max_angles_prev = max_angles
-            max_angles = int(mult_size * max(nangles,max_angles)) + 1
+            max_angles = int(mult_size * max(nangles, max_angles)) + 1
             state_up["nangles"] = (max_angles, max_angles_prev)
             new_state["nangles"] = max_angles
 
@@ -749,18 +900,20 @@ class GraphAngularExtension:
         return FrozenDict(new_state), output
 
     def check_reallocate(self, state, inputs, parent_overflow=False):
-        """ check for overflow and reallocate nblist if necessary """
+        """check for overflow and reallocate nblist if necessary"""
         overflow = parent_overflow or inputs[self.graph_key]["angle_overflow"]
         if not overflow:
             return state, {}, inputs, False
 
         add_margin = inputs[self.graph_key]["angle_overflow"]
-        state, inputs, state_up = self(state, inputs, return_state_update=True,add_margin=add_margin)
+        state, inputs, state_up = self(
+            state, inputs, return_state_update=True, add_margin=add_margin
+        )
         return state, state_up, inputs, True
 
     @partial(jax.jit, static_argnums=(0, 1))
     def process(self, state, inputs):
-        """ build angle nblist on accelerator with jax and precomputed shapes """
+        """build angle nblist on accelerator with jax and precomputed shapes"""
         graph = inputs[self.graph_key]
         edge_src = graph["edge_src"]
 
