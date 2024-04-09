@@ -183,7 +183,7 @@ def load_model(
     if model_file is None:
         model_file = parameters.get("model_file", None)
     if model_file is not None and os.path.exists(model_file):
-        model = FENNIX.load(model_file, use_atom_padding=False)
+        model = FENNIX.load(model_file, use_atom_padding=True)
         if print_model:
             print(model.summarize())
         print(f"Restored model from '{model_file}'.")
@@ -192,7 +192,7 @@ def load_model(
             rng_key is not None
         ), "rng_key must be specified if model_file is not provided."
         model_params = parameters["model"]
-        model = FENNIX(**model_params, rng_key=rng_key, use_atom_padding=False)
+        model = FENNIX(**model_params, rng_key=rng_key, use_atom_padding=True)
         if print_model:
             print(model.summarize())
     return model

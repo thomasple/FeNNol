@@ -335,71 +335,24 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
 
     fmetrics = open(output_directory + f"metrics{stage_prefix}.traj", "w")
 
-    ### prepare neighbor lists ###
-    # nblist_updater = jax.jit(model.preprocessing.get_updaters())
-    graphs_keys = list(model._graphs_properties.keys())
-    print("graphs: ", graphs_keys)
-    preproc_state = unfreeze(model.preproc_state)
-    layer_state = []
-    for st in preproc_state["layers_state"]:
-        stnew = unfreeze(st)
-        #     st["nblist_skin"] = nblist_skin
-        #     if nblist_stride > 1:
-        #         st["skin_stride"] = nblist_stride
-        #         st["skin_count"] = nblist_stride
-        if "nblist_mult_size" in training_parameters:
-            stnew["nblist_mult_size"] = training_parameters["nblist_mult_size"]
-        if "nblist_add_neigh" in training_parameters:
-            stnew["add_neigh"] = training_parameters["nblist_add_neigh"]
-        if "nblist_max_nat" in training_parameters:
-            stnew["max_nat"] = training_parameters["nblist_max_nat"]
-        if "nblist_max_neigh" in training_parameters:
-            stnew["max_neigh"] = training_parameters["nblist_max_neigh"]
-        layer_state.append(freeze(stnew))
-    preproc_state["layers_state"] = layer_state
-    preproc_state = freeze(preproc_state)
-
-    _convert_to_jax = jax.jit(convert_to_jax)
-    
-    atom_padder = AtomPadding()
-    padder_state = atom_padder.init()
-    def next_batch(padder_state):
-        data = next(training_iterator)
-        data = check_input(data)
-        padder_state, data = atom_padder(padder_state, data)
-        data = _convert_to_jax(data)
-        return padder_state,data
-    padder_state,inputs = next_batch(padder_state)
-    preproc_state, inputs = model.preprocessing(preproc_state,inputs)
-
     print("Starting training...")
     for epoch in range(max_epochs):
         for _ in range(nbatch_per_epoch):
             # fetch data
             s = time.time()
-            padder_state, data = next_batch(padder_state)
+            data = next(training_iterator)
             e = time.time()
             fetch_time += e - s
 
             # preprocess data
             s = time.time()
-            # inputs = model.preprocess(**data)
-            inputs = model.preprocessing.process(preproc_state, data)
-            preproc_state, state_up, inputs, overflow = (
-                model.preprocessing.check_reallocate(preproc_state, inputs)
-            )
-            if overflow:
-                print("nblist overflow => reallocating nblist")
-                print("size updates:", state_up)
+            inputs = model.preprocess(**data)
 
             rng_key, subkey = jax.random.split(rng_key)
             inputs["rng_key"] = subkey
             if compute_ref_coords:
                 data_ref = {**data, "coordinates": data[coordinates_ref_key]}
-                inputs_ref = model.preprocessing.process(preproc_state, data_ref)
-                preproc_state, state_up, inputs_ref, overflow = (
-                    model.preprocessing.check_reallocate(preproc_state, inputs_ref)
-                )
+                inputs_ref = model.preprocessing(**data_ref)
             else:
                 inputs_ref = None
             # if print_timings:
@@ -433,22 +386,13 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         rmses_avg = defaultdict(lambda: 0.0)
         maes_avg = defaultdict(lambda: 0.0)
         for _ in range(nbatch_per_validation):
-            padder_state, data = next_batch(padder_state)
+            data = next(validation_iterator)
 
-            # inputs = model.preprocess(**data)
-            inputs = model.preprocessing.process(preproc_state, data)
-            preproc_state, state_up, inputs, overflow = (
-                model.preprocessing.check_reallocate(preproc_state, inputs)
-            )
-            if overflow:
-                print("nblist overflow => reallocating nblist")
-                print("size updates:", state_up)
+            inputs = model.preprocess(**data)
+            
             if compute_ref_coords:
                 data_ref = {**data, "coordinates": data[coordinates_ref_key]}
-                inputs_ref = model.preprocessing.process(preproc_state, data_ref)
-                preproc_state, state_up, inputs_ref, overflow = (
-                    model.preprocessing.check_reallocate(preproc_state, inputs_ref)
-                )
+                inputs_ref = model.preprocess(**data_ref)
             else:
                 inputs_ref = None
             rmses, maes, output = validation(

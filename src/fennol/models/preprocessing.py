@@ -27,12 +27,6 @@ def minmaxone(x, name=""):
     print(name, x.min(), x.max(), (x**2).mean())
 
 
-def update_size(sizes, key, new_size):
-    prev_size = sizes.get(key, (0, 1))[0]
-    size = new_size[0]
-    return {**sizes, key: (jnp.maximum(size, prev_size), new_size[1])}
-
-
 @dataclasses.dataclass(frozen=True)
 class GraphGenerator:
     cutoff: float
@@ -69,54 +63,156 @@ class GraphGenerator:
             }
         }
 
-    def __call__(self, state, inputs, parent_overflow=False):
-        output = self.process(state, inputs)
-        state, _, output, parent_overflow = self.check_reallocate(
-            state, output, parent_overflow
+    def __call__(self, state, inputs, return_state_update=False,add_margin=False):
+        """ build a nblist on cpu with numpy and dynamic shapes + store max shapes """
+        coords = np.array(inputs["coordinates"])
+        natoms = np.array(inputs["natoms"])
+        batch_index = np.array(inputs["batch_index"])
+
+        new_state = {**state}
+        state_up = {}
+
+        max_nat = state.get("max_nat", round(coords.shape[0] / natoms.shape[0]))
+        true_max_nat = np.max(natoms)
+        if true_max_nat > max_nat:
+            state_up["max_nat"] = (true_max_nat, max_nat)
+            new_state["max_nat"] = true_max_nat
+
+        ### compute indices of all pairs
+        p1, p2 = np.triu_indices(true_max_nat, 1)
+        p1, p2 = p1.astype(np.int32), p2.astype(np.int32)
+        pbc_shifts = None
+        if natoms.shape[0] > 1:
+            ## batching => mask irrelevant pairs
+            mask_p12 = (
+                (p1[None, :] < natoms[:, None]) * (p2[None, :] < natoms[:, None])
+            ).flatten()
+            shift = np.concatenate((np.array([0]), np.cumsum(natoms[:-1])))
+            p1 = np.where(mask_p12, (p1[None, :] + shift[:, None]).flatten(), -1)
+            p2 = np.where(mask_p12, (p2[None, :] + shift[:, None]).flatten(), -1)
+
+        ## compute vectors
+        vec = coords[p2] - coords[p1]
+
+        ## apply PBC (minimum image convention only for now)
+        if "cells" in inputs:
+            cells = np.array(inputs["cells"])
+            reciprocal_cells = np.array(inputs["reciprocal_cells"])
+
+            if cells.shape[0] == 1:
+                vecpbc = np.dot(vec, reciprocal_cells[0].T)
+                pbc_shifts = -np.round(vecpbc)
+                vec = vec + np.dot(pbc_shifts, cells[0].T)
+            else:
+                batch_index_vec = batch_index[p1]
+                cells = np.swapaxes(cells, -2, -1)[batch_index_vec]
+                reciprocal_cells = np.swapaxes(reciprocal_cells, -2, -1)[
+                    batch_index_vec
+                ]
+                vecpbc = np.einsum("aj,aji->ai", vec, reciprocal_cells)
+                pbc_shifts = -np.round(vecpbc)
+                vec = vec + np.einsum("aj,aji->ai", pbc_shifts, cells)
+
+        ## compute distances
+        cutoff_skin = self.cutoff + state.get("nblist_skin", 0.0)
+        d12 = (vec**2).sum(axis=-1)
+        if natoms.shape[0] > 1:
+            d12 = np.where(mask_p12, d12, cutoff_skin**2)
+
+        ## filter pairs
+        max_pairs = state.get("npairs", 1)
+        mask = d12 < cutoff_skin**2
+        idx = np.nonzero(mask)[0]
+        npairs = idx.shape[0]
+        if npairs > max_pairs or add_margin:
+            mult_size = state.get("nblist_mult_size", self.mult_size)
+            prev_max_pairs = max_pairs
+            max_pairs = int(mult_size * max(npairs,max_pairs)) + 1
+            state_up["npairs"] = (max_pairs, prev_max_pairs)
+            new_state["npairs"] = max_pairs
+
+        nat = coords.shape[0]
+        edge_src = np.full(max_pairs, nat, dtype=np.int32)
+        edge_dst = np.full(max_pairs, nat, dtype=np.int32)
+        d12_ = np.full(max_pairs, cutoff_skin**2)
+        edge_src[:npairs] = p1[idx]
+        edge_dst[:npairs] = p2[idx]
+        d12_[:npairs] = d12[idx]
+        d12 = d12_
+        if "cells" in inputs:
+            pbc_shifts_ = np.full((max_pairs, 3), 0.0)
+            pbc_shifts_[:npairs] = pbc_shifts[idx]
+            pbc_shifts = pbc_shifts_
+
+        if "nblist_skin" in state:
+            # edge_mask_skin = edge_mask
+            edge_src_skin = edge_src
+            edge_dst_skin = edge_dst
+            if "cells" in inputs:
+                pbc_shifts_skin = pbc_shifts
+            max_pairs_skin = state.get("npairs_skin", 1)
+            mask = d12 < self.cutoff**2
+            idx = np.nonzero(mask)[0]
+            npairs_skin = idx.shape[0]
+            if npairs_skin > max_pairs_skin or add_margin:
+                mult_size = state.get("nblist_mult_size", self.mult_size)
+                prev_max_pairs_skin = max_pairs_skin
+                max_pairs_skin = int(mult_size * max(npairs_skin,max_pairs_skin)) + 1
+                state_up["npairs_skin"] = (max_pairs_skin, prev_max_pairs_skin)
+                new_state["npairs_skin"] = max_pairs_skin
+            edge_src = np.full(max_pairs_skin, nat, dtype=np.int32)
+            edge_dst = np.full(max_pairs_skin, nat, dtype=np.int32)
+            d12_ = np.full(max_pairs_skin, self.cutoff**2)
+            edge_src[:npairs_skin] = edge_src_skin[idx]
+            edge_dst[:npairs_skin] = edge_dst_skin[idx]
+            d12_[:npairs_skin] = d12[idx]
+            d12 = d12_
+            if "cells" in inputs:
+                pbc_shifts = np.full((max_pairs_skin, 3), 0.0)
+                pbc_shifts[:npairs_skin] = pbc_shifts_skin[idx]
+
+        ## symmetrize
+        edge_src, edge_dst = np.concatenate((edge_src, edge_dst)), np.concatenate(
+            (edge_dst, edge_src)
         )
-        return state, output, parent_overflow
+        d12 = np.concatenate((d12, d12))
+        if "cells" in inputs:
+            pbc_shifts = np.concatenate((pbc_shifts, -pbc_shifts))
+
+        graph = inputs[self.graph_key] if self.graph_key in inputs else {}
+        graph_out = {
+            **graph,
+            "edge_src": edge_src,
+            "edge_dst": edge_dst,
+            "d12": d12,
+            "overflow": False,
+            "pbc_shifts": pbc_shifts,
+        }
+        if "nblist_skin" in state:
+            graph_out["edge_src_skin"] = edge_src_skin
+            graph_out["edge_dst_skin"] = edge_dst_skin
+            if "cells" in inputs:
+                graph_out["pbc_shifts_skin"] = pbc_shifts_skin
+
+        output = {**inputs, self.graph_key: graph_out}
+
+        if return_state_update:
+            return FrozenDict(new_state), output, state_up
+        return FrozenDict(new_state), output
 
     def check_reallocate(self, state, inputs, parent_overflow=False):
+        """ check for overflow and reallocate nblist if necessary """
         overflow = parent_overflow or inputs[self.graph_key].get("overflow", False)
         if not overflow:
-            return state, {}, inputs, False
+            return state,{}, inputs, False
 
-        up_sizes = {}
-        for _ in range(10):
-            sizes = jax.tree_map(int, inputs[self.graph_key]["sizes"])
-            state_up = {}
-            max_nat, prev_max_nat = sizes["max_nat"]
-            if max_nat > prev_max_nat:
-                state_up["max_nat"] = max_nat
-                up_sizes["max_nat"] = (max_nat, prev_max_nat)
-
-            npairs, prev_npairs = sizes["npairs"]
-            if npairs > prev_npairs:
-                mult_size = state.get("nblist_mult_size", self.mult_size)
-                state_up["npairs"] = int(mult_size * npairs) + 1
-                up_sizes["npairs"] = (state_up["npairs"], prev_npairs)
-
-            if "npairs_skin" in sizes:
-                npairs_skin, prev_npairs_skin = sizes["npairs_skin"]
-                if npairs_skin > prev_npairs_skin:
-                    mult_size = state.get("nblist_mult_size", self.mult_size)
-                    state_up["npairs_skin"] = int(mult_size * npairs_skin) + 1
-                    up_sizes["npairs_skin"] = (
-                        state_up["npairs_skin"],
-                        prev_npairs_skin,
-                    )
-            state = state.copy(state_up)
-            inputs[self.graph_key]["overflow"] = False
-            inputs = self.process(state, inputs)
-            overflow = inputs[self.graph_key].get("overflow", False)
-            if not overflow:
-                break
-        else:
-            raise RuntimeError(f"Failed to reallocate graph '{self.graph_key}'")
-        return state, up_sizes, inputs, True
+        add_margin = inputs[self.graph_key].get("overflow", False)
+        state, inputs, state_up = self(state, inputs, return_state_update=True,add_margin=add_margin)
+        return state, state_up, inputs, True
 
     @partial(jax.jit, static_argnums=(0, 1))
     def process(self, state, inputs):
+        """ build a nblist on acceleratir with jax and precomputed shapes """
         coords = inputs["coordinates"]
         natoms = inputs["natoms"]
         batch_index = inputs["batch_index"]
@@ -223,12 +319,7 @@ class GraphGenerator:
         if "cells" in inputs:
             pbc_shifts = jnp.concatenate((pbc_shifts, -pbc_shifts))
 
-        ## update sizes
         graph = inputs[self.graph_key] if self.graph_key in inputs else {}
-        sizes = graph.get("sizes", {})
-        sizes = update_size(sizes, "max_nat", (true_max_nat, max_nat))
-        sizes = update_size(sizes, "npairs", (npairs, max_pairs))
-        ## update graph
         graph_out = {
             **graph,
             "edge_src": edge_src,
@@ -242,13 +333,12 @@ class GraphGenerator:
             graph_out["edge_dst_skin"] = edge_dst_skin
             if "cells" in inputs:
                 graph_out["pbc_shifts_skin"] = pbc_shifts_skin
-            sizes = update_size(sizes, "npairs_skin", (npairs_skin, max_pairs_skin))
 
-        graph_out["sizes"] = sizes
         return {**inputs, self.graph_key: graph_out}
 
     @partial(jax.jit, static_argnums=(0,))
     def update_skin(self, inputs):
+        """ update the nblist without recomputing the full nblist """
         graph = inputs[self.graph_key]
 
         edge_src_skin = graph["edge_src_skin"]
@@ -285,8 +375,6 @@ class GraphGenerator:
                 jnp.full((max_pairs, 3), 0.0).at[scatter_idx].set(pbc_shifts_skin)
             )
 
-        sizes = graph["sizes"]
-        sizes = update_size(sizes, "npairs_skin", (npairs, max_pairs))
         overflow = graph.get("overflow", False) | (npairs > max_pairs)
         graph_out = {
             **graph,
@@ -294,7 +382,6 @@ class GraphGenerator:
             "edge_dst": jnp.concatenate((edge_dst, edge_src)),
             "d12": jnp.concatenate((d12, d12)),
             "overflow": overflow,
-            "sizes": sizes,
         }
         if "cells" in inputs:
             graph_out["pbc_shifts"] = jnp.concatenate((pbc_shifts, -pbc_shifts))
@@ -381,41 +468,72 @@ class GraphFilter:
             }
         }
 
-    def __call__(self, state, inputs, parent_overflow=False):
-        output = self.process(state, inputs)
-        state, _, output, parent_overflow = self.check_reallocate(
-            state, output, parent_overflow
-        )
-        return state, output, parent_overflow
+    def __call__(self, state, inputs, return_state_update=False,add_margin=False):
+        """ filter a nblist on cpu with numpy and dynamic shapes + store max shapes """
+        graph_in = inputs[self.parent_graph]
+        nat = inputs["species"].shape[0]
+
+        new_state = {**state}
+        state_up = {}
+
+        edge_src = np.array(graph_in["edge_src"])
+        d12 = np.array(graph_in["d12"])
+        if self.remove_hydrogens:
+            species = inputs["species"]
+            src_idx = (edge_src < nat).nonzero()[0]  
+            mask = np.zeros(edge_src.shape[0], dtype=bool)
+            mask[src_idx] = (species > 1)[edge_src[src_idx]]
+            d12 = np.where(mask, d12, self.cutoff**2)
+        mask = d12 < self.cutoff**2
+
+        max_pairs = state.get("npairs", 1)
+        idx = np.nonzero(mask)[0]
+        npairs = idx.shape[0]
+        if npairs > max_pairs or add_margin:
+            mult_size = state.get("nblist_mult_size", self.mult_size)
+            prev_max_pairs = max_pairs
+            max_pairs = int(mult_size * max(npairs,max_pairs)) + 1
+            state_up["npairs"] = (max_pairs, prev_max_pairs)
+            new_state["npairs"] = max_pairs
+
+        filter_indices = np.full(max_pairs, edge_src.shape[0], dtype=np.int32)
+        edge_src = np.full(max_pairs, nat, dtype=np.int32)
+        edge_dst = np.full(max_pairs, nat, dtype=np.int32)
+        d12_ = np.full(max_pairs, self.cutoff**2)
+        filter_indices[:npairs] = idx
+        edge_src[:npairs] = graph_in["edge_src"][idx]
+        edge_dst[:npairs] = graph_in["edge_dst"][idx]
+        d12_[:npairs] = d12[idx]
+        d12 = d12_
+
+        graph = inputs[self.graph_key] if self.graph_key in inputs else {}
+        graph_out = {
+            **graph,
+            "edge_src": edge_src,
+            "edge_dst": edge_dst,
+            "filter_indices": filter_indices,
+            "d12": d12,
+            "overflow": False,
+        }
+
+        output = {**inputs, self.graph_key: graph_out}
+        if return_state_update:
+            return FrozenDict(new_state), output, state_up
+        return FrozenDict(new_state), output
 
     def check_reallocate(self, state, inputs, parent_overflow=False):
+        """ check for overflow and reallocate nblist if necessary"""
         overflow = parent_overflow or inputs[self.graph_key].get("overflow", False)
         if not overflow:
             return state, {}, inputs, False
 
-        up_sizes = {}
-        for _ in range(10):
-            sizes = jax.tree_map(int, inputs[self.graph_key]["sizes"])
-            state_up = {}
-
-            npairs, prev_npairs = sizes["npairs"]
-            if npairs > prev_npairs:
-                mult_size = state.get("nblist_mult_size", self.mult_size)
-                state_up["npairs"] = int(mult_size * npairs) + 1
-                up_sizes["npairs"] = (state_up["npairs"], prev_npairs)
-
-            state = state.copy(state_up)
-            inputs[self.graph_key]["overflow"] = False
-            inputs = self.process(state, inputs)
-            overflow = inputs[self.graph_key].get("overflow", False)
-            if not overflow:
-                break
-        else:
-            raise RuntimeError(f"Failed to reallocate graph '{self.graph_key}'")
-        return state, up_sizes, inputs, True
+        add_margin = inputs[self.graph_key].get("overflow", False)
+        state, inputs, state_up = self(state, inputs, return_state_update=True,add_margin=add_margin)
+        return state, state_up, inputs, True
 
     @partial(jax.jit, static_argnums=(0, 1))
     def process(self, state, inputs):
+        """ filter a nblist on accelerator with jax and precomputed shapes """
         graph_in = inputs[self.parent_graph]
         if state is None:
             # skin update mode
@@ -446,8 +564,6 @@ class GraphFilter:
 
         graph = inputs[self.graph_key] if self.graph_key in inputs else {}
         overflow = graph.get("overflow", False) | (npairs > max_pairs)
-        sizes = graph.get("sizes", {})
-        sizes = update_size(sizes, "npairs", (npairs, max_pairs))
         graph_out = {
             **graph,
             "edge_src": edge_src,
@@ -455,7 +571,6 @@ class GraphFilter:
             "filter_indices": filter_indices,
             "d12": d12,
             "overflow": overflow,
-            "sizes": sizes,
         }
 
         return {**inputs, self.graph_key: graph_out}
@@ -539,49 +654,113 @@ class GraphAngularExtension:
             }
         }
 
-    def __call__(self, state, inputs, parent_overflow=False):
-        output = self.process(state, inputs)
-        state, _, output, parent_overflow = self.check_reallocate(
-            state, output, parent_overflow
-        )
-        return state, output, parent_overflow
+    def __call__(self, state, inputs, return_state_update=False,add_margin=False):
+        """ build angle nblist on cpu with numpy and dynamic shapes + store max shapes """
+        graph = inputs[self.graph_key]
+        edge_src = np.array(graph["edge_src"])
+
+        new_state = {**state}
+        state_up = {}
+
+        ### count number of neighbors
+        nat = inputs["species"].shape[0]
+        count = np.zeros(nat + 1, dtype=np.int32)
+        np.add.at(count, edge_src, 1)
+        max_count = np.max(count[:-1])
+
+        ### get sizes
+        max_neigh = state.get("max_neigh", self.add_neigh)
+        if max_count > max_neigh or add_margin:
+            prev_max_neigh = max_neigh
+            max_neigh = max(max_count,max_neigh) + state.get("add_neigh", self.add_neigh)
+            state_up["max_neigh"] = (max_neigh, prev_max_neigh)
+            new_state["max_neigh"] = max_neigh
+
+        max_neigh_arr = np.empty(max_neigh, dtype=bool)
+
+        nedge = edge_src.shape[0]
+
+        ### sort edge_src
+        idx_sort = np.argsort(edge_src)
+        edge_src_sorted = edge_src[idx_sort]
+
+        ### map sparse to dense nblist
+        offset = np.tile(np.arange(max_count), nat)
+        if max_count * nat >= nedge:
+            offset = np.tile(np.arange(max_count), nat)[:nedge]
+        else:
+            offset = np.zeros(nedge, dtype=jnp.int32)
+            offset[: max_count * nat] = np.tile(np.arange(max_count), nat)
+
+        # offset = jnp.where(edge_src_sorted < nat, offset, 0)
+        mask = edge_src_sorted < nat
+        indices = edge_src_sorted * max_count + offset
+        indices = indices[mask]
+        idx_sort = idx_sort[mask]
+        edge_idx = np.full(nat * max_count, nedge, dtype=np.int32)
+        edge_idx[indices] = idx_sort
+        edge_idx = edge_idx.reshape(nat, max_count)
+
+        ### find all triplet for each atom center
+        local_src, local_dst = np.triu_indices(max_count, 1)
+        angle_src = edge_idx[:, local_src].flatten()
+        angle_dst = edge_idx[:, local_dst].flatten()
+
+        ### mask for valid angles
+        mask1 = angle_src < nedge
+        mask2 = angle_dst < nedge
+        angle_mask = mask1 & mask2
+
+        max_angles = state.get("nangles", 0)
+        idx = np.nonzero(angle_mask)[0]
+        nangles = idx.shape[0]
+        if nangles > max_angles or add_margin:
+            mult_size = state.get("nblist_mult_size", self.mult_size)
+            max_angles_prev = max_angles
+            max_angles = int(mult_size * max(nangles,max_angles)) + 1
+            state_up["nangles"] = (max_angles, max_angles_prev)
+            new_state["nangles"] = max_angles
+
+        ## filter angles to sparse representation
+        angle_src_ = np.full(max_angles, nedge, dtype=np.int32)
+        angle_dst_ = np.full(max_angles, nedge, dtype=np.int32)
+        angle_src_[:nangles] = angle_src[idx]
+        angle_dst_[:nangles] = angle_dst[idx]
+
+        central_atom = np.full(max_angles, nat, dtype=np.int32)
+        central_atom[:nangles] = edge_src[angle_src_[:nangles]]
+
+        ## update graph
+        output = {
+            **inputs,
+            self.graph_key: {
+                **graph,
+                "angle_src": angle_src_,
+                "angle_dst": angle_dst_,
+                "central_atom": central_atom,
+                "angle_overflow": False,
+                "max_neigh": max_neigh,
+                "__max_neigh_array": max_neigh_arr,
+            },
+        }
+
+        if return_state_update:
+            return FrozenDict(new_state), output, state_up
+        return FrozenDict(new_state), output
 
     def check_reallocate(self, state, inputs, parent_overflow=False):
+        """ check for overflow and reallocate nblist if necessary """
         overflow = parent_overflow or inputs[self.graph_key]["angle_overflow"]
         if not overflow:
             return state, {}, inputs, False
 
-        up_sizes = {}
-        for _ in range(10):
-            sizes = jax.tree_map(int, inputs[self.graph_key]["sizes"])
-            state_up = {}
-
-            max_count, max_neigh = sizes["max_neigh"]
-            if max_count > max_neigh:
-                state_up["max_neigh"] = max_count + state.get(
-                    "add_neigh", self.add_neigh
-                )
-                up_sizes["max_neigh"] = (max_count, max_neigh)
-
-            nangles, prev_nangles = sizes["nangles"]
-            if nangles > prev_nangles:
-                mult_size = state.get("nblist_mult_size", self.mult_size)
-                nangles = int(mult_size * nangles) + 1
-                state_up["nangles"] = nangles
-                up_sizes["nangles"] = (nangles, prev_nangles)
-
-            state = state.copy(state_up)
-            inputs[self.graph_key]["angle_overflow"] = False
-            inputs = self.process(state, inputs)
-            overflow = inputs[self.graph_key]["angle_overflow"]
-            if not overflow:
-                break
-        else:
-            raise RuntimeError(f"Failed to reallocate graph '{self.graph_key}'")
-        return state, up_sizes, inputs, True
+        add_margin = inputs[self.graph_key]["angle_overflow"]
+        state, inputs, state_up = self(state, inputs, return_state_update=True,add_margin=add_margin)
+        return state, state_up, inputs, True
 
     @partial(jax.jit, static_argnums=(0, 1))
     def process(self, state, inputs):
+        """ build angle nblist on accelerator with jax and precomputed shapes """
         graph = inputs[self.graph_key]
         edge_src = graph["edge_src"]
 
@@ -634,12 +813,11 @@ class GraphAngularExtension:
         angle_mask = mask1 & mask2
 
         ## filter angles to sparse representation
-        (angle_src, angle_dst, angle_mask), _, nangles = mask_filter_1d(
+        (angle_src, angle_dst), _, nangles = mask_filter_1d(
             angle_mask,
             prev_nangles,
             (angle_src, nedge),
             (angle_dst, nedge),
-            (angle_mask, False),
         )
         ## find central atom
         central_atom = edge_src[angle_src]
@@ -648,11 +826,6 @@ class GraphAngularExtension:
         angle_overflow = nangles > prev_nangles
         neigh_overflow = max_count > max_neigh
         overflow = graph.get("angle_overflow", False) | angle_overflow | neigh_overflow
-
-        ## update sizes
-        sizes = graph["sizes"]
-        sizes = update_size(sizes, "nangles", (nangles, prev_nangles))
-        sizes = update_size(sizes, "max_neigh", (max_count, max_neigh))
 
         ## update graph
         output = {
@@ -664,7 +837,6 @@ class GraphAngularExtension:
                 "central_atom": central_atom,
                 "angle_overflow": overflow,
                 "max_neigh": max_neigh,
-                "sizes": sizes,
                 "__max_neigh_array": max_neigh_arr,
             },
         }
@@ -863,14 +1035,13 @@ class PreprocessingChain:
             s, inputs = self.atom_padder(layer_state[0], inputs)
             new_state.append(s)
             i += 1
-        if do_check_input:
-            inputs = convert_to_jax(inputs)
-        parent_overflow = False
         for layer in self.layers:
-            s, inputs, parent_overflow = layer(layer_state[i], inputs, parent_overflow)
+            s, inputs = layer(layer_state[i], inputs, return_state_update=False)
             new_state.append(s)
             i += 1
-        return FrozenDict({**state, "layers_state": tuple(new_state)}), inputs
+        return FrozenDict({**state, "layers_state": tuple(new_state)}), convert_to_jax(
+            inputs
+        )
 
     def check_reallocate(self, state, inputs):
         new_state = []

@@ -173,21 +173,23 @@ def dynamic(simulation_parameters, device, fprec):
 
     state = {}
     ## window averaging
-    window_size = simulation_parameters.get("tau_avg", 0.0) * au.FS
-    win_b1 = np.exp(-dt / window_size) if window_size > 0 else 0.0
-
-    # state["window_avg"] = {}
-    # state["window_avg"]["n"] = 0
-    # state["window_avg"]["ek"] = 0.0
-    # state["window_avg"]["pressure"] = 0.0
-    # state["window_avg"]["Pkin"] = 0.0
-    # state["window_avg"]["Pvir"] = 0.0
-    # state["window_avg"]["epot"] = 0.0
-    # state["window_avg"]["ek_m"] = 0.0
-    # state["window_avg"]["pressure_m"] = 0.0
-    # state["window_avg"]["Pkin_m"] = 0.0
-    # state["window_avg"]["Pvir_m"] = 0.0
-    # state["window_avg"]["epot_m"] = 0.0
+    window_size = simulation_parameters.get("tau_avg", -1.) * au.FS
+    do_window_avg = window_size > 0
+    
+    if do_window_avg > 0:
+        win_b1 = np.exp(-dt / window_size) if do_window_avg else 0.0
+        state["window_avg"] = {}
+        state["window_avg"]["n"] = 0
+        state["window_avg"]["ek"] = 0.0
+        state["window_avg"]["pressure"] = 0.0
+        state["window_avg"]["Pkin"] = 0.0
+        state["window_avg"]["Pvir"] = 0.0
+        state["window_avg"]["epot"] = 0.0
+        state["window_avg"]["ek_m"] = 0.0
+        state["window_avg"]["pressure_m"] = 0.0
+        state["window_avg"]["Pkin_m"] = 0.0
+        state["window_avg"]["Pvir_m"] = 0.0
+        state["window_avg"]["epot_m"] = 0.0
 
     ### Set the thermostat
     rng_key, t_key = jax.random.split(rng_key)
@@ -205,8 +207,8 @@ def dynamic(simulation_parameters, device, fprec):
 
     ### CONFIGURE PREPROCESSING
     nblist_stride = int(simulation_parameters.get("nblist_stride", 20))
-    nblist_warmup = int(simulation_parameters.get("nblist_warmup", 1000))
-    nblist_stride_check = int(simulation_parameters.get("nblist_stride_check", 1))
+    nblist_warmup_time = simulation_parameters.get("nblist_warmup_time", 0.)*au.FS
+    nblist_warmup = int(nblist_warmup_time/dt)
     nblist_skin = simulation_parameters.get("nblist_skin", None)
     if nblist_skin is not None:
         print(f"nblist_skin: {nblist_skin:.2f} A, nblist_stride: {nblist_stride} steps")
@@ -361,28 +363,32 @@ def dynamic(simulation_parameters, device, fprec):
             # "thermostat": state_th,
         }
 
-        # n = state["window_avg"]["n"] + 1
-        # state_avg = {**state["window_avg"], "n": n}
-        # state_avg["ek_m"] = state_avg["ek_m"] * win_b1 + ek * (1 - win_b1)
-        # state_avg["ek"] = state_avg["ek_m"] / (1 - win_b1**n)
-        # state_avg["epot_m"] = state_avg["epot_m"] * win_b1 + epot[0] * (1 - win_b1)
-        # state_avg["epot"] = state_avg["epot_m"] / (1 - win_b1**n)
+        if do_window_avg:
+            n = state["window_avg"]["n"] + 1
+            state_avg = {**state["window_avg"], "n": n}
+            state_avg["ek_m"] = state_avg["ek_m"] * win_b1 + ek * (1 - win_b1)
+            state_avg["ek"] = state_avg["ek_m"] / (1 - win_b1**n)
+            state_avg["epot_m"] = state_avg["epot_m"] * win_b1 + epot[0] * (1 - win_b1)
+            state_avg["epot"] = state_avg["epot_m"] / (1 - win_b1**n)
+
         if estimate_pressure:
             vir = jnp.trace(vir_t[0])
             Pkin = (2 * pscale) * ek
             Pvir = (-pscale) * vir
             state["virial"] = vir
             state["pressure"] = Pkin + Pvir
-            # state_avg["Pkin_m"] = state_avg["Pkin_m"] * win_b1 + Pkin * (1 - win_b1)
-            # state_avg["Pkin"] = state_avg["Pkin_m"] / (1 - win_b1**n)
-            # state_avg["Pvir_m"] = state_avg["Pvir_m"] * win_b1 + Pvir * (1 - win_b1)
-            # state_avg["Pvir"] = state_avg["Pvir_m"] / (1 - win_b1**n)
-            # state_avg["pressure_m"] = state_avg["pressure_m"] * win_b1 + state[
-            #     "pressure"
-            # ] * (1 - win_b1)
-            # state_avg["pressure"] = state_avg["pressure_m"] / (1 - win_b1**n)
+            if do_window_avg:
+                state_avg["Pkin_m"] = state_avg["Pkin_m"] * win_b1 + Pkin * (1 - win_b1)
+                state_avg["Pkin"] = state_avg["Pkin_m"] / (1 - win_b1**n)
+                state_avg["Pvir_m"] = state_avg["Pvir_m"] * win_b1 + Pvir * (1 - win_b1)
+                state_avg["Pvir"] = state_avg["Pvir_m"] / (1 - win_b1**n)
+                state_avg["pressure_m"] = state_avg["pressure_m"] * win_b1 + state[
+                    "pressure"
+                ] * (1 - win_b1)
+                state_avg["pressure"] = state_avg["pressure_m"] / (1 - win_b1**n)
 
-        # state["window_avg"] = state_avg
+        if do_window_avg:
+            state["window_avg"] = state_avg
 
         return system, state
 
@@ -424,7 +430,7 @@ def dynamic(simulation_parameters, device, fprec):
             tstep += time.time() - tstep0
             tstep0 = time.time()
 
-        if nblist_countdown <= 0 or force_preprocess:  # or (istep<nblist_warmup):
+        if nblist_countdown <= 0 or force_preprocess or (istep<nblist_warmup):
             nblist_countdown = nblist_stride - 1
             system = model.preprocessing.process(preproc_state, system)
             preproc_state, state_up, system, overflow = (
@@ -484,15 +490,20 @@ def dynamic(simulation_parameters, device, fprec):
             tperstep = (t1 - t0) / nprint
             t0 = t1
             nsperday = (24 * 60 * 60 / tperstep) * dt / 1e6
-            # ek = state["window_avg"]["ek"]
-            # e = state["window_avg"]["epot"]
-            ek = state["ek"]
-            e = state["epot"]
+            if do_window_avg:
+                ek = state["window_avg"]["ek"]
+                e = state["window_avg"]["epot"]
+            else:
+                ek = state["ek"]
+                e = state["epot"]
 
             line = f"{istep:10} {(start_time+istep*dt)/1000:10.3f} {(ek+e):10.5f} {e:10.3f} {ek:10.3f} {2*ek/(3.*nat)*au.KELVIN:10.3f} {nsperday:10.3f} {1./tperstep:10.3f}"
             if estimate_pressure:
-                line += f' {state["pressure"]:10.3f}'
-            #     line += f' {state["window_avg"]["pressure"]:10.3f}'
+                if do_window_avg:
+                    pres = state["window_avg"]["pressure"]
+                else:
+                    pres = state["pressure"]
+                line += f' {pres:10.3f}'
 
             print(line)
 

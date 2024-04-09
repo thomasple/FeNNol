@@ -107,8 +107,8 @@ class FENNIX:
         graphs_properties = self.preprocessing.get_graphs_properties()
         self._graphs_properties = freeze(graphs_properties)
         # add preprocessing modules that should be differentiated/jitted
-        # mods = [(JaxConverter, {})] + self.preprocessing.get_processors(return_list=True)
-        mods = self.preprocessing.get_processors(return_list=True)
+        mods = [(JaxConverter, {})] + self.preprocessing.get_processors(return_list=True)
+        # mods = self.preprocessing.get_processors(return_list=True)
 
         # build the model
         modules = deepcopy(modules)
