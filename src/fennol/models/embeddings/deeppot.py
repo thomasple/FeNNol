@@ -63,7 +63,7 @@ class DeepPotEmbedding(nn.Module):
     activation: Union[Callable, str] = nn.silu
     concatenate_species: bool = False
     divide_distances: bool = True
-    species_order: Optional[Sequence[str]] = None
+    species_order: Optional[Union[str,Sequence[str]]] = None
 
     FID: str = "DEEPPOT"
 

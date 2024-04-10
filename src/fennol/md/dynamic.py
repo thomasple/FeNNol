@@ -212,8 +212,8 @@ def dynamic(simulation_parameters, device, fprec):
     minimum_image = simulation_parameters.get("minimum_image", True)
     nblist_verbose = simulation_parameters.get("nblist_verbose", True)
     nblist_stride = int(simulation_parameters.get("nblist_stride", -1))
-    nblist_warmup_time = simulation_parameters.get("nblist_warmup_time", 0.)*au.FS
-    nblist_warmup = int(nblist_warmup_time/dt)
+    nblist_warmup_time = simulation_parameters.get("nblist_warmup_time", -1.)*au.FS
+    nblist_warmup = int(nblist_warmup_time/dt) if nblist_warmup_time > 0 else 0
     nblist_skin = simulation_parameters.get("nblist_skin", -1.)
     if nblist_skin > 0:
         if nblist_stride <= 0:
@@ -431,7 +431,7 @@ def dynamic(simulation_parameters, device, fprec):
     force_preprocess = False
     nb_warmup_start = 0
     nblist_countdown = 0
-    print_skin_activation = True
+    print_skin_activation = nblist_warmup > 0
     for istep in range(1, nsteps + 1):
         ### BAOAB evolution
         # if istep % nblist_stride == 0 or force_preprocess:

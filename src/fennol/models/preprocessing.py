@@ -16,11 +16,33 @@ from ..utils import deep_update, mask_filter_1d
 from ..utils.nblist import get_reciprocal_space_parameters
 from .modules import FENNIXModules
 from .misc.misc import SwitchFunction
-from ..utils.periodic_table import PERIODIC_TABLE
+from ..utils.periodic_table import PERIODIC_TABLE,PERIODIC_TABLE_REV_IDX
 
 
 @dataclasses.dataclass(frozen=True)
 class GraphGenerator:
+    """Generate a graph from a set of coordinates
+
+    For now, we generate all pairs of atoms and filter based on cutoff.
+    If a `nblist_skin` is present in the state, we generate a second graph with a larger cutoff that includes all pairs within the cutoff+skin. This graph is then reused by the `update_skin` method to update the original graph without recomputing the full nblist.
+
+    Parameters
+    ----------
+    cutoff : float
+        Cutoff distance for the graph.
+    graph_key : str, default="graph"
+        Key of the graph in the outputs.
+    switch_params : dict, default={}
+        Parameters for the switching function.
+    k_space : bool, default=False
+        Generate k-space information for the graph.
+    kmax : int, default=30
+        Maximum number of k-points to consider.
+    kthr : float, default=1e-6
+        Threshold for k-point filtering.
+    mult_size : float, default=1.05
+        Multiplicative factor for resizing the nblist.
+    """
     cutoff: float
     graph_key: str = "graph"
     switch_params: dict = dataclasses.field(default_factory=dict, hash=False)
@@ -206,7 +228,6 @@ class GraphGenerator:
                 )
 
         if "nblist_skin" in state:
-            # edge_mask_skin = edge_mask
             edge_src_skin = edge_src
             edge_dst_skin = edge_dst
             if apply_pbc:
@@ -531,6 +552,24 @@ class GraphGenerator:
 
 
 class GraphProcessor(nn.Module):
+    """ Process a pre-generated graph 
+
+    The pre-generated graph should contain the following keys:
+    - edge_src: source indices of the edges
+    - edge_dst: destination indices of the edges
+    - pbcs_shifts: pbc shifts for the edges (only if `cells` are present in the inputs)
+
+    This module is automatically added to a FENNIX model when a GraphGenerator is used.
+
+    Parameters
+    ----------
+    cutoff : float
+        Cutoff distance for the graph.
+    graph_key : str
+        Key of the graph in the inputs.
+    switch_params : dict, default={}   
+        Parameters for the switching function.
+    """
     cutoff: float
     graph_key: str = "graph"
     switch_params: dict = dataclasses.field(default_factory=dict)
@@ -566,13 +605,36 @@ class GraphProcessor(nn.Module):
             "vec": vec,
             "distances": distances,
             "switch": switch,
-            # "edge_mask": edge_mask,
+            "edge_mask": edge_mask,
         }
         return {**inputs, self.graph_key: graph_out}
 
 
 @dataclasses.dataclass(frozen=True)
 class GraphFilter:
+    """Filter a graph based on a cutoff distance
+    
+    Parameters
+    ----------
+    cutoff : float
+        Cutoff distance for the filtering.
+    parent_graph : str
+        Key of the parent graph in the inputs.
+    graph_key : str
+        Key of the filtered graph in the outputs.
+    remove_hydrogens : bool, default=False
+        Remove hydrogen atoms from the graph.
+    switch_params : dict, default={}
+        Parameters for the switching function.
+    k_space : bool, default=False
+        Generate k-space information for the graph.
+    kmax : int, default=30
+        Maximum number of k-points to consider.
+    kthr : float, default=1e-6
+        Threshold for k-point filtering.
+    mult_size : float, default=1.05
+        Multiplicative factor for resizing the nblist.
+    """
     cutoff: float
     parent_graph: str
     graph_key: str
@@ -657,6 +719,14 @@ class GraphFilter:
             "overflow": False,
         }
 
+        if self.k_space and "cells" in inputs:
+            if "k_points" not in graph:
+                ks, _, _, bewald = get_reciprocal_space_parameters(
+                    inputs["reciprocal_cells"], self.cutoff, self.kmax, self.kthr
+                )
+            graph_out["k_points"] = ks
+            graph_out["b_ewald"] = bewald
+
         output = {**inputs, self.graph_key: graph_out}
         if return_state_update:
             return FrozenDict(new_state), output, state_up
@@ -716,6 +786,12 @@ class GraphFilter:
             "overflow": overflow,
         }
 
+        if self.k_space and "cells" in inputs:
+            if "k_points" not in graph:
+                raise NotImplementedError(
+                    "k_space generation not implemented on accelerator. Call the numpy routine (self.__call__) first."
+                )
+
         return {**inputs, self.graph_key: graph_out}
 
     @partial(jax.jit, static_argnums=(0,))
@@ -724,6 +800,22 @@ class GraphFilter:
 
 
 class GraphFilterProcessor(nn.Module):
+    """ Filter processing for a pre-generated graph
+
+    This module is automatically added to a FENNIX model when a GraphFilter is used.
+
+    Parameters
+    ----------
+    cutoff : float
+        Cutoff distance for the filtering.
+    graph_key : str
+        Key of the filtered graph in the inputs.
+    parent_graph : str
+        Key of the parent graph in the inputs.
+    switch_params : dict, default={}
+        Parameters for the switching function.
+
+    """
     cutoff: float
     graph_key: str
     parent_graph: str
@@ -762,13 +854,24 @@ class GraphFilterProcessor(nn.Module):
             "distances": distances,
             "switch": switch,
             "filter_indices": filter_indices,
-            # "edge_mask": edge_mask,
+            "edge_mask": edge_mask,
         }
         return {**inputs, self.graph_key: graph_out}
 
 
 @dataclasses.dataclass(frozen=True)
 class GraphAngularExtension:
+    """Add angles list to a graph
+    
+    Parameters
+    ----------
+    mult_size : float, default=1.05
+        Multiplicative factor for resizing the nblist.
+    add_neigh : int, default=5
+        Additional neighbors to add to the nblist when resizing.
+    graph_key : str, default="graph"
+        Key of the graph in the inputs.
+    """
     mult_size: float = 1.05
     add_neigh: int = 5
     graph_key: str = "graph"
@@ -995,6 +1098,15 @@ class GraphAngularExtension:
 
 
 class GraphAngleProcessor(nn.Module):
+    """ Process a pre-generated graph to compute angles
+
+    This module is automatically added to a FENNIX model when a GraphAngularExtension is used.
+
+    Parameters
+    ----------
+    graph_key : str
+        Key of the graph in the inputs.
+    """
     graph_key: str
 
     @nn.compact
@@ -1026,12 +1138,24 @@ class GraphAngleProcessor(nn.Module):
 
 @dataclasses.dataclass(frozen=True)
 class SpeciesIndexer:
+    """Build an index that splits atomic arrays by species.
+    
+    If `species_order` is specified, the output will be a dense array with size (len(species_order), max_size) that can directly index atomic arrays. 
+    If `species_order` is None, the output will be a dictionary with species as keys and an index to filter atomic arrays for that species as values.
+
+    Parameters
+    ----------
+    output_key : str, default="species_index"
+        Key for the output dictionary.
+    species_order : str, default=None
+        Comma separated list of species in the order they should be indexed.
+    """
     output_key: str = "species_index"
+    species_order: Optional[str] = None
 
     def init(self):
         return FrozenDict(
             {
-                "nspecies": 1,
                 "sizes": {},
             }
         )
@@ -1047,9 +1171,11 @@ class SpeciesIndexer:
         sizes = state.get("sizes", FrozenDict({}))
         new_sizes = {**sizes}
         up_sizes = False
+        counts_dict = {}
         for s, c in zip(set_species, counts):
             if s <= 0:
                 continue
+            counts_dict[s] = c
             if s not in sizes:
                 up_sizes = True
             new_sizes[s] = max(c, sizes.get(s, 0))
@@ -1061,15 +1187,29 @@ class SpeciesIndexer:
         if up_sizes:
             state_up["sizes"] = (new_sizes, sizes)
             new_state["sizes"] = new_sizes
-
-        idx_map = PERIODIC_TABLE
-        species_index = {
-            idx_map[s]: np.full(c, nat, dtype=np.int32) for s, c in new_sizes.items()
-        }
-        for s, c in zip(set_species, counts):
-            if s <= 0:
-                continue
-            species_index[idx_map[s]][:c] = np.nonzero(species == s)[0]
+        
+        if self.species_order is not None:
+            species_order = [el.strip() for el in self.species_order.split(",")]
+            max_size_prev = state.get("max_size", 0)
+            max_size = max(new_sizes.values())
+            if max_size > max_size_prev:
+                state_up["max_size"] = (max_size, max_size_prev)
+                new_state["max_size"] = max_size
+                max_size_prev = max_size
+            
+            species_index = np.full((len(species_order), max_size), nat, dtype=np.int32)
+            for i, el in enumerate(species_order):
+                s = PERIODIC_TABLE_REV_IDX[el]
+                if s in counts_dict.keys():
+                    species_index[i, : counts_dict[s]] = np.nonzero(species == s)[0]
+        else:
+            species_index = {
+                PERIODIC_TABLE[s]: np.full(c, nat, dtype=np.int32) for s, c in new_sizes.items()
+            }
+            for s, c in zip(set_species, counts):
+                if s <= 0:
+                    continue
+                species_index[PERIODIC_TABLE[s]][:c] = np.nonzero(species == s)[0]
 
         output = {
             **inputs,

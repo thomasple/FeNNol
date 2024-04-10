@@ -86,8 +86,20 @@ def main():
         logger = TeeLogger(output_directory + log_file)
         logger.bind_stdout()
 
-    _device = jax.devices(device)[0]
+    # set matmul precision
+    matmul_precision = parameters.get("matmul_prec", "high").lower()
+    assert matmul_precision in [
+        "default",
+        "high",
+        "highest",
+    ], "matmul_prec must be one of 'default','high','highest'"
+    jax.config.update("jax_default_matmul_precision", matmul_precision)
 
+    # set device
+    _device = jax.devices(device)[0]
+    jax.config.update("jax_default_device", _device)
+
+    # set random seed
     rng_seed = parameters.get("rng_seed", np.random.randint(0, 2**32 - 1))
     print(f"rng_seed: {rng_seed}")
     rng_key = jax.random.PRNGKey(rng_seed)
@@ -96,49 +108,48 @@ def main():
     random.seed(rng_seed)
 
     try:
-        with jax.default_device(_device):
-            if "stages" in parameters["training"]:
-                ## train in stages ##
-                params = deepcopy(parameters)
-                stages = params["training"].pop("stages")
-                assert isinstance(
-                    stages, dict
-                ), "'stages' must be a dict with named stages"
-                model_file_stage = model_file
-                print_stages_params = params["training"].get(
-                    "print_stages_params", False
+        if "stages" in parameters["training"]:
+            ## train in stages ##
+            params = deepcopy(parameters)
+            stages = params["training"].pop("stages")
+            assert isinstance(
+                stages, dict
+            ), "'stages' must be a dict with named stages"
+            model_file_stage = model_file
+            print_stages_params = params["training"].get(
+                "print_stages_params", False
+            )
+            for i, (stage, stage_params) in enumerate(stages.items()):
+                rng_key, subkey = jax.random.split(rng_key)
+                print("")
+                print(f"### STAGE {i+1}: {stage} ###")
+
+                ## remove end_event from previous stage ##
+                if i > 0 and "end_event" in params["training"]:
+                    params["training"].pop("end_event")
+
+                ## incrementally update training parameters ##
+                params = deep_update(params, {"training": stage_params})
+                if model_file_stage is not None:
+                    ## load model from previous stage ##
+                    params["model_file"] = model_file_stage
+
+                if print_stages_params:
+                    print("stage parameters:")
+                    print(json.dumps(params, indent=2, sort_keys=False))
+
+                ## train stage ##
+                _, model_file_stage = train(
+                    subkey, params, stage=i + 1, output_directory=output_directory
                 )
-                for i, (stage, stage_params) in enumerate(stages.items()):
-                    rng_key, subkey = jax.random.split(rng_key)
-                    print("")
-                    print(f"### STAGE {i+1}: {stage} ###")
-
-                    ## remove end_event from previous stage ##
-                    if i > 0 and "end_event" in params["training"]:
-                        params["training"].pop("end_event")
-
-                    ## incrementally update training parameters ##
-                    params = deep_update(params, {"training": stage_params})
-                    if model_file_stage is not None:
-                        ## load model from previous stage ##
-                        params["model_file"] = model_file_stage
-
-                    if print_stages_params:
-                        print("stage parameters:")
-                        print(json.dumps(params, indent=2, sort_keys=False))
-
-                    ## train stage ##
-                    _, model_file_stage = train(
-                        subkey, params, stage=i + 1, output_directory=output_directory
-                    )
-            else:
-                ## single training stage ##
-                train(
-                    rng_key,
-                    parameters,
-                    model_file=model_file,
-                    output_directory=output_directory,
-                )
+        else:
+            ## single training stage ##
+            train(
+                rng_key,
+                parameters,
+                model_file=model_file,
+                output_directory=output_directory,
+            )
     except KeyboardInterrupt:
         print("Training interrupted by user.")
     finally:

@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
-from typing import Optional, Union, List
+from typing import Optional, Union, List, Sequence
 import math
 import numpy as np
 from ...utils import AtomicUnits as au
@@ -35,7 +35,7 @@ class SpeciesEncoding(nn.Module):
     zmax: int = 50
     output_key: Optional[str] = None
     encoding: str = "random"
-    species_order: Optional[List[str]] = None
+    species_order: None | str | Sequence[str] = None
     trainable: bool = False
 
     FID: str = "SPECIES_ENCODING"
@@ -62,8 +62,12 @@ class SpeciesEncoding(nn.Module):
                     [np.zeros((1, zmax)), conv_tensor, np.zeros((1, zmax))], axis=0
                 )
             else:
-                conv_tensor = np.zeros((zmaxpad, len(self.species_order)))
-                for i, s in enumerate(self.species_order):
+                if isinstance(self.species_order, str):
+                    species_order = [el.strip() for el in self.species_order.split(",")]
+                else:
+                    species_order = [el for el in self.species_order]
+                conv_tensor = np.zeros((zmaxpad, len(species_order)))
+                for i, s in enumerate(species_order):
                     conv_tensor[PERIODIC_TABLE_REV_IDX[s], i] = 1
 
             conv_tensors.append(conv_tensor)

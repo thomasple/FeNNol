@@ -157,52 +157,6 @@ ATOMIC_MASSES = [
 ]
 
 
-class SpeciesConverter(nn.Module):
-    """Converts tensors with species labeled as atomic numbers into tensors
-    labeled with internal indices according to a custom ordering
-    scheme. It takes a custom species ordering as initialization parameter. If
-    the class is initialized with ['H', 'C', 'N', 'O'] for example, it will
-    convert a tensor [1, 1, 6, 7, 1, 8] into a tensor [0, 0, 1, 2, 0, 3]
-
-    (!! ROUTINE FROM TORCHANI PACKAGE !!)
-    Copyright 2018- Xiang Gao and other ANI developers
-
-    Arguments:
-        species (:class:`collections.abc.Sequence` of :class:`str`):
-        sequence of all supported species, in order (it is recommended to order
-        according to atomic number).
-    """
-
-    species_order: Sequence[str]
-
-    def setup(self):
-        super().__init__()
-        rev_idx = {s: k for k, s in enumerate(PERIODIC_TABLE)}
-        maxidx = max(rev_idx.values())
-
-        conv_tensor = [-1] * (maxidx + 2)
-        for i, s in enumerate(self.species_order):
-            conv_tensor[rev_idx[s]] = i
-
-        self.conv_tensor = self.variable(
-            "buffers", "conv_tensor", jnp.array(conv_tensor, dtype=jnp.int32)
-        )
-
-    @nn.compact
-    def __call__(self, species):
-        """Convert species from periodic table element index to 0, 1, 2, 3, ... indexing"""
-        converted_species = self.conv_tensor[species]
-
-        # check if unknown species are included
-        if converted_species[species.ne(-1)].lt(0).any():
-            raise ValueError(f"Unknown species found in {species}")
-
-        return converted_species.to(species.device)
-
-    def __repr__(self):
-        return f"SpeciesConverter({self.species})"
-
-
 ELECTRONIC_STRUCTURE = [[0] * 15] * len(PERIODIC_TABLE)
 ######################### 1s 2s 2p 3s 3p 4s 3d 4p 5s 4d 5p  6s 4f 5d 6p
 ELECTRONIC_STRUCTURE[1] = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # H
