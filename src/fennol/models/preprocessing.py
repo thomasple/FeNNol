@@ -16,16 +16,7 @@ from ..utils import deep_update, mask_filter_1d
 from ..utils.nblist import get_reciprocal_space_parameters
 from .modules import FENNIXModules
 from .misc.misc import SwitchFunction
-
-# from ..utils.nblist import to_sparse_nblist
-
-
-_SPARSE_DEFAULT = False
-_ANGLE_SPARSE_DEFAULT = True
-
-
-def minmaxone(x, name=""):
-    print(name, x.min(), x.max(), (x**2).mean())
+from ..utils.periodic_table import PERIODIC_TABLE
 
 
 @dataclasses.dataclass(frozen=True)
@@ -141,7 +132,10 @@ class GraphGenerator:
                 num_repeats_prev = np.array(state.get("num_repeats_pbc", (0, 0, 0)))
                 if np.any(num_repeats > num_repeats_prev):
                     num_repeats_new = np.maximum(num_repeats, num_repeats_prev)
-                    state_up["num_repeats_pbc"] = (tuple(num_repeats_new), tuple(num_repeats_prev))
+                    state_up["num_repeats_pbc"] = (
+                        tuple(num_repeats_new),
+                        tuple(num_repeats_prev),
+                    )
                     new_state["num_repeats_pbc"] = tuple(num_repeats_new)
                 ## build all possible shifts
                 cell_shift_pbc = np.array(
@@ -734,7 +728,6 @@ class GraphFilterProcessor(nn.Module):
     graph_key: str
     parent_graph: str
     switch_params: dict = dataclasses.field(default_factory=dict)
-    sparse: bool = _SPARSE_DEFAULT
 
     @nn.compact
     def __call__(self, inputs: Union[dict, Tuple[jax.Array, dict]]):
@@ -1032,6 +1025,79 @@ class GraphAngleProcessor(nn.Module):
 
 
 @dataclasses.dataclass(frozen=True)
+class SpeciesIndexer:
+    output_key: str = "species_index"
+
+    def init(self):
+        return FrozenDict(
+            {
+                "nspecies": 1,
+                "sizes": {},
+            }
+        )
+
+    def __call__(self, state, inputs, return_state_update=False, add_margin=False):
+        species = np.array(inputs["species"])
+        nat = species.shape[0]
+        set_species, counts = np.unique(species, return_counts=True)
+
+        new_state = {**state}
+        state_up = {}
+
+        sizes = state.get("sizes", FrozenDict({}))
+        new_sizes = {**sizes}
+        up_sizes = False
+        for s, c in zip(set_species, counts):
+            if s <= 0:
+                continue
+            if s not in sizes:
+                up_sizes = True
+            new_sizes[s] = max(c, sizes.get(s, 0))
+        for s in sizes.keys():
+            if sizes[s] != new_sizes[s]:
+                up_sizes = True
+
+        new_sizes = FrozenDict(new_sizes)
+        if up_sizes:
+            state_up["sizes"] = (new_sizes, sizes)
+            new_state["sizes"] = new_sizes
+
+        idx_map = PERIODIC_TABLE
+        species_index = {
+            idx_map[s]: np.full(c, nat, dtype=np.int32) for s, c in new_sizes.items()
+        }
+        for s, c in zip(set_species, counts):
+            if s <= 0:
+                continue
+            species_index[idx_map[s]][:c] = np.nonzero(species == s)[0]
+
+        output = {
+            **inputs,
+            self.output_key: species_index,
+        }
+
+        if return_state_update:
+            return FrozenDict(new_state), output, state_up
+        return FrozenDict(new_state), output
+
+    def check_reallocate(self, state, inputs, parent_overflow=False):
+        return state, {}, inputs, parent_overflow
+
+
+    @partial(jax.jit, static_argnums=(0, 1))
+    def process(self, state, inputs):
+        assert (
+            self.output_key in inputs
+        ), f"Species Index {self.output_key} must be provided on accelerator. Call the numpy routine (self.__call__) first."
+
+        return inputs
+
+    @partial(jax.jit, static_argnums=(0,))
+    def update_skin(self, inputs):
+        return self.process(None, inputs)
+
+
+@dataclasses.dataclass(frozen=True)
 class AtomPadding:
     mult_size: float = 1.2
 
@@ -1272,4 +1338,5 @@ PREPROCESSING = {
     "GRAPH_FILTER": GraphFilter,
     "GRAPH_ANGULAR_EXTENSION": GraphAngularExtension,
     # "GRAPH_DENSE_EXTENSION": GraphDenseExtension,
+    "SPECIES_INDEXER": SpeciesIndexer,
 }

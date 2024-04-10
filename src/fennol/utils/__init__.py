@@ -5,18 +5,37 @@ import jax
 import jax.numpy as jnp
 
 
-def mask_filter_1d(mask,max_size,*values_fill):
+def minmaxone(x, name=""):
+    print(name, x.min(), x.max(), (x**2).mean())
+
+
+def minmaxone_jax(x, name=""):
+    jax.debug.print(
+        "{name}  {min}  {max}  {mean}",
+        name=name,
+        min=x.min(),
+        max=x.max(),
+        mean=(x**2).mean(),
+    )
+
+
+def mask_filter_1d(mask, max_size, *values_fill):
     cumsum = jnp.cumsum(mask)
-    scatter_idx = jnp.where(mask,cumsum-1,max_size)
-    outputs=[]
-    for (value,fill) in values_fill:
+    scatter_idx = jnp.where(mask, cumsum - 1, max_size)
+    outputs = []
+    for value, fill in values_fill:
         shape = list(value.shape)
         shape[0] = max_size
-        output = jnp.full(shape,fill,dtype=value.dtype).at[scatter_idx].set(value,mode="drop")
+        output = (
+            jnp.full(shape, fill, dtype=value.dtype)
+            .at[scatter_idx]
+            .set(value, mode="drop")
+        )
         outputs.append(output)
     if cumsum.size == 0:
-        return outputs,scatter_idx,0
-    return outputs,scatter_idx,cumsum[-1]
+        return outputs, scatter_idx, 0
+    return outputs, scatter_idx, cumsum[-1]
+
 
 def deep_update(
     mapping: Dict[Any, Any], *updating_mappings: Dict[Any, Any]
@@ -33,6 +52,7 @@ def deep_update(
             else:
                 updated_mapping[k] = v
     return updated_mapping
+
 
 class Counter:
     def __init__(self, nseg, startsave=1):
