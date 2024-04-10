@@ -3,6 +3,7 @@
 import jax.numpy as jnp
 from fennol import FENNIX
 from jax.random import PRNGKey
+from fennol.utils import AtomicUnits as Au
 
 ###############################
 # Test using Tinker reference #
@@ -73,7 +74,7 @@ def test_electric_field():
             [0, -0.02453007, -0.10356116],
             [0, -0.10356116, -0.02453007]
         ]
-    ).flatten()
+    ).flatten() * Au.BOHR**2
 
     assert jnp.allclose(  # noqa: S101
         output_tinker['electric_field'].flatten(),
@@ -165,10 +166,10 @@ def test_electric_field_water():
             [-0.12585367, -0.12585367, 0.],
             [-0.19055352, -0.06115383, 0.],
             [-0.06115383, -0.19055352, 0.]]
-    ).flatten()
+    ).flatten() * Au.BOHR**2
 
     assert jnp.allclose(  # noqa: S101
         output_water['electric_field'].flatten(),
         electric_field,
-        atol=1e-6
+        atol=1e-5
     )

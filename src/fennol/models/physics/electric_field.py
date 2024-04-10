@@ -28,7 +28,6 @@ class ElectricField(nn.Module):
         Key of the polarisability in the input.
     """
 
-    name: str = 'electric_field'
     damping_param: float = 0.7
     charges_key: str = 'charges'
     graph_key: str = 'graph'
@@ -65,13 +64,6 @@ class ElectricField(nn.Module):
         # Effective distance
         uij = rij / alpha_ij ** (1 / 6)
 
-        # For tests purposes
-        testing = 'training_flag' not in inputs
-        if testing:
-            rij *= Au.BOHR
-            vec_ij *= Au.BOHR
-            polarisability *= Au.BOHR**3
-
         # Charges and polarisability
         charges = inputs[self.charges_key]
         rij = rij[:, None]
@@ -83,14 +75,13 @@ class ElectricField(nn.Module):
         )[:, None]
 
         # Electric field
-        print(q_ij.shape, vec_ij.shape, rij.shape, damping_field.shape)
         eij = -q_ij * (vec_ij / rij**3) * damping_field
         electric_field = jax.ops.segment_sum(
             eij, edge_src, species.shape[0]
         ).flatten()
 
         output = {
-            self.name: electric_field
+            'electric_field': electric_field
         }
 
         return {**inputs, **output}
