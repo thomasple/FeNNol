@@ -174,7 +174,7 @@ class CRATEmbedding(nn.Module):
             # Check that the graph_angle is a subgraph of graph
             correct_graph = (
                 self.graph_angle_key == self.graph_key
-                or self._graphs_properties[self.graph_angle_key]["original_graph"]
+                or self._graphs_properties[self.graph_angle_key]["parent_graph"]
                 == self.graph_key
             )
             assert (
@@ -184,7 +184,7 @@ class CRATEmbedding(nn.Module):
                 "angles" in graph_angle
             ), f"Graph {self.graph_angle_key} must contain angles"
             # check if graph_angle is a filtered graph
-            filtered = "original_graph" in self._graphs_properties[self.graph_angle_key]
+            filtered = "parent_graph" in self._graphs_properties[self.graph_angle_key]
             if filtered:
                 filter_indices = graph_angle["filter_indices"]
 

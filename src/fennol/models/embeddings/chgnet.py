@@ -90,7 +90,7 @@ class CHGNetEmbedding(nn.Module):
 
         correct_graph = (
             graph_angle_key == self.graph_key
-            or self._graphs_properties[graph_angle_key]["original_graph"]
+            or self._graphs_properties[graph_angle_key]["parent_graph"]
             == self.graph_key
         )
         assert (
@@ -98,7 +98,7 @@ class CHGNetEmbedding(nn.Module):
         ), f"graph_angle_key={graph_angle_key} must be a subgraph of graph_key={self.graph_key}"
         assert "angles" in graph_angle, f"Graph {graph_angle_key} must contain angles"
         # check if graph_angle is a filtered graph
-        filtered = "original_graph" in self._graphs_properties[graph_angle_key]
+        filtered = "parent_graph" in self._graphs_properties[graph_angle_key]
         if filtered:
             filter_indices = graph_angle["filter_indices"]
 

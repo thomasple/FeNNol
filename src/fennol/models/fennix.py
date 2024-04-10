@@ -8,11 +8,10 @@ import jax.numpy as jnp
 import flax.linen as nn
 import numpy as np
 from flax import serialization
-from flax.core.frozen_dict import freeze, unfreeze
+from flax.core.frozen_dict import freeze, unfreeze, FrozenDict
 
 from .preprocessing import (
     GraphGenerator,
-    GraphGeneratorFixed,
     PreprocessingChain,
     PREPROCESSING,
     JaxConverter,
@@ -44,7 +43,7 @@ class FENNIX:
 
     """
 
-    cutoff: float
+    cutoff: float | None
     modules: FENNIXModules
     variables: Dict
     preprocessing: PreprocessingChain
@@ -68,7 +67,6 @@ class FENNIX:
         variables: Optional[dict] = None,
         energy_terms=["energy"],
         use_atom_padding: bool = False,
-        fixed_preprocessing: bool = False,
         graph_config: Dict = {},
         **kwargs,
     ) -> None:
@@ -83,34 +81,38 @@ class FENNIX:
 
         # add non-differentiable/non-jittable modules
         preprocessing = deepcopy(preprocessing)
-        prep_keys = list(preprocessing.keys())
-        graph_params = {"cutoff": cutoff, "graph_key": "graph"}
-        if len(prep_keys) > 0 and prep_keys[0] == "graph":
-            graph_params = {
-                **graph_params,
-                **preprocessing.pop("graph"),
-            }
-        graph_params = {**graph_params, **graph_config}
-
-        if fixed_preprocessing:
-            preprocessing_modules = [
-                GraphGeneratorFixed(**graph_params),
-            ]
+        if cutoff is None:
+            preprocessing_modules = []
         else:
+            prep_keys = list(preprocessing.keys())
+            graph_params = {"cutoff": cutoff, "graph_key": "graph"}
+            if len(prep_keys) > 0 and prep_keys[0] == "graph":
+                graph_params = {
+                    **graph_params,
+                    **preprocessing.pop("graph"),
+                }
+            graph_params = {**graph_params, **graph_config}
+
             preprocessing_modules = [
                 GraphGenerator(**graph_params),
             ]
+
         for name, params in preprocessing.items():
             key = str(params.pop("module_name")) if "module_name" in params else name
             key = str(params.pop("FID")) if "FID" in params else key
-            mod = PREPROCESSING[key.upper()](**params)
+            mod = PREPROCESSING[key.upper()](**freeze(params))
             preprocessing_modules.append(mod)
 
-        self.preprocessing = PreprocessingChain(preprocessing_modules, use_atom_padding)
+        self.preprocessing = PreprocessingChain(
+            tuple(preprocessing_modules), use_atom_padding
+        )
         graphs_properties = self.preprocessing.get_graphs_properties()
         self._graphs_properties = freeze(graphs_properties)
         # add preprocessing modules that should be differentiated/jitted
-        mods = [(JaxConverter, {})] + self.preprocessing.get_processors(return_list=True)
+        mods = [(JaxConverter, {})] + self.preprocessing.get_processors(
+            return_list=True
+        )
+        # mods = self.preprocessing.get_processors(return_list=True)
 
         # build the model
         modules = deepcopy(modules)
@@ -163,7 +165,7 @@ class FENNIX:
                 e = out[term]
                 if e.ndim > 1 and e.shape[-1] == 1:
                     e = jnp.squeeze(e, axis=-1)
-                if e.shape[0] == nsys and nsys!=species.shape[0]:
+                if e.shape[0] == nsys and nsys != species.shape[0]:
                     system_energies += e
                     continue
                 assert e.shape == species.shape
@@ -258,7 +260,7 @@ class FENNIX:
         """apply preprocessing to the input data
 
         !!! This is not a pure function => do not apply jax transforms !!!"""
-        out, preproc_state = self.preprocessing(inputs, self.preproc_state)
+        preproc_state, out = self.preprocessing(self.preproc_state, inputs)
         object.__setattr__(self, "preproc_state", preproc_state)
         return out
 
@@ -275,7 +277,7 @@ class FENNIX:
             rng_key_sys, rng_key_pre = jax.random.split(rng_key_pre)
             example_data = self.generate_dummy_system(rng_key_sys, n_atoms=10)
 
-        inputs, preproc_state = self.preprocessing.init_with_output(example_data)
+        preproc_state, inputs = self.preprocessing.init_with_output(example_data)
         object.__setattr__(self, "preproc_state", preproc_state)
         return inputs, rng_key
 
@@ -351,13 +353,29 @@ class FENNIX:
         return self.preprocessing, self.preproc_state
 
     def __setattr__(self, __name: str, __value: Any) -> None:
-        if __name in ["variables","preproc_state"]:
+        if __name == "variables":
             if __value is not None:
-                if not isinstance(__value, dict):
+                if not (
+                    isinstance(__value, dict)
+                    or isinstance(__value, OrderedDict)
+                    or isinstance(__value, FrozenDict)
+                ):
                     raise ValueError(f"{__name} must be a dict")
                 object.__setattr__(self, __name, JaxConverter()(__value))
             else:
                 raise ValueError(f"{__name} cannot be None")
+        elif __name == "preproc_state":
+            if __value is not None:
+                if not (
+                    isinstance(__value, dict)
+                    or isinstance(__value, OrderedDict)
+                    or isinstance(__value, FrozenDict)
+                ):
+                    raise ValueError(f"{__name} must be a FrozenDict")
+                object.__setattr__(self, __name, freeze(JaxConverter()(__value)))
+            else:
+                raise ValueError(f"{__name} cannot be None")
+
         elif self._initializing:
             object.__setattr__(self, __name, __value)
         else:
@@ -398,7 +416,7 @@ class FENNIX:
             rng_key, rng_key_sys = jax.random.split(rng_key)
             example_data = self.generate_dummy_system(rng_key_sys, n_atoms=10)
         rng_key, rng_key_pre = jax.random.split(rng_key)
-        inputs, _ = self.preprocessing.init_with_output(rng_key_pre, example_data)
+        _, inputs = self.preprocessing.init_with_output(example_data)
         return head + nn.tabulate(self.modules, rng_key, **kwargs)(inputs)
 
     def to_dict(self):
@@ -422,7 +440,6 @@ class FENNIX:
         cls,
         filename,
         use_atom_padding=False,
-        fixed_preprocessing=False,
         graph_config={},
     ):
         with open(filename, "rb") as f:
@@ -433,5 +450,4 @@ class FENNIX:
             **state_dict,
             graph_config=graph_config,
             use_atom_padding=use_atom_padding,
-            fixed_preprocessing=fixed_preprocessing,
         )

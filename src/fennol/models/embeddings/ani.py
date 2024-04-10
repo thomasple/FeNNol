@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
-from typing import Sequence, Dict
+from typing import Sequence, Dict, Union
 import numpy as np
 from ...utils.periodic_table import PERIODIC_TABLE
 
@@ -45,7 +45,7 @@ class ANIAEV(nn.Module):
     """
 
     _graphs_properties: Dict
-    species_order: Sequence[str]
+    species_order: Union[str,Sequence[str]]
     graph_angle_key: str
     radial_eta: float = 16.0
     angular_eta: float = 8.0
@@ -68,10 +68,14 @@ class ANIAEV(nn.Module):
 
         # convert species to internal indices
         conv_tensor = [0] * (maxidx + 2)
-        for i, s in enumerate(self.species_order):
+        if isinstance(self.species_order, str):
+            species_order =  [el.strip() for el in self.species_order.split(",")]
+        else:
+            species_order = [ el for el in self.species_order]
+        for i, s in enumerate(species_order):
             conv_tensor[rev_idx[s]] = i
         indices = jnp.asarray(conv_tensor, dtype=jnp.int32)[species]
-        num_species = len(self.species_order)
+        num_species = len(species_order)
         num_species_pair = (num_species * (num_species + 1)) // 2
 
         # Radial graph

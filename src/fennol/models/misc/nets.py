@@ -1,6 +1,6 @@
 import flax.linen as nn
 from typing import Sequence, Callable, Union
-from ...utils.periodic_table import PERIODIC_TABLE
+from ...utils.periodic_table import PERIODIC_TABLE_REV_IDX, PERIODIC_TABLE
 import jax.numpy as jnp
 import jax
 import numpy as np
@@ -8,6 +8,7 @@ from functools import partial
 from typing import Optional, Tuple
 from ...utils.activations import activation_from_str, TrainableSiLU
 from ...utils.initializers import initializer_from_str, scaled_orthogonal
+from flax.core import FrozenDict
 
 
 class FullyConnectedNet(nn.Module):
@@ -287,74 +288,119 @@ class HierarchicalNet(nn.Module):
         return out
 
 
-class ChemicalNetHet(nn.Module):
-    """Chemical-species-specific neural network.
+class SpeciesIndexNet(nn.Module):
+    """Chemical-species-specific neural network using precomputed species index.
 
-    A neural network that applies a fully connected network to each atom embedding in a chemical system and selects the output corresponding to the atom's species.
-    The architecture of the network can be different for each chemical species.
+    A neural network that applies a species-specific fully connected network to each atom embedding.
+    A species index must be provided to filter the embeddings for each species and apply the corresponding network.
+    This index can be obtained using the SPECIES_INDEXER preprocessing module.
 
     Parameters:
-        species_order (Sequence[str]): The species for which to build a network.
-        neurons (Union[dict, Sequence[int]]): The dimensions of the fully connected networks for each species.
+        output_dim (int): The dimension of the output of the fully connected networks. It is the same for all species.
+        hidden_neurons (Union[dict, Sequence[int]]): The hidden dimensions of the fully connected networks for each species.
             If a dictionary is provided, it should map species names to dimensions.
             If a sequence is provided, the same dimensions will be used for all species.
+        species_order (Sequence[str]): The species for which to build a network. Only required if neurons is not a dictionary.
         activation (Callable, optional): The activation function to use in the fully connected networks. Defaults to nn.silu.
         use_bias (bool, optional): Whether to include bias terms in the fully connected networks. Defaults to True.
         input_key (str, optional): The key in the input dictionary that corresponds to the embeddings of the atoms.
             If None, the input is assumed to be a tuple (species,embeddings). Defaults to None.
+        species_index_key str: The key in the input dictionary that corresponds to the species index of the atoms.
+            This index can be obtained via the SPECIES_INDEXER preprocessing module. Defaults to "species_index".
         output_key (str, optional): The key in the output dictionary that corresponds to the network's output.
             If None, the output is returned directly. Defaults to None.
         squeeze (bool, optional): Whether to squeeze the output if it has shape (batch_size, 1). Defaults to False.
         kernel_init (Union[str, Callable], optional): The kernel initialization method for the fully connected networks. Defaults to nn.linear.default_kernel_init.
     """
 
-    species_order: Sequence[str]
-    neurons: Union[dict, Sequence[int]]
+    output_dim: int
+    hidden_neurons: Union[dict, FrozenDict, Sequence[int]]
+    species_order: None | str | Sequence[str] = None
     activation: Union[Callable, str] = nn.silu
     use_bias: bool = True
     input_key: Optional[str] = None
+    species_index_key: str = "species_index"
     output_key: Optional[str] = None
     squeeze: bool = False
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
 
-    FID: str = "CHEMICAL_NET_HET"
+    FID: str = "SPECIES_INDEX_NET"
 
     def setup(self):
-        idx_map = {s: i for i, s in enumerate(PERIODIC_TABLE)}
-        if not isinstance(self.neurons, dict):
-            neurons = {k: self.neurons for k in self.species_order}
+        if not (
+            isinstance(self.hidden_neurons, dict)
+            or isinstance(self.hidden_neurons, FrozenDict)
+        ):
+            assert (
+                self.species_order is not None
+            ), "species_order must be provided if hidden_neurons is not a dictionary"
+            if isinstance(self.species_order, str):
+                species_order = [el.strip() for el in self.species_order.split(",")]
+            else:
+                species_order = [el for el in self.species_order]
+            neurons = {k: self.hidden_neurons for k in species_order}
         else:
-            neurons = self.neurons
+            neurons = self.hidden_neurons
+            species_order = list(neurons.keys())
+        for species in species_order:
+            assert (
+                species in PERIODIC_TABLE
+            ), f"species {species} not found in periodic table"
+
         self.networks = {
-            idx_map[k]: FullyConnectedNet(
-                neurons[k],
+            k: FullyConnectedNet(
+                [*neurons[k], self.output_dim],
                 self.activation,
                 self.use_bias,
                 name=k,
                 kernel_init=self.kernel_init,
             )
-            for k in self.species_order
+            for k in species_order
         }
 
-    @nn.compact
     def __call__(
         self, inputs: Union[dict, Tuple[jax.Array, jax.Array]]
     ) -> Union[dict, jax.Array]:
+
         if self.input_key is None:
             assert not isinstance(
                 inputs, dict
             ), "input key must be provided if inputs is a dictionary"
-            species, embedding = inputs
+            species, embedding, species_index = inputs
         else:
             species, embedding = inputs["species"], inputs[self.input_key]
+            species_index = inputs[self.species_index_key]
+
+        assert isinstance(
+            species_index, dict
+        ), "species_index must be a dictionary for SpeciesIndexNetHet"
 
         ############################
-        # apply each network to all the atoms and select the output corresponding to the species
-        # (brute force because shapes need to be fixed, coulb be improved by passing
-        #   a fixed size list of atoms for each species)
-        out = jnp.zeros((species.shape[0], self.neurons[-1]), dtype=embedding.dtype)
+        # initialization => instantiate all networks
+        if self.is_initializing():
+            x = jnp.zeros((1, embedding.shape[-1]), dtype=embedding.dtype)
+            [net(x) for net in self.networks.values()]
+
+        ############################
+        outputs = []
+        indices = []
         for s, net in self.networks.items():
-            out += jnp.where((species == s)[:, None], net(embedding), 0.0)
+            if s not in species_index:
+                continue
+            idx = species_index[s]
+            o = net(embedding[idx])
+            outputs.append(o)
+            indices.append(idx)
+
+        o = jnp.concatenate(outputs, axis=0)
+        idx = jnp.concatenate(indices, axis=0)
+
+        out = (
+            jnp.zeros((species.shape[0], *o.shape[1:]), dtype=o.dtype)
+            .at[idx]
+            .set(o, mode="drop")
+        )
+
         if self.squeeze and out.shape[-1] == 1:
             out = jnp.squeeze(out, axis=-1)
         ############################
@@ -385,7 +431,7 @@ class ChemicalNet(nn.Module):
         kernel_init (Union[str, Callable], optional): The kernel initialization method for the fully connected networks. Defaults to nn.linear.default_kernel_init.
     """
 
-    species_order: Sequence[str]
+    species_order: str | Sequence[str]
     neurons: Sequence[int]
     activation: Union[Callable, str] = nn.silu
     use_bias: bool = True
@@ -410,11 +456,15 @@ class ChemicalNet(nn.Module):
 
         ############################
         # build species to network index mapping (static => fixed when jitted)
-        rev_idx = {s: k for k, s in enumerate(PERIODIC_TABLE)}
+        rev_idx = PERIODIC_TABLE_REV_IDX
         maxidx = max(rev_idx.values())
-        nspecies = len(self.species_order)
+        if isinstance(self.species_order, str):
+            species_order = [el.strip() for el in self.species_order.split(",")]
+        else:
+            species_order = [el for el in self.species_order]
+        nspecies = len(species_order)
         conv_tensor_ = np.full((maxidx + 2,), -1, dtype=np.int32)
-        for i, s in enumerate(self.species_order):
+        for i, s in enumerate(species_order):
             conv_tensor_[rev_idx[s]] = i
         conv_tensor = jnp.asarray(conv_tensor_)
         indices = conv_tensor[species]
@@ -428,7 +478,9 @@ class ChemicalNet(nn.Module):
             in_axes=0,
         )(self.neurons, self.activation, self.use_bias, kernel_init=self.kernel_init)
         # repeat input along a new axis to compute for all species at once
-        x = jnp.repeat(embedding[None, :, :], len(self.species_order), axis=0)
+        x = jnp.broadcast_to(
+            embedding[None, :, :], (nspecies, *embedding.shape)
+        )
 
         # apply networks to input and select the output corresponding to the species
         out = jnp.squeeze(

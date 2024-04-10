@@ -84,11 +84,11 @@ class HIPNNEmbedding(nn.Module):
 
         distances = graph["distances"]
         if self.lmax > 0:
-            filtered_l = "original_graph" in self._graphs_properties[self.graph_l_key]
+            filtered_l = "parent_graph" in self._graphs_properties[self.graph_l_key]
 
             correct_graph = (
                 self.graph_l_key == self.graph_key
-                or self._graphs_properties[self.graph_l_key]["original_graph"]
+                or self._graphs_properties[self.graph_l_key]["parent_graph"]
                 == self.graph_key
             )
             assert (

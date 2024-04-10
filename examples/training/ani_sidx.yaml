@@ -48,6 +48,9 @@ model:
     angle_extension: # add angle information to the "graph_angle" graph
       module_name: GRAPH_ANGULAR_EXTENSION
       graph_key: graph_angle
+    species_index:
+      module_name: SPECIES_INDEXER
+      output_key: species_index
 
   modules:
     embedding: # ANI Atomic Environment Vector (AEV) with ANI2x setup
@@ -66,7 +69,8 @@ model:
       angular_start: 0.8
 
     energy: # neural network for the energy prediction (species-specialized networks)
-      module_name: CHEMICAL_NET
+      module_name: SPECIES_INDEX_NET
+      species_index_key: species_index
       species_order: [H, C, N, O]
       activation: partial(celu,alpha=0.1)
       neurons: [256, 192, 160, 1]
