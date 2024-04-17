@@ -2,7 +2,7 @@ from numpy import pi
 
 
 class AtomicUnits:
-    EV = 27.211399  # Hartree to eV
+    EV = 27.211386024367243  # Hartree to eV
     KCALPERMOL = 627.5096080305927  # Hartree to kcal/mol
     KJPERMOL = 2625.5002  # Hartree to kJ/mol
     BOHR = 0.52917721  # Bohr to Angstrom
@@ -24,7 +24,9 @@ class AtomicUnits:
     mapping = {
         "1": 1.0,
         "AU": 1.0,
+        "HA":1.0,
         "EV": EV,
+        "MEV": 1.0e3 * EV, # milli electronvolt
         "KCALPERMOL": KCALPERMOL,
         "KJPERMOL": KJPERMOL,
         "ANGSTROM": BOHR,
