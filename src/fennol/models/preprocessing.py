@@ -13,10 +13,10 @@ from flax.core.frozen_dict import FrozenDict
 
 from ..utils.activations import chain
 from ..utils import deep_update, mask_filter_1d
-from ..utils.nblist import get_reciprocal_space_parameters
+from ..utils.kspace import get_reciprocal_space_parameters
 from .modules import FENNIXModules
 from .misc.misc import SwitchFunction
-from ..utils.periodic_table import PERIODIC_TABLE,PERIODIC_TABLE_REV_IDX
+from ..utils.periodic_table import PERIODIC_TABLE, PERIODIC_TABLE_REV_IDX
 
 
 @dataclasses.dataclass(frozen=True)
@@ -43,6 +43,7 @@ class GraphGenerator:
     mult_size : float, default=1.05
         Multiplicative factor for resizing the nblist.
     """
+
     cutoff: float
     graph_key: str = "graph"
     switch_params: dict = dataclasses.field(default_factory=dict, hash=False)
@@ -79,9 +80,14 @@ class GraphGenerator:
 
     def __call__(self, state, inputs, return_state_update=False, add_margin=False):
         """build a nblist on cpu with numpy and dynamic shapes + store max shapes"""
-        coords = np.array(inputs["coordinates"])
-        natoms = np.array(inputs["natoms"])
-        batch_index = np.array(inputs["batch_index"])
+        if self.graph_key in inputs:
+            graph = inputs[self.graph_key]
+            if "keep_graph" in graph:
+                return state,inputs
+            
+        coords = np.array(inputs["coordinates"],dtype=np.float32)
+        natoms = np.array(inputs["natoms"],dtype=np.float32)
+        batch_index = np.array(inputs["batch_index"],dtype=np.int32)
 
         new_state = {**state}
         state_up = {}
@@ -103,7 +109,9 @@ class GraphGenerator:
             mask_p12 = (
                 (p1[None, :] < natoms[:, None]) * (p2[None, :] < natoms[:, None])
             ).flatten()
-            shift = np.concatenate((np.array([0]), np.cumsum(natoms[:-1])))
+            shift = np.concatenate(
+                (np.array([0], dtype=np.int32), np.cumsum(natoms[:-1]))
+            )
             p1 = np.where(mask_p12, (p1[None, :] + shift[:, None]).flatten(), -1)
             p2 = np.where(mask_p12, (p2[None, :] + shift[:, None]).flatten(), -1)
 
@@ -112,8 +120,8 @@ class GraphGenerator:
             ### NO PBC
             vec = coords[p2] - coords[p1]
         else:
-            cells = np.array(inputs["cells"])
-            reciprocal_cells = np.array(inputs["reciprocal_cells"])
+            cells = np.array(inputs["cells"],dtype=np.float32)
+            reciprocal_cells = np.array(inputs["reciprocal_cells"],dtype=np.float32)
             minimage = state.get("minimum_image", True)
             if minimage:
                 ## MINIMUM IMAGE CONVENTION
@@ -304,12 +312,16 @@ class GraphGenerator:
 
     @partial(jax.jit, static_argnums=(0, 1))
     def process(self, state, inputs):
-        """build a nblist on acceleratir with jax and precomputed shapes"""
+        """build a nblist on accelerator with jax and precomputed shapes"""
+        if self.graph_key in inputs:
+            graph = inputs[self.graph_key]
+            if "keep_graph" in graph:
+                return inputs
         coords = inputs["coordinates"]
         natoms = inputs["natoms"]
         batch_index = inputs["batch_index"]
 
-        max_nat = state.get("max_nat", round(coords.shape[0] / natoms.shape[0]))
+        max_nat = state.get("max_nat", int(round(coords.shape[0] / natoms.shape[0])))
 
         ### compute indices of all pairs
         p1, p2 = np.triu_indices(max_nat, 1)
@@ -320,7 +332,9 @@ class GraphGenerator:
             mask_p12 = (
                 (p1[None, :] < natoms[:, None]) * (p2[None, :] < natoms[:, None])
             ).flatten()
-            shift = jnp.concatenate((jnp.array([0]), jnp.cumsum(natoms[:-1])))
+            shift = jnp.concatenate(
+                (jnp.array([0], dtype=jnp.int32), jnp.cumsum(natoms[:-1]))
+            )
             p1 = jnp.where(mask_p12, (p1[None, :] + shift[:, None]).flatten(), -1)
             p2 = jnp.where(mask_p12, (p2[None, :] + shift[:, None]).flatten(), -1)
 
@@ -378,7 +392,8 @@ class GraphGenerator:
                     )
                 cell_shift_pbc = jnp.asarray(
                     np.array(
-                        np.meshgrid(*[np.arange(-n, n + 1) for n in num_repeats])
+                        np.meshgrid(*[np.arange(-n, n + 1) for n in num_repeats]),
+                        dtype=cell.dtype,
                     ).T.reshape(-1, 3)
                 )
                 vec = (
@@ -419,7 +434,7 @@ class GraphGenerator:
         )
         if "cells" in inputs:
             pbc_shifts = (
-                jnp.full((max_pairs, 3), 0.0)
+                jnp.full((max_pairs, 3), 0.0, dtype=pbc_shifts.dtype)
                 .at[scatter_idx]
                 .set(pbc_shifts, mode="drop")
             )
@@ -456,7 +471,7 @@ class GraphGenerator:
             )
             if "cells" in inputs:
                 pbc_shifts = (
-                    jnp.full((max_pairs_skin, 3), 0.0)
+                    jnp.full((max_pairs_skin, 3), 0.0, dtype=pbc_shifts.dtype)
                     .at[scatter_idx]
                     .set(pbc_shifts, mode="drop")
                 )
@@ -528,7 +543,9 @@ class GraphGenerator:
         )
         if "cells" in inputs:
             pbc_shifts = (
-                jnp.full((max_pairs, 3), 0.0).at[scatter_idx].set(pbc_shifts_skin)
+                jnp.full((max_pairs, 3), 0.0, dtype=pbc_shifts_skin.dtype)
+                .at[scatter_idx]
+                .set(pbc_shifts_skin)
             )
 
         overflow = graph.get("overflow", False) | (npairs > max_pairs)
@@ -552,7 +569,7 @@ class GraphGenerator:
 
 
 class GraphProcessor(nn.Module):
-    """ Process a pre-generated graph 
+    """Process a pre-generated graph
 
     The pre-generated graph should contain the following keys:
     - edge_src: source indices of the edges
@@ -567,9 +584,10 @@ class GraphProcessor(nn.Module):
         Cutoff distance for the graph.
     graph_key : str
         Key of the graph in the inputs.
-    switch_params : dict, default={}   
+    switch_params : dict, default={}
         Parameters for the switching function.
     """
+
     cutoff: float
     graph_key: str = "graph"
     switch_params: dict = dataclasses.field(default_factory=dict)
@@ -613,7 +631,7 @@ class GraphProcessor(nn.Module):
 @dataclasses.dataclass(frozen=True)
 class GraphFilter:
     """Filter a graph based on a cutoff distance
-    
+
     Parameters
     ----------
     cutoff : float
@@ -635,6 +653,7 @@ class GraphFilter:
     mult_size : float, default=1.05
         Multiplicative factor for resizing the nblist.
     """
+
     cutoff: float
     parent_graph: str
     graph_key: str
@@ -679,8 +698,8 @@ class GraphFilter:
         new_state = {**state}
         state_up = {}
 
-        edge_src = np.array(graph_in["edge_src"])
-        d12 = np.array(graph_in["d12"])
+        edge_src = np.array(graph_in["edge_src"], dtype=np.int32)
+        d12 = np.array(graph_in["d12"], dtype=np.float32)
         if self.remove_hydrogens:
             species = inputs["species"]
             src_idx = (edge_src < nat).nonzero()[0]
@@ -800,7 +819,7 @@ class GraphFilter:
 
 
 class GraphFilterProcessor(nn.Module):
-    """ Filter processing for a pre-generated graph
+    """Filter processing for a pre-generated graph
 
     This module is automatically added to a FENNIX model when a GraphFilter is used.
 
@@ -816,6 +835,7 @@ class GraphFilterProcessor(nn.Module):
         Parameters for the switching function.
 
     """
+
     cutoff: float
     graph_key: str
     parent_graph: str
@@ -862,7 +882,7 @@ class GraphFilterProcessor(nn.Module):
 @dataclasses.dataclass(frozen=True)
 class GraphAngularExtension:
     """Add angles list to a graph
-    
+
     Parameters
     ----------
     mult_size : float, default=1.05
@@ -872,6 +892,7 @@ class GraphAngularExtension:
     graph_key : str, default="graph"
         Key of the graph in the inputs.
     """
+
     mult_size: float = 1.05
     add_neigh: int = 5
     graph_key: str = "graph"
@@ -902,7 +923,7 @@ class GraphAngularExtension:
     def __call__(self, state, inputs, return_state_update=False, add_margin=False):
         """build angle nblist on cpu with numpy and dynamic shapes + store max shapes"""
         graph = inputs[self.graph_key]
-        edge_src = np.array(graph["edge_src"])
+        edge_src = np.array(graph["edge_src"], dtype=np.int32)
 
         new_state = {**state}
         state_up = {}
@@ -915,6 +936,7 @@ class GraphAngularExtension:
 
         ### get sizes
         max_neigh = state.get("max_neigh", self.add_neigh)
+        nedge = edge_src.shape[0]
         if max_count > max_neigh or add_margin:
             prev_max_neigh = max_neigh
             max_neigh = max(max_count, max_neigh) + state.get(
@@ -936,7 +958,7 @@ class GraphAngularExtension:
         if max_count * nat >= nedge:
             offset = np.tile(np.arange(max_count), nat)[:nedge]
         else:
-            offset = np.zeros(nedge, dtype=jnp.int32)
+            offset = np.zeros(nedge, dtype=np.int32)
             offset[: max_count * nat] = np.tile(np.arange(max_count), nat)
 
         # offset = jnp.where(edge_src_sorted < nat, offset, 0)
@@ -1031,17 +1053,13 @@ class GraphAngularExtension:
         nedge = edge_src.shape[0]
 
         ### sort edge_src
-        idx_sort = jnp.argsort(edge_src)
+        idx_sort = jnp.argsort(edge_src).astype(jnp.int32)
         edge_src_sorted = edge_src[idx_sort]
 
         ### map sparse to dense nblist
-        offset = jnp.tile(jnp.arange(max_neigh), nat)
-        if max_neigh * nat >= nedge:
-            offset = offset[:nedge]
-        else:
-            offset = jax.lax.dynamic_update_slice(
-                jnp.zeros(nedge, dtype=jnp.int32), offset, (0,)
-            )
+        if max_neigh * nat < nedge:
+            raise ValueError("Found max_neigh*nat < nedge. This should not happen.")
+        offset = jnp.asarray(np.tile(np.arange(max_neigh), nat)[:nedge], dtype=jnp.int32)
         # offset = jnp.where(edge_src_sorted < nat, offset, 0)
         indices = edge_src_sorted * max_neigh + offset
         edge_idx = (
@@ -1085,7 +1103,7 @@ class GraphAngularExtension:
                 "angle_dst": angle_dst,
                 "central_atom": central_atom,
                 "angle_overflow": overflow,
-                "max_neigh": max_neigh,
+                # "max_neigh": max_neigh,
                 "__max_neigh_array": max_neigh_arr,
             },
         }
@@ -1098,7 +1116,7 @@ class GraphAngularExtension:
 
 
 class GraphAngleProcessor(nn.Module):
-    """ Process a pre-generated graph to compute angles
+    """Process a pre-generated graph to compute angles
 
     This module is automatically added to a FENNIX model when a GraphAngularExtension is used.
 
@@ -1107,6 +1125,7 @@ class GraphAngleProcessor(nn.Module):
     graph_key : str
         Key of the graph in the inputs.
     """
+
     graph_key: str
 
     @nn.compact
@@ -1139,8 +1158,8 @@ class GraphAngleProcessor(nn.Module):
 @dataclasses.dataclass(frozen=True)
 class SpeciesIndexer:
     """Build an index that splits atomic arrays by species.
-    
-    If `species_order` is specified, the output will be a dense array with size (len(species_order), max_size) that can directly index atomic arrays. 
+
+    If `species_order` is specified, the output will be a dense array with size (len(species_order), max_size) that can directly index atomic arrays.
     If `species_order` is None, the output will be a dictionary with species as keys and an index to filter atomic arrays for that species as values.
 
     Parameters
@@ -1150,8 +1169,10 @@ class SpeciesIndexer:
     species_order : str, default=None
         Comma separated list of species in the order they should be indexed.
     """
+
     output_key: str = "species_index"
     species_order: Optional[str] = None
+    add_atoms: int = 0
 
     def init(self):
         return FrozenDict(
@@ -1161,7 +1182,7 @@ class SpeciesIndexer:
         )
 
     def __call__(self, state, inputs, return_state_update=False, add_margin=False):
-        species = np.array(inputs["species"])
+        species = np.array(inputs["species"], dtype=np.int32)
         nat = species.shape[0]
         set_species, counts = np.unique(species, return_counts=True)
 
@@ -1176,18 +1197,15 @@ class SpeciesIndexer:
             if s <= 0:
                 continue
             counts_dict[s] = c
-            if s not in sizes:
+            if c > sizes.get(s, 0):
                 up_sizes = True
-            new_sizes[s] = max(c, sizes.get(s, 0))
-        for s in sizes.keys():
-            if sizes[s] != new_sizes[s]:
-                up_sizes = True
+                new_sizes[s] = c + state.get("add_atoms", self.add_atoms)
 
         new_sizes = FrozenDict(new_sizes)
         if up_sizes:
             state_up["sizes"] = (new_sizes, sizes)
             new_state["sizes"] = new_sizes
-        
+
         if self.species_order is not None:
             species_order = [el.strip() for el in self.species_order.split(",")]
             max_size_prev = state.get("max_size", 0)
@@ -1196,7 +1214,7 @@ class SpeciesIndexer:
                 state_up["max_size"] = (max_size, max_size_prev)
                 new_state["max_size"] = max_size
                 max_size_prev = max_size
-            
+
             species_index = np.full((len(species_order), max_size), nat, dtype=np.int32)
             for i, el in enumerate(species_order):
                 s = PERIODIC_TABLE_REV_IDX[el]
@@ -1204,7 +1222,8 @@ class SpeciesIndexer:
                     species_index[i, : counts_dict[s]] = np.nonzero(species == s)[0]
         else:
             species_index = {
-                PERIODIC_TABLE[s]: np.full(c, nat, dtype=np.int32) for s, c in new_sizes.items()
+                PERIODIC_TABLE[s]: np.full(c, nat, dtype=np.int32)
+                for s, c in new_sizes.items()
             }
             for s, c in zip(set_species, counts):
                 if s <= 0:
@@ -1222,7 +1241,6 @@ class SpeciesIndexer:
 
     def check_reallocate(self, state, inputs, parent_overflow=False):
         return state, {}, inputs, parent_overflow
-
 
     @partial(jax.jit, static_argnums=(0, 1))
     def process(self, state, inputs):

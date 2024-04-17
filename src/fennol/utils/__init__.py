@@ -20,7 +20,7 @@ def minmaxone_jax(x, name=""):
 
 
 def mask_filter_1d(mask, max_size, *values_fill):
-    cumsum = jnp.cumsum(mask)
+    cumsum = jnp.cumsum(mask,dtype=jnp.int32)
     scatter_idx = jnp.where(mask, cumsum - 1, max_size)
     outputs = []
     for value, fill in values_fill:

@@ -17,7 +17,6 @@ from .preprocessing import (
     JaxConverter,
     atom_unpadding,
 )
-from ..utils import deep_update
 from .modules import MODULES, FENNIXModules
 
 
