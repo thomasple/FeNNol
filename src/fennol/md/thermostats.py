@@ -19,6 +19,7 @@ def get_thermostat(
     simulation_parameters,
     dt,
     mass,
+    fprec,
     gamma=None,
     kT=None,
     species=None,
@@ -29,6 +30,9 @@ def get_thermostat(
     postprocess = None
 
     thermostat_name = str(thermostat_name).upper()
+    compute_thermostat_energy = simulation_parameters.get(
+        "include_thermostat_energy", False
+    )
     if thermostat_name in ["LGV", "LANGEVIN", "FFLGV"]:
         assert rng_key is not None, "rng_key must be provided for QTB thermostat"
         assert kT is not None, "kT must be specified for QTB thermostat"
@@ -36,9 +40,9 @@ def get_thermostat(
         rng_key, v_key = jax.random.split(rng_key)
         if nbeads is None:
             a1 = math.exp(-gamma * dt)
-            a2 = jnp.asarray(((1 - a1 * a1) * kT / mass[:, None]) ** 0.5)
+            a2 = jnp.asarray(((1 - a1 * a1) * kT / mass[:, None]) ** 0.5, dtype=fprec)
             vel = (
-                jax.random.normal(v_key, (mass.shape[0], 3))
+                jax.random.normal(v_key, (mass.shape[0], 3), dtype=fprec)
                 * (kT / mass[:, None]) ** 0.5
             )
         else:
@@ -49,14 +53,17 @@ def get_thermostat(
             ), "gamma must be a float or a numpy array"
             assert gamma.shape[0] == nbeads, "gamma must have the same length as nbeads"
             a1 = np.exp(-gamma * dt)[:, None, None]
-            a2 = jnp.asarray(((1 - a1 * a1) * kT / mass[None, :, None]) ** 0.5)
+            a2 = jnp.asarray(
+                ((1 - a1 * a1) * kT / mass[None, :, None]) ** 0.5, dtype=fprec
+            )
             vel = (
-                jax.random.normal(v_key, (nbeads, mass.shape[0], 3))
+                jax.random.normal(v_key, (nbeads, mass.shape[0], 3), dtype=fprec)
                 * (kT / mass[:, None]) ** 0.5
             )
 
         state["rng_key"] = rng_key
-
+        if compute_thermostat_energy:
+            state["thermostat_energy"] = 0.0
         if thermostat_name == "FFLGV":
 
             def thermostat(vel, state):
@@ -64,18 +71,35 @@ def get_thermostat(
                 noise = jax.random.normal(noise_key, vel.shape, dtype=vel.dtype)
                 norm_vel = jnp.linalg.norm(vel, axis=-1, keepdims=True)
                 dirvel = vel / norm_vel
+                if compute_thermostat_energy:
+                    v2 = (vel**2).sum(axis=-1)
                 vel = a1 * vel + a2 * noise
                 new_norm_vel = jnp.linalg.norm(vel, axis=-1, keepdims=True)
                 vel = dirvel * new_norm_vel
-                return vel, {**state, "rng_key": rng_key}
+                new_state = {**state, "rng_key": rng_key}
+                if compute_thermostat_energy:
+                    v2new = (vel**2).sum(axis=-1)
+                    new_state["thermostat_energy"] = (
+                        state["thermostat_energy"] + 0.5 * (mass * (v2 - v2new)).sum()
+                    )
+
+                return vel, new_state
 
         else:
 
             def thermostat(vel, state):
                 rng_key, noise_key = jax.random.split(state["rng_key"])
                 noise = jax.random.normal(noise_key, vel.shape, dtype=vel.dtype)
+                if compute_thermostat_energy:
+                    v2 = (vel**2).sum(axis=-1)
                 vel = a1 * vel + a2 * noise
-                return vel, {**state, "rng_key": rng_key}
+                new_state = {**state, "rng_key": rng_key}
+                if compute_thermostat_energy:
+                    v2new = (vel**2).sum(axis=-1)
+                    new_state["thermostat_energy"] = (
+                        state["thermostat_energy"] + 0.5 * (mass * (v2 - v2new)).sum()
+                    )
+                return vel, new_state
 
     elif thermostat_name in ["BUSSI"]:
         assert rng_key is not None, "rng_key must be provided for QTB thermostat"
@@ -86,20 +110,28 @@ def get_thermostat(
 
         a1 = math.exp(-gamma * dt)
         a2 = (1 - a1) * kT
-        vel = jax.random.normal(v_key, (mass.shape[0], 3)) * (kT / mass[:, None]) ** 0.5
+        vel = (
+            jax.random.normal(v_key, (mass.shape[0], 3), dtype=fprec)
+            * (kT / mass[:, None]) ** 0.5
+        )
 
         state["rng_key"] = rng_key
+        if compute_thermostat_energy:
+            state["thermostat_energy"] = 0.0
 
         def thermostat(vel, state):
             rng_key, noise_key = jax.random.split(state["rng_key"])
+            new_state = {**state, "rng_key": rng_key}
             noise = jax.random.normal(noise_key, vel.shape, dtype=vel.dtype)
-            R2 = jnp.sum(noise ** 2)
-            R1 = noise[0,0]
+            R2 = jnp.sum(noise**2)
+            R1 = noise[0, 0]
             c = a2 / (mass[:, None] * vel**2).sum()
             d = (a1 * c) ** 0.5
             scale = (a1 + c * R2 + 2 * d * R1) ** 0.5
-            vel = scale * vel
-            return vel, {**state, "rng_key": rng_key}
+            if compute_thermostat_energy:
+                dek = 0.5 * (mass[:, None] * vel**2).sum() * (scale**2 - 1)
+                new_state["thermostat_energy"] = state["thermostat_energy"] + dek
+            return scale * vel, new_state
 
     elif thermostat_name in [
         "GD",
@@ -112,19 +144,67 @@ def get_thermostat(
         a1 = math.exp(-gamma * dt)
 
         if nbeads is None:
-            vel = jnp.zeros((mass.shape[0], 3))
+            vel = jnp.zeros((mass.shape[0], 3), dtype=fprec)
         else:
-            vel = jnp.zeros((nbeads, mass.shape[0], 3))
+            vel = jnp.zeros((nbeads, mass.shape[0], 3), dtype=fprec)
 
         def thermostat(vel, state):
             return a1 * vel, state
 
     elif thermostat_name in ["NVE", "NONE"]:
         if nbeads is None:
-            vel = jnp.zeros((mass.shape[0], 3))
+            vel = (
+                jax.random.normal(rng_key, (mass.shape[0], 3), dtype=fprec)
+                * (kT / mass[:, None]) ** 0.5
+            )
+            kTsys = jnp.sum(mass[:, None] * vel**2) / (mass.shape[0] * 3)
+            vel = vel * (kT / kTsys) ** 0.5
         else:
-            vel = jnp.zeros((nbeads, mass.shape[0], 3))
+            vel = (
+                jax.random.normal(rng_key, (nbeads, mass.shape[0], 3), dtype=fprec)
+                * (kT / mass[None, :, None]) ** 0.5
+            )
+            kTsys = jnp.sum(mass[None, :, None] * vel**2, axis=(1, 2)) / (
+                mass.shape[0] * 3
+            )
+            vel = vel * (kT / kTsys[:, None, None]) ** 0.5
         thermostat = lambda x, s: (x, s)
+
+    elif thermostat_name in ["NOSE", "NOSEHOOVER", "NOSE_HOOVER"]:
+        assert gamma is not None, "gamma must be specified for QTB thermostat"
+        ndof = mass.shape[0] * 3
+        nkT = ndof * kT
+        nose_mass = nkT / gamma**2
+        assert nbeads is None, "Nose-Hoover is not compatible with PIMD"
+        state["nose_s"] = 0.0
+        state["nose_v"] = 0.0
+        if compute_thermostat_energy:
+            state["thermostat_energy"] = 0.0
+        print(
+            "# WARNING: Nose-Hoover thermostat is not well tested yet. Energy conservation is not guaranteed."
+        )
+        vel = (
+            jax.random.normal(rng_key, (mass.shape[0], 3), dtype=fprec)
+            * (kT / mass[:, None]) ** 0.5
+        )
+
+        def thermostat(vel, state):
+            nose_s = state["nose_s"]
+            nose_v = state["nose_v"]
+            kTsys = jnp.sum(mass[:, None] * vel**2)
+            nose_v = nose_v + (0.5 * dt / nose_mass) * (kTsys - nkT)
+            nose_s = nose_s + dt * nose_v
+            vel = jnp.exp(-nose_v * dt) * vel
+            kTsys = jnp.sum(mass[:, None] * vel**2)
+            nose_v = nose_v + (0.5 * dt / nose_mass) * (kTsys - nkT)
+            new_state = {**state, "nose_s": nose_s, "nose_v": nose_v}
+
+            if compute_thermostat_energy:
+                new_state["thermostat_energy"] = (
+                    nkT * nose_s + (0.5 * nose_mass) * nose_v**2
+                )
+            return vel, new_state
+
     elif thermostat_name in ["QTB", "ADQTB"]:
         assert nbeads is None, "QTB is not compatible with PIMD"
         qtb_parameters = simulation_parameters.get("qtb", None)
@@ -136,10 +216,14 @@ def get_thermostat(
         assert gamma is not None, "gamma must be specified for QTB thermostat"
         assert species is not None, "species must be provided for QTB thermostat"
         rng_key, v_key = jax.random.split(rng_key)
-        vel = jax.random.normal(v_key, (mass.shape[0], 3)) * (kT / mass[:, None]) ** 0.5
+        vel = (
+            jax.random.normal(v_key, (mass.shape[0], 3), dtype=fprec)
+            * (kT / mass[:, None]) ** 0.5
+        )
 
-        thermostat, postprocess, state = initialize_qtb(
+        thermostat, postprocess, qtb_state = initialize_qtb(
             qtb_parameters,
+            fprec=fprec,
             dt=dt,
             mass=mass,
             gamma=gamma,
@@ -147,14 +231,17 @@ def get_thermostat(
             species=species,
             rng_key=rng_key,
             adaptive=thermostat_name.startswith("AD"),
+            compute_thermostat_energy=compute_thermostat_energy,
         )
+        state = {**state, **qtb_state}
+
     elif thermostat_name in ["ANNEAL", "ANNEALING"]:
         assert rng_key is not None, "rng_key must be provided for QTB thermostat"
         assert kT is not None, "kT must be specified for QTB thermostat"
         assert gamma is not None, "gamma must be specified for QTB thermostat"
         assert nbeads is None, "ANNEAL is not compatible with PIMD"
         a1 = math.exp(-gamma * dt)
-        a2 = jnp.asarray(((1 - a1 * a1) * kT / mass[:, None]) ** 0.5)
+        a2 = jnp.asarray(((1 - a1 * a1) * kT / mass[:, None]) ** 0.5, dtype=fprec)
 
         anneal_parameters = simulation_parameters.get("annealing", {})
         init_factor = anneal_parameters.get("init_factor", 1.0 / 25.0)
@@ -197,9 +284,9 @@ def get_thermostat(
 
         rng_key, v_key = jax.random.split(rng_key)
         Tscale = schedule(0)
-        print(f"ANNEAL: initial temperature = {Tscale*kT*au.KELVIN:.3e} K")
+        print(f"# ANNEAL: initial temperature = {Tscale*kT*au.KELVIN:.3e} K")
         vel = (
-            jax.random.normal(v_key, (mass.shape[0], 3))
+            jax.random.normal(v_key, (mass.shape[0], 3), dtype=fprec)
             * (kT * Tscale / mass[:, None]) ** 0.5
         )
 
@@ -221,12 +308,25 @@ def get_thermostat(
     return thermostat, postprocess, state, vel
 
 
-def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adaptive):
+def initialize_qtb(
+    qtb_parameters,
+    fprec,
+    dt,
+    mass,
+    gamma,
+    kT,
+    species,
+    rng_key,
+    adaptive,
+    compute_thermostat_energy=False,
+):
     state = {}
     post_state = {}
     verbose = qtb_parameters.get("verbose", False)
+    if compute_thermostat_energy:
+        state["thermostat_energy"] = 0.0
 
-    mass = jnp.asarray(mass, dtype=jnp.float32)
+    mass = jnp.asarray(mass, dtype=fprec)
 
     nat = species.shape[0]
     # define type indices
@@ -238,7 +338,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
     n_of_type = np.zeros(nspecies, dtype=np.int32)
     for i in range(nspecies):
         n_of_type[i] = (type_idx == i).nonzero()[0].shape[0]
-    n_of_type = jnp.asarray(n_of_type, dtype=jnp.float32)
+    n_of_type = jnp.asarray(n_of_type, dtype=fprec)
     mass_idx = jax.ops.segment_sum(mass, type_idx, nspecies) / n_of_type
 
     corr_kin = qtb_parameters.get("corr_kin", -1)
@@ -259,7 +359,9 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
     omegacut = qtb_parameters.get("omegacut", 15000.0 / au.CM1) / au.FS
     nom = int(omegacut / dom)
     omega = dom * np.arange((3 * nseg) // 2 + 1)
-    cutoff = jnp.asarray(1.0 / (1.0 + np.exp((omega - omegacut) / omegasmear)))
+    cutoff = jnp.asarray(
+        1.0 / (1.0 + np.exp((omega - omegacut) / omegasmear)), dtype=fprec
+    )
     assert (
         omegacut < omega[-1]
     ), f"omegacut must be smaller than {omega[-1]*au.CM1} CM-1"
@@ -269,12 +371,13 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
         gamma < 0.5 * omegacut
     ), "gamma must be much smaller than omegacut (at most 0.5*omegacut)"
     gammar_min = qtb_parameters.get("gammar_min", 0.1)
-    post_state["gammar"] = jnp.asarray(np.ones((nspecies, nom), dtype=np.float32))
+    post_state["gammar"] = jnp.asarray(np.ones((nspecies, nom)), dtype=fprec)
 
     # Ornstein-Uhlenbeck correction for colored noise
     a1 = np.exp(-gamma * dt)
     OUcorr = jnp.asarray(
-        (1.0 - 2.0 * a1 * np.cos(omega * dt) + a1**2) / (dt**2 * (gamma**2 + omega**2))
+        (1.0 - 2.0 * a1 * np.cos(omega * dt) + a1**2) / (dt**2 * (gamma**2 + omega**2)),
+        dtype=fprec,
     )
 
     # hbar schedule
@@ -284,7 +387,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
     theta = kT * np.ones_like(omega)
     if hbar > 0:
         theta[1:] *= u[1:] / np.tanh(u[1:])
-    theta = jnp.asarray(theta, dtype=jnp.float32)
+    theta = jnp.asarray(theta, dtype=fprec)
 
     noise_key, post_state["rng_key"] = jax.random.split(rng_key)
     del rng_key
@@ -302,16 +405,16 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
     do_compute_spectra = write_spectra or adaptive
 
     if do_compute_spectra:
-        state["vel"] = jnp.zeros((nseg, nat, 3), dtype=jnp.float32)
+        state["vel"] = jnp.zeros((nseg, nat, 3), dtype=fprec)
 
-        post_state["dFDT"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
-        post_state["mCvv"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
-        post_state["Cvf"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
-        post_state["Cff"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
-        post_state["dFDT_avg"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
-        post_state["mCvv_avg"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
-        post_state["Cvfg_avg"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
-        post_state["Cff_avg"] = jnp.zeros((nspecies, nom), dtype=jnp.float32)
+        post_state["dFDT"] = jnp.zeros((nspecies, nom), dtype=fprec)
+        post_state["mCvv"] = jnp.zeros((nspecies, nom), dtype=fprec)
+        post_state["Cvf"] = jnp.zeros((nspecies, nom), dtype=fprec)
+        post_state["Cff"] = jnp.zeros((nspecies, nom), dtype=fprec)
+        post_state["dFDT_avg"] = jnp.zeros((nspecies, nom), dtype=fprec)
+        post_state["mCvv_avg"] = jnp.zeros((nspecies, nom), dtype=fprec)
+        post_state["Cvfg_avg"] = jnp.zeros((nspecies, nom), dtype=fprec)
+        post_state["Cff_avg"] = jnp.zeros((nspecies, nom), dtype=fprec)
 
     if not adaptive:
         update_gammar = lambda x: x
@@ -330,7 +433,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
             agamma = qtb_parameters.get("agamma", 1.0e-3) / au.FS
             assert agamma > 0, "agamma must be positive"
             a1_ad = agamma * Tseg  #  * gamma
-            print(f"ADQTB SIMPLE: agamma = {agamma*au.FS:.3f}")
+            print(f"# ADQTB SIMPLE: agamma = {agamma*au.FS:.3f}")
 
             def update_gammar(post_state):
                 g = post_state["dFDT"]
@@ -343,12 +446,12 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
             tau_s = qtb_parameters.get("tau_s", 10 * tau_ad) * au.FS
             assert tau_ad > 0, "tau_ad must be positive"
             print(
-                f"ADQTB RATIO: tau_ad = {tau_ad*1e-3:.2f} ps, tau_s = {tau_s*1e-3:.2f} ps"
+                f"# ADQTB RATIO: tau_ad = {tau_ad*1e-3:.2f} ps, tau_s = {tau_s*1e-3:.2f} ps"
             )
             b1 = np.exp(-Tseg / tau_ad)
             b2 = np.exp(-Tseg / tau_s)
-            post_state["mCvv_m"] = jnp.zeros((nspecies, nom), dtype=np.float32)
-            post_state["Cvf_m"] = jnp.zeros((nspecies, nom), dtype=np.float32)
+            post_state["mCvv_m"] = jnp.zeros((nspecies, nom), dtype=fprec)
+            post_state["Cvf_m"] = jnp.zeros((nspecies, nom), dtype=fprec)
             post_state["n_adabelief"] = 0
 
             def update_gammar(post_state):
@@ -376,14 +479,14 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
             assert tau_s > 0, "tau_s must be positive"
             assert agamma > 0, "agamma must be positive"
             print(
-                f"ADQTB ADABELIEF: agamma = {agamma:.3f}, tau_ad = {tau_ad*1.e-3:.2f} ps, tau_s = {tau_s*1.e-3:.2f} ps"
+                f"# ADQTB ADABELIEF: agamma = {agamma:.3f}, tau_ad = {tau_ad*1.e-3:.2f} ps, tau_s = {tau_s*1.e-3:.2f} ps"
             )
 
             a1_ad = agamma * gamma  # * Tseg #* gamma
             b1 = np.exp(-Tseg / tau_ad)
             b2 = np.exp(-Tseg / tau_s)
-            post_state["dFDT_m"] = jnp.zeros((nspecies, nom), dtype=np.float32)
-            post_state["dFDT_s"] = jnp.zeros((nspecies, nom), dtype=np.float32)
+            post_state["dFDT_m"] = jnp.zeros((nspecies, nom), dtype=fprec)
+            post_state["dFDT_s"] = jnp.zeros((nspecies, nom), dtype=fprec)
             post_state["n_adabelief"] = 0
 
             def update_gammar(post_state):
@@ -391,7 +494,9 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
                 dFDT = post_state["dFDT"]
                 dFDT_m = post_state["dFDT_m"] * b1 + dFDT * (1.0 - b1)
                 dFDT_s = (
-                    post_state["dFDT_s"] * b2 + (dFDT - dFDT_m) ** 2 * (1.0 - b2) + 1.0e-8
+                    post_state["dFDT_s"] * b2
+                    + (dFDT - dFDT_m) ** 2 * (1.0 - b2)
+                    + 1.0e-8
                 )
                 # bias correction
                 mt = dFDT_m / (1.0 - b1**n_adabelief)
@@ -405,7 +510,6 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
                     "n_adabelief": n_adabelief,
                     "dFDT_s": dFDT_s,
                 }
-        
 
     def compute_corr_pot(niter=20, verbose=False):
         if classical_kernel or hbar == 0:
@@ -433,9 +537,9 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
 
     def compute_corr_kin(post_state, niter=7, verbose=False):
         if not post_state["do_corr_kin"]:
-            return post_state
+            return post_state["corr_kin_prev"],post_state
         if classical_kernel or hbar == 0:
-            return 1.0
+            return 1.0,post_state
 
         K_D = post_state.get("K_D", None)
         mCvv = (post_state["mCvv_avg"][:, :nom] * n_of_type[:, None]).sum(axis=0) / nat
@@ -456,7 +560,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
         mCvvsum = mCvv.sum()
         rec_ratio = mCvvsum / s_rec.sum()
         if rec_ratio < 0.95 or rec_ratio > 1.05:
-            print("WARNING: reconvolution error is too high, corr_kin was not updated")
+            print("# WARNING: reconvolution error is too high, corr_kin was not updated")
             return
 
         corr_kin = mCvvsum / s_out.sum()
@@ -465,15 +569,15 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
         else:
             isame_kin = 0
 
-        print("corr_kin: ", corr_kin)
+        print("# corr_kin: ", corr_kin)
         do_corr_kin = post_state["do_corr_kin"]
         if isame_kin > 10:
             print(
-                "INFO: corr_kin is converged (it did not change for 10 consecutive segments)"
+                "# INFO: corr_kin is converged (it did not change for 10 consecutive segments)"
             )
             do_corr_kin = False
 
-        return corr_kin,{
+        return corr_kin, {
             **post_state,
             "corr_kin_prev": corr_kin,
             "isame_kin": isame_kin,
@@ -490,7 +594,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
         gamma_ratio = jnp.concatenate(
             (
                 post_state["gammar"].T * post_state["corr_pot"][:, None],
-                jnp.ones((kernel.shape[0] - nom, nspecies)),
+                jnp.ones((kernel.shape[0] - nom, nspecies), dtype=post_state["gammar"].dtype),
             ),
             axis=0,
         )
@@ -502,7 +606,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
         white_noise = jnp.concatenate(
             (
                 post_state["white_noise"][nseg:],
-                jax.random.normal(noise_key, (nseg, nat, 3), dtype=jnp.float32),
+                jax.random.normal(noise_key, (nseg, nat, 3), dtype=post_state["white_noise"].dtype),
             ),
             axis=0,
         )
@@ -512,7 +616,7 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
         return force, {**post_state, "rng_key": rng_key, "white_noise": white_noise}
 
     @jax.jit
-    def compute_spectra(force,vel,post_state):
+    def compute_spectra(force, vel, post_state):
         sf = jnp.fft.rfft(force / gamma, 3 * nseg, axis=0, norm="ortho")
         sv = jnp.fft.rfft(vel, 3 * nseg, axis=0, norm="ortho")
         Cvv = jnp.sum(jnp.abs(sv[:nom]) ** 2, axis=-1).T
@@ -583,49 +687,58 @@ def initialize_qtb(qtb_parameters, dt, mass, gamma, kT, species, rng_key, adapti
                 header="#omega mCvv Cvf dFDT gammar Cff",
             )
         if verbose:
-            print("QTB spectra written.")
+            print("# QTB spectra written.")
+
+    if compute_thermostat_energy:
+        state["qtb_energy_flux"] = 0.0
 
     @jax.jit
     def thermostat(vel, state):
         istep = state["istep"]
         dvel = dt * state["force"][istep] / mass[:, None]
+        new_vel = vel * a1 + dvel
+        new_state = {**state, "istep": istep + 1}
         if do_compute_spectra:
             vel2 = state["vel"].at[istep].set(vel * a1**0.5 + 0.5 * dvel)
-            return vel * a1 + dvel, {
-                **state,
-                "istep": istep + 1,
-                "vel": vel2,
-            }
-        else:
-            return vel * a1 + dvel, {**state, "istep": istep + 1}
+            new_state["vel"] = vel2
+        if compute_thermostat_energy:
+            dek = 0.5 * (mass[:, None] * (vel**2 - new_vel**2)).sum()
+            ekcorr = (
+                0.5
+                * (mass[:, None] * new_vel**2).sum()
+                * (1.0 - 1.0 / state.get("corr_kin", 1.0))
+            )
+            new_state["qtb_energy_flux"] = state["qtb_energy_flux"] + dek
+            new_state["thermostat_energy"] = new_state["qtb_energy_flux"] + ekcorr
+        return new_vel, new_state
 
     @jax.jit
-    def postprocess_work(state,post_state):
+    def postprocess_work(state, post_state):
         if do_compute_spectra:
-            post_state = compute_spectra(state["force"],state["vel"],post_state)
+            post_state = compute_spectra(state["force"], state["vel"], post_state)
         if adaptive:
             post_state = jax.lax.cond(
                 post_state["nadapt"] > skipseg, update_gammar, lambda x: x, post_state
             )
-        new_force,post_state = refresh_force(post_state)
-        return {**state, "force":new_force},post_state
+        new_force, post_state = refresh_force(post_state)
+        return {**state, "force": new_force}, post_state
 
     def postprocess(state, post_state):
         counter.increment()
         if not counter.is_reset_step:
-            return state,post_state
+            return state, post_state
         post_state["nadapt"] += 1
         post_state["nsample"] = max(post_state["nadapt"] - startsave + 1, 1)
         if verbose:
-            print("Refreshing QTB forces.")
-        state,post_state = postprocess_work(state,post_state)
-        state["corr_kin"],post_state = compute_corr_kin(post_state)
+            print("# Refreshing QTB forces.")
+        state, post_state = postprocess_work(state, post_state)
+        state["corr_kin"], post_state = compute_corr_kin(post_state)
         state["istep"] = 0
         if write_spectra:
             write_spectra_to_file(post_state)
-        return state,post_state
+        return state, post_state
 
-    post_state["corr_pot"] = jnp.asarray(compute_corr_pot(), dtype=jnp.float32)
-    
-    state["force"],post_state = refresh_force(post_state)
-    return thermostat, (postprocess,post_state), state
+    post_state["corr_pot"] = jnp.asarray(compute_corr_pot(), dtype=fprec)
+
+    state["force"], post_state = refresh_force(post_state)
+    return thermostat, (postprocess, post_state), state

@@ -116,7 +116,9 @@ def parse_input(input_file):
 		
 		word0, unit=_get_unit_from_key(word0)
 		val=None
-		if len(parsed_line) == 2:
+		if len(parsed_line) == 1:
+			val=True  # keyword only => store True
+		elif len(parsed_line) == 2:
 			val=string_to_true_type(parsed_line[1],unit)
 		else:
 			#analyze parsed line

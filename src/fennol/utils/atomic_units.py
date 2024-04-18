@@ -20,6 +20,9 @@ class AtomicUnits:
     GPA = 0.1 * KBAR  # Hartree/bohr**3 to GPa
     DEBYE = 2.541746  # e.Bohr to Debye
     FSC = 1.0 / 137.035999084  # Fine structure constant
+    MOL = 6.02214129e+23
+    KCAL = KCALPERMOL * MOL
+    KJ = KJPERMOL * MOL
 
     mapping = {
         "1": 1.0,
@@ -48,6 +51,10 @@ class AtomicUnits:
         "GPA": GPA,
         "DEBYE": DEBYE,
         "FSC": FSC,
+        "MOL": MOL,
+        "MOLE": MOL,
+        "KCAL": KCAL,
+        "KJ": KJ,
     }
 
     @staticmethod
