@@ -34,7 +34,7 @@ def get_reciprocal_space_parameters(reciprocal_cells, cutoff, kmax=30, kthr=1.0e
     ks = []
     nks = []
     for i, A in enumerate(range(reciprocal_cells.shape[0])):
-        A = reciprocal_cells[i]
+        A = reciprocal_cells[i].T
         m2 = np.sum(
             (
                 k[:, 0, None] * A[None, 0, :]

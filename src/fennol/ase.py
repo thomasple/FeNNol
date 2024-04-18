@@ -5,6 +5,7 @@ import numpy as np
 import jax.numpy as jnp
 from . import FENNIX
 from .models.preprocessing import convert_to_jax
+from typing import Sequence
 
 
 class FENNIXCalculator(ase.calculators.calculator.Calculator):
@@ -18,6 +19,12 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
         Whether to use atom padding or not. Atom padding is useful to prevent recompiling the model if the number of atoms changes. If the number of atoms is expected to be fixed, it is recommended to set this to False.
     gpu_preprocessing: bool, default=False
         Whether to preprocess the data on the GPU or not. This is useful for large systems, but may not be necessary (or even slower) for small systems.
+    atoms: ase.Atoms, default=None
+        The atoms object to be used for the calculation. If provided, the calculator will be initialized with the atoms object.
+    verbose: bool, default=False
+        Whether to print nblist update information or not.
+    energy_terms: list of str, default=None
+        The energy terms to include in the total energy. If None, this will default to the energy terms defined in the model.
     """
 
     implemented_properties = ["energy", "forces", "stress"]
@@ -26,8 +33,9 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
         self,
         model: str | FENNIX,
         gpu_preprocessing: bool = False,
-        atoms=None,
-        verbose=False,
+        atoms: ase.Atoms | None = None,
+        verbose: bool = False,
+        energy_terms: Sequence[str] | None = None,
         **kwargs
     ):
         super().__init__()
@@ -35,6 +43,8 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
             self.model = model
         else:
             self.model = FENNIX.load(model, **kwargs)
+        if energy_terms is not None:
+            self.model.set_energy_terms(energy_terms)
         self.gpu_preprocessing = gpu_preprocessing
         self.verbose = verbose
         self._fennol_inputs = None
@@ -64,8 +74,8 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
 
         self.results["energy"] = float(e[0]) * ase.units.Hartree
         self.results["fennol_output"] = output
-    
-    def preprocess(self,atoms,system_changes=ase.calculators.calculator.all_changes):
+
+    def preprocess(self, atoms, system_changes=ase.calculators.calculator.all_changes):
 
         force_cpu_preprocessing = False
         if self._fennol_inputs is None:
@@ -101,37 +111,52 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
                 if np.all(pbc):
                     use_pbc = True
                 elif np.any(pbc):
-                    raise NotImplementedError("PBC should be activated in all directions.")
+                    raise NotImplementedError(
+                        "PBC should be activated in all directions."
+                    )
                 else:
                     use_pbc = False
                 if use_pbc:
-                    cell = np.asarray(atoms.get_cell(complete=True).array, dtype=np.float32)
+                    cell = np.asarray(
+                        atoms.get_cell(complete=True).array, dtype=np.float32
+                    )
                     reciprocal_cell = np.linalg.inv(cell)
                     self._fennol_inputs["cells"] = jnp.asarray(cell.reshape(1, 3, 3))
-                    self._fennol_inputs["reciprocal_cells"] = jnp.asarray(reciprocal_cell.reshape(1, 3, 3))
+                    self._fennol_inputs["reciprocal_cells"] = jnp.asarray(
+                        reciprocal_cell.reshape(1, 3, 3)
+                    )
                 elif "cells" in self._fennol_inputs:
                     del self._fennol_inputs["cells"]
                     del self._fennol_inputs["reciprocal_cells"]
             if "numbers" in system_changes:
-                self._fennol_inputs["species"] = jnp.asarray(atoms.get_atomic_numbers(), dtype=jnp.int32)
-                self._fennol_inputs["natoms"] = jnp.array([len(self._fennol_inputs["species"])], dtype=np.int32)
-                self._fennol_inputs["batch_index"] = jnp.array([0] * len(self._fennol_inputs["species"]), dtype=np.int32)
+                self._fennol_inputs["species"] = jnp.asarray(
+                    atoms.get_atomic_numbers(), dtype=jnp.int32
+                )
+                self._fennol_inputs["natoms"] = jnp.array(
+                    [len(self._fennol_inputs["species"])], dtype=np.int32
+                )
+                self._fennol_inputs["batch_index"] = jnp.array(
+                    [0] * len(self._fennol_inputs["species"]), dtype=np.int32
+                )
                 force_cpu_preprocessing = True
             if "positions" in system_changes:
-                self._fennol_inputs["coordinates"] = jnp.asarray(atoms.get_positions(), dtype=jnp.float32)
-                
+                self._fennol_inputs["coordinates"] = jnp.asarray(
+                    atoms.get_positions(), dtype=jnp.float32
+                )
+
         if self.gpu_preprocessing and not force_cpu_preprocessing:
             inputs = self.model.preprocessing.process(
                 self.model.preproc_state, self._fennol_inputs
             )
             self.model.preproc_state, state_up, self._fennol_inputs, overflow = (
-                self.model.preprocessing.check_reallocate(self.model.preproc_state, inputs)
+                self.model.preprocessing.check_reallocate(
+                    self.model.preproc_state, inputs
+                )
             )
             if self.verbose and overflow:
                 print("FENNIX nblist overflow => reallocating nblist")
                 print("  size updates:", state_up)
         else:
             self._fennol_inputs = self.model.preprocess(**self._fennol_inputs)
-        
-        return self._fennol_inputs
 
+        return self._fennol_inputs

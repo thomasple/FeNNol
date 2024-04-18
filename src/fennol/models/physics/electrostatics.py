@@ -26,16 +26,16 @@ def prepare_reciprocal_space(
     """Prepare variables for Ewald summation in reciprocal space"""
     A = reciprocal_cells
     if A.shape[0] == 1:
-        s = jnp.einsum("ij,aj->ai", A[0], coordinates)
+        s = coordinates @ A[0]
         ks = 2j * jnp.pi * jnp.einsum("ai,ki-> ak", s, k_points[0])  # nat x nk
     else:
-        s = jnp.einsum("aij,aj->ai", A[batch_index], coordinates)
+        s = jnp.einsum("aj,aji->ai", coordinates,A[batch_index])
         ks = (
             2j * jnp.pi * jnp.einsum("ai,aki-> ak", s, k_points[batch_index])
         )  # nat x nk
 
     m2 = jnp.sum(
-        jnp.einsum("sij,ski->skj", A, k_points) ** 2,
+        jnp.einsum("ski,sji->skj", k_points, A) ** 2,
         axis=-1,
     )  # nsys x nk
     a2 = (jnp.pi / bewald) ** 2

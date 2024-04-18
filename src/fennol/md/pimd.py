@@ -97,7 +97,7 @@ def pimd(simulation_parameters, device, fprec):
 
     cell = simulation_parameters.get("cell", None)
     if cell is not None:
-        cell = np.array(cell, dtype=fprec).reshape(3, 3).T
+        cell = np.array(cell, dtype=fprec).reshape(3, 3)
         volume = np.linalg.det(cell)
         print("cell matrix:")
         print(cell)

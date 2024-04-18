@@ -36,9 +36,11 @@ def minmaxone(x, name=""):
 
 @jax.jit
 def wrapbox(x, cell, reciprocal_cell):
-    q = jnp.einsum("ij,sj->si", reciprocal_cell, x)
+    # q = jnp.einsum("ji,sj->si", reciprocal_cell, x)
+    q = x @ reciprocal_cell
     q = q - jnp.floor(q)
-    return jnp.einsum("ij,sj->si", cell, q)
+    # return jnp.einsum("ji,sj->si", cell, q)
+    return q @ cell
 
 
 def main():
@@ -140,7 +142,7 @@ def dynamic(simulation_parameters, device, fprec):
 
     cell = simulation_parameters.get("cell", None)
     if cell is not None:
-        cell = np.array(cell, dtype=fprec).reshape(3, 3).T
+        cell = np.array(cell, dtype=fprec).reshape(3, 3)
         reciprocal_cell = np.linalg.inv(cell)
         volume = np.linalg.det(cell)
         print("# cell matrix:")
@@ -153,7 +155,7 @@ def dynamic(simulation_parameters, device, fprec):
 
     if crystal_input:
         assert cell is not None, "cell must be specified for crystal units"
-        coordinates = coordinates @ cell  # .double()
+        coordinates = coordinates @ cell  
         with open("initial.xyz", "w") as finit:
             write_xyz_frame(finit, symbols, coordinates)
 

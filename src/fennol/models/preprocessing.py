@@ -127,33 +127,24 @@ class GraphGenerator:
                 ## MINIMUM IMAGE CONVENTION
                 vec = coords[p2] - coords[p1]
                 if cells.shape[0] == 1:
-                    vecpbc = np.dot(vec, reciprocal_cells[0].T)
+                    vecpbc = np.dot(vec, reciprocal_cells[0])
                     pbc_shifts = -np.round(vecpbc)
-                    vec = vec + np.dot(pbc_shifts, cells[0].T)
+                    vec = vec + np.dot(pbc_shifts, cells[0])
                 else:
-                    batch_index_vec = batch_index[p1]
-                    cells_ = np.swapaxes(cells, -2, -1)[batch_index_vec]
-                    reciprocal_cells_ = np.swapaxes(reciprocal_cells, -2, -1)[
-                        batch_index_vec
-                    ]
-                    vecpbc = np.einsum("aj,aji->ai", vec, reciprocal_cells_)
+                    vecpbc = np.einsum("aj,aji->ai", vec, reciprocal_cells[batch_index_vec])
                     pbc_shifts = -np.round(vecpbc)
-                    vec = vec + np.einsum("aj,aji->ai", pbc_shifts, cells_)
+                    vec = vec + np.einsum("aj,aji->ai", pbc_shifts, cells[batch_index_vec])
             else:
                 ### GENERAL PBC
                 ## put all atoms in central box
                 if cells.shape[0] > 1:
-                    coords_pbc = np.dot(coords, reciprocal_cells[0].T)
+                    coords_pbc = np.dot(coords, reciprocal_cells[0])
                     at_shifts = -np.floor(coords_pbc)
-                    coords_pbc = coords + np.dot(at_shifts, cells[0].T)
+                    coords_pbc = coords + np.dot(at_shifts, cells[0])
                 else:
-                    cells_ = np.swapaxes(cells, -2, -1)[batch_index]
-                    reciprocal_cells_ = np.swapaxes(reciprocal_cells, -2, -1)[
-                        batch_index
-                    ]
-                    coords_pbc = np.einsum("aj,aji->ai", coords, reciprocal_cells_)
+                    coords_pbc = np.einsum("aj,aji->ai", coords, reciprocal_cells[batch_index])
                     at_shifts = -np.floor(coords_pbc)
-                    coords_pbc = coords + np.einsum("aj,aji->ai", at_shifts, cells_)
+                    coords_pbc = coords + np.einsum("aj,aji->ai", at_shifts, cells[batch_index])
 
                 ## compute maximum number of repeats
                 inv_distances = (np.sum(reciprocal_cells**2, axis=1)) ** 0.5
@@ -173,10 +164,10 @@ class GraphGenerator:
                 ).T.reshape(-1, 3)
                 ## shift applied to vectors
                 if cells.shape[0] == 1:
-                    dvec = np.dot(cell_shift_pbc, cells[0].T)[None, :, :]
+                    dvec = np.dot(cell_shift_pbc, cells[0])[None, :, :]
                 else:
                     batch_index_vec = batch_index[p1]
-                    dvec = np.einsum("sij,bj->sbi", cells, cell_shift_pbc)[
+                    dvec = np.einsum("bj,sji->sbi", cell_shift_pbc,cells)[
                         batch_index_vec
                     ]
                 ## compute vectors
@@ -361,16 +352,11 @@ class GraphGenerator:
                 vec = coords[p2] - coords[p1]
 
                 if cells.shape[0] == 1:
-                    cells = cells[0].T
-                    vec, pbc_shifts = compute_pbc(vec, reciprocal_cells[0].T, cells)
+                    vec, pbc_shifts = compute_pbc(vec, reciprocal_cells[0], cells[0])
                 else:
                     batch_index_vec = batch_index[p1]
-                    cells_ = jnp.swapaxes(cells, -2, -1)[batch_index_vec]
-                    reciprocal_cells_ = jnp.swapaxes(reciprocal_cells, -2, -1)[
-                        batch_index_vec
-                    ]
                     vec, pbc_shifts = jax.vmap(compute_pbc)(
-                        vec, reciprocal_cells_, cells_
+                        vec, reciprocal_cells[batch_index_vec], cells[batch_index_vec]
                     )
             else:
                 ### general PBC only for single cell yet
@@ -378,8 +364,8 @@ class GraphGenerator:
                     raise NotImplementedError(
                         "General PBC not implemented for batches on accelerator."
                     )
-                cell = cells[0].T
-                reciprocal_cell = reciprocal_cells[0].T
+                cell = cells[0]
+                reciprocal_cell = reciprocal_cells[0]
 
                 ## put all atoms in central box
                 coords_pbc, at_shifts = compute_pbc(
@@ -523,12 +509,10 @@ class GraphGenerator:
             pbc_shifts_skin = graph["pbc_shifts_skin"]
             cells = inputs["cells"]
             if cells.shape[0] == 1:
-                cells = cells[0].T
-                vec = vec + jnp.dot(pbc_shifts_skin, cells)
+                vec = vec + jnp.dot(pbc_shifts_skin, cells[0])
             else:
                 batch_index_vec = inputs["batch_index"][edge_src_skin]
-                cells = jnp.swapaxes(cells, -2, -1)[batch_index_vec]
-                vec = vec + jax.vmap(jnp.dot)(pbc_shifts_skin, cells)
+                vec = vec + jax.vmap(jnp.dot)(pbc_shifts_skin, cells[batch_index_vec])
 
         nat = coords.shape[0]
         d12 = jnp.sum(vec**2, axis=-1)
@@ -604,12 +588,10 @@ class GraphProcessor(nn.Module):
         if "cells" in inputs:
             cells = inputs["cells"]
             if cells.shape[0] == 1:
-                cells = cells[0].T
-                vec = vec + jnp.dot(graph["pbc_shifts"], cells)
+                vec = vec + jnp.dot(graph["pbc_shifts"], cells[0])
             else:
                 batch_index_vec = inputs["batch_index"][edge_src]
-                cells = jnp.swapaxes(cells, -2, -1)[batch_index_vec]
-                vec = vec + jax.vmap(jnp.dot)(graph["pbc_shifts"], cells)
+                vec = vec + jax.vmap(jnp.dot)(graph["pbc_shifts"], cells[batch_index_vec])
 
         distances = jnp.linalg.norm(vec, axis=-1)
         edge_mask = distances < self.cutoff

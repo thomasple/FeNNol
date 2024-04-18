@@ -118,7 +118,7 @@ def write_extxyz_frame(
     comment_line = ""
     if cell is not None:
         comment_line += (
-            'Lattice="' + " ".join([f"{x:.3f}" for x in cell.T.flatten()]) + '" '
+            'Lattice="' + " ".join([f"{x:.3f}" for x in cell.flatten()]) + '" '
         )
     comment_line += "Properties=species:S:1:pos:R:3"
     if forces is not None:
