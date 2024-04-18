@@ -86,7 +86,7 @@ class GraphGenerator:
                 return state,inputs
             
         coords = np.array(inputs["coordinates"],dtype=np.float32)
-        natoms = np.array(inputs["natoms"],dtype=np.float32)
+        natoms = np.array(inputs["natoms"],dtype=np.int32)
         batch_index = np.array(inputs["batch_index"],dtype=np.int32)
 
         new_state = {**state}
@@ -110,7 +110,7 @@ class GraphGenerator:
                 (p1[None, :] < natoms[:, None]) * (p2[None, :] < natoms[:, None])
             ).flatten()
             shift = np.concatenate(
-                (np.array([0], dtype=np.int32), np.cumsum(natoms[:-1]))
+                (np.array([0], dtype=np.int32), np.cumsum(natoms[:-1],dtype=np.int32))
             )
             p1 = np.where(mask_p12, (p1[None, :] + shift[:, None]).flatten(), -1)
             p2 = np.where(mask_p12, (p2[None, :] + shift[:, None]).flatten(), -1)

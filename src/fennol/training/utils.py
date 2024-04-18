@@ -133,7 +133,16 @@ def get_optimizer(
         grad_processing.append(optax.adaptive_grad_clip(clip_threshold))
 
     # OPTIMIZER
-    grad_processing.append(optax.adabelief(learning_rate=1.0))
+    optimizer_name = training_parameters.get("optimizer", "adabelief")
+    optimizer = eval(
+        optimizer_name,
+        {"__builtins__": None},
+        {**optax.__dict__},
+    )
+    print("Optimizer:", optimizer_name)
+    optimizer_configuration = training_parameters.get("optimizer_config", {})
+    optimizer_configuration["learning_rate"] = 1.
+    grad_processing.append(optimizer(**optimizer_configuration))
 
     # weight decay
     weight_decay = training_parameters.get("weight_decay", 0.0)
@@ -256,7 +265,9 @@ def get_train_step_function(
                     truth_mask = true_atoms
                     if "ds_weight" in loss_prms:
                         weight_key = loss_prms["ds_weight"]
-                        natscale = data[weight_key][output["batch_index"]].reshape(*shape_mask)
+                        natscale = data[weight_key][output["batch_index"]].reshape(
+                            *shape_mask
+                        )
                 elif ref.shape[0] == output["natoms"].shape[0]:
                     ## shape is number of systems
                     nel = nel * nsys / ref.shape[0]

@@ -87,7 +87,7 @@ def main():
         logger.bind_stdout()
 
     # set matmul precision
-    matmul_precision = parameters.get("matmul_prec", "high").lower()
+    matmul_precision = parameters.get("matmul_prec", "highest").lower()
     assert matmul_precision in [
         "default",
         "high",
@@ -329,6 +329,31 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
     previous_best_name = None
     rmse_tot_best = np.inf
 
+    ## configure preprocessing ##
+    preproc_state = unfreeze(model.preproc_state)
+    layer_state = []
+    for st in preproc_state["layers_state"]:
+        stnew = unfreeze(st)
+        #     st["nblist_skin"] = nblist_skin
+        #     if nblist_stride > 1:
+        #         st["skin_stride"] = nblist_stride
+        #         st["skin_count"] = nblist_stride
+        if "nblist_mult_size" in training_parameters:
+            stnew["nblist_mult_size"] = training_parameters["nblist_mult_size"]
+        if "nblist_add_neigh" in training_parameters:
+            stnew["add_neigh"] = training_parameters["nblist_add_neigh"]
+        if "nblist_add_atoms" in training_parameters:
+            stnew["add_atoms"] = training_parameters["nblist_add_atoms"]
+        layer_state.append(freeze(stnew))
+    
+    preproc_state["layers_state"] = layer_state
+    model.preproc_state = freeze(preproc_state)
+
+    data = next(training_iterator)
+    inputs = model.preprocess(**data)
+    # print("preproc_state:",model.preproc_state)
+
+
     ### Training loop ###
     start = time.time()
 
@@ -522,7 +547,8 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
             print("New best model saved to:", best_name)
 
         if epoch == 0:
-            fmetrics.write("# " + " ".join(metrics.keys()) + "\n")
+            headers = [f"{i+1}:{k}" for i, k in enumerate(metrics.keys())]
+            fmetrics.write("# " + " ".join(headers) + "\n")
         fmetrics.write(" ".join([str(metrics[k]) for k in metrics.keys()]) + "\n")
         fmetrics.flush()
 
