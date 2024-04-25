@@ -155,7 +155,7 @@ def dynamic(simulation_parameters, device, fprec):
 
     if crystal_input:
         assert cell is not None, "cell must be specified for crystal units"
-        coordinates = coordinates @ cell  
+        coordinates = coordinates @ cell
         with open("initial.xyz", "w") as finit:
             write_xyz_frame(finit, symbols, coordinates)
 
@@ -176,7 +176,7 @@ def dynamic(simulation_parameters, device, fprec):
 
     nsteps = int(simulation_parameters.get("nsteps"))
     gamma = simulation_parameters.get("gamma", 1.0 / au.THZ) / au.FS
-    temperature = np.clip(simulation_parameters.get("temperature",300.),1.e-6,None)
+    temperature = np.clip(simulation_parameters.get("temperature", 300.0), 1.0e-6, None)
     kT = temperature / au.KELVIN
     start_time = 0.0
     start_step = 0
@@ -226,7 +226,7 @@ def dynamic(simulation_parameters, device, fprec):
     do_thermostat_post = thermostat_post is not None
     if do_thermostat_post:
         thermostat_post, post_state = thermostat_post
-    
+
     include_thermostat_energy = "thermostat_energy" in system["thermostat"]
 
     ### CONFIGURE PREPROCESSING
@@ -419,17 +419,13 @@ def dynamic(simulation_parameters, device, fprec):
     print_timings = simulation_parameters.get("print_timings", False)
     nprint = int(simulation_parameters.get("nprint", 10))
     assert nprint > 0, "nprint must be > 0"
-    nsummary = simulation_parameters.get("nsummary", 100*nprint)
+    nsummary = simulation_parameters.get("nsummary", 100 * nprint)
     assert nsummary > 0, "nsummary must be > 0"
 
     ### Print header
     print("#" * 84)
-    print(
-        f"# Running {nsteps:_} steps of {thermostat_name} MD simulation on {device}"
-    )
-    header = (
-        "#     Step   Time[ps]        Etot        Epot        Ekin    Temp[K]"
-    )
+    print(f"# Running {nsteps:_} steps of {thermostat_name} MD simulation on {device}")
+    header = "#     Step   Time[ps]        Etot        Epot        Ekin    Temp[K]"
     if include_thermostat_energy:
         header += "      Etherm"
     if estimate_pressure:
@@ -545,16 +541,24 @@ def dynamic(simulation_parameters, device, fprec):
                 etherm = th_state["thermostat_energy"]
                 etot = etot + etherm
 
-            properties_traj[f"Etot[{atom_energy_unit_str}]"].append(etot * atom_energy_unit)
-            properties_traj[f"Epot[{atom_energy_unit_str}]"].append(epot * atom_energy_unit)
-            properties_traj[f"Ekin[{atom_energy_unit_str}]"].append(ek * atom_energy_unit)
+            properties_traj[f"Etot[{atom_energy_unit_str}]"].append(
+                etot * atom_energy_unit
+            )
+            properties_traj[f"Epot[{atom_energy_unit_str}]"].append(
+                epot * atom_energy_unit
+            )
+            properties_traj[f"Ekin[{atom_energy_unit_str}]"].append(
+                ek * atom_energy_unit
+            )
             properties_traj["Temper[Kelvin]"].append(temper)
 
             ### construct line of properties
             line = f"{istep:10.6g} {(start_time+istep*dt)/1000: 10.3f}  {etot*atom_energy_unit: #10.4f}  {epot*atom_energy_unit: #10.4f}  {ek*atom_energy_unit: #10.4f} {temper: 10.2f}"
             if include_thermostat_energy:
                 line += f"  {etherm*atom_energy_unit: #10.4f}"
-                properties_traj[f"Etherm[{atom_energy_unit_str}]"].append(etherm * atom_energy_unit)
+                properties_traj[f"Etherm[{atom_energy_unit_str}]"].append(
+                    etherm * atom_energy_unit
+                )
             if estimate_pressure:
                 pres = system["pressure"]
                 properties_traj["Pressure[kbar]"].append(pres * au.KBAR * au.BOHR**3)
@@ -595,27 +599,32 @@ def dynamic(simulation_parameters, device, fprec):
             tperstep = tfull / (nsummary)
             nsperday = (24 * 60 * 60 / tperstep) * dt / 1e6
             elapsed_time = time.time() - tstart_dyn
-            estimated_remaining_time = tperstep*(nsteps-istep)
+            estimated_remaining_time = tperstep * (nsteps - istep)
             estimated_total_time = elapsed_time + estimated_remaining_time
 
             print("#" * 50)
             print(f"# Step {istep:_} of {nsteps:_}  ({istep/nsteps*100:.5g} %)")
             print(f"# Tot. elapsed time   : {human_time_duration(elapsed_time)}")
             print(
-                  f"# Est. total time     : {human_time_duration(estimated_total_time)}"
+                f"# Est. total time     : {human_time_duration(estimated_total_time)}"
             )
             print(
-                  f"# Est. remaining time : {human_time_duration(estimated_remaining_time)}"
+                f"# Est. remaining time : {human_time_duration(estimated_remaining_time)}"
             )
             print(f"# Time for {nsummary:_} steps : {human_time_duration(tfull)}")
-            
+
             if print_timings:
                 print(f"# Detailed per-step timings :")
                 dsteps = nsummary
                 tother = tfull - sum([t for t in timings.values()])
                 timings["Other"] = tother
                 # sort timings
-                timings = {k: v for k, v in sorted(timings.items(), key=lambda item: item[1], reverse=True)}
+                timings = {
+                    k: v
+                    for k, v in sorted(
+                        timings.items(), key=lambda item: item[1], reverse=True
+                    )
+                }
                 for k, v in timings.items():
                     print(
                         f"#   {k:15} : {human_time_duration(v/dsteps):>12} ({v/tfull*100:5.3g} %)"
@@ -624,7 +633,6 @@ def dynamic(simulation_parameters, device, fprec):
                 ## reset timings
                 timings = defaultdict(lambda: 0.0)
 
-            
             print(f"# Averages over last {nsummary:_} steps :")
             for k, v in properties_traj.items():
                 if len(properties_traj[k]) == 0:
@@ -638,9 +646,7 @@ def dynamic(simulation_parameters, device, fprec):
 
             if nblist_verbose:
                 print("# nblist state :", preproc_state)
-            print(
-                f"# Perf.: {nsperday:.2f} ns/day  ( {1.0 / tperstep:.2f} step/s )"
-            )
+            print(f"# Perf.: {nsperday:.2f} ns/day  ( {1.0 / tperstep:.2f} step/s )")
             print("#" * 50)
             if istep < nsteps:
                 print(header)
