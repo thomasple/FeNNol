@@ -46,13 +46,13 @@ class FENNIX:
     modules: FENNIXModules
     variables: Dict
     preprocessing: PreprocessingChain
-    energy_terms: Sequence[str]
     _apply: Callable[[Dict, Dict], Dict]
     _total_energy: Callable[[Dict, Dict], Tuple[jnp.ndarray, Dict]]
     _energy_and_forces: Callable[[Dict, Dict], Tuple[jnp.ndarray, jnp.ndarray, Dict]]
     _input_args: Dict
     _graphs_properties: Dict
     preproc_state: Dict
+    energy_terms: Optional[Sequence[str]] = None
     _initializing: bool = True
     use_atom_padding: bool = False
 
@@ -64,7 +64,7 @@ class FENNIX:
         example_data=None,
         rng_key: Optional[jax.random.PRNGKey] = None,
         variables: Optional[dict] = None,
-        energy_terms=["energy"],
+        energy_terms: Optional[Sequence[str]] = None,
         use_atom_padding: bool = False,
         graph_config: Dict = {},
         **kwargs,
@@ -150,96 +150,120 @@ class FENNIX:
 
         self._initializing = False
 
-    def set_energy_terms(self, energy_terms: Sequence[str], jit=True) -> None:
+    def set_energy_terms(self, energy_terms: Sequence[str] | None, jit=True) -> None:
         object.__setattr__(self, "energy_terms", energy_terms)
+        if energy_terms is None:
+            def total_energy(variables, data):
+                out = self.__apply(variables, data)
+                coords = out["coordinates"]
+                nsys = out["natoms"].shape[0]
+                nat = coords.shape[0]
+                dtype = coords.dtype
+                e=jnp.zeros(nsys,dtype=dtype)
+                eat = jnp.zeros(nat,dtype=dtype)
+                out["total_energy"] = e
+                out["atomic_energies"] = eat
+                return e, out
+            
+            def energy_and_forces(variables, data):
+                e,out = total_energy(variables, data)
+                f=jnp.zeros_like(out["coordinates"])
+                out["forces"] = f
+                return e,f, out
+            
+            def energy_and_forces_and_virial(variables, data):
+                e,f,out = energy_and_forces(variables, data)
+                v=jnp.zeros((out["natoms"].shape[0],3,3),dtype=out["coordinates"].dtype)
+                out["virial_tensor"] = v
+                return e,f,v, out
+        else:
+            # build the energy and force functions
+            def total_energy(variables, data):
+                out = self.__apply(variables, data)
+                atomic_energies = 0.0
+                system_energies = 0.0
+                species = out["species"]
+                nsys = out["natoms"].shape[0]
+                for term in self.energy_terms:
+                    e = out[term]
+                    if e.ndim > 1 and e.shape[-1] == 1:
+                        e = jnp.squeeze(e, axis=-1)
+                    if e.shape[0] == nsys and nsys != species.shape[0]:
+                        system_energies += e
+                        continue
+                    assert e.shape == species.shape
+                    atomic_energies += e
+                # atomic_energies = jnp.squeeze(atomic_energies, axis=-1)
+                if isinstance(atomic_energies, jnp.ndarray):
+                    if "true_atoms" in out:
+                        atomic_energies = jnp.where(out["true_atoms"], atomic_energies, 0.0)
+                    out["atomic_energies"] = atomic_energies
+                    energies = jax.ops.segment_sum(
+                        atomic_energies,
+                        data["batch_index"],
+                        num_segments=len(data["natoms"]),
+                    )
+                else:
+                    energies = 0.0
 
-        # build the energy and force functions
-        def total_energy(variables, data):
-            out = self.__apply(variables, data)
-            atomic_energies = 0.0
-            system_energies = 0.0
-            species = out["species"]
-            nsys = out["natoms"].shape[0]
-            for term in self.energy_terms:
-                e = out[term]
-                if e.ndim > 1 and e.shape[-1] == 1:
-                    e = jnp.squeeze(e, axis=-1)
-                if e.shape[0] == nsys and nsys != species.shape[0]:
-                    system_energies += e
-                    continue
-                assert e.shape == species.shape
-                atomic_energies += e
-            # atomic_energies = jnp.squeeze(atomic_energies, axis=-1)
-            if isinstance(atomic_energies, jnp.ndarray):
-                if "true_atoms" in out:
-                    atomic_energies = jnp.where(out["true_atoms"], atomic_energies, 0.0)
-                out["atomic_energies"] = atomic_energies
-                energies = jax.ops.segment_sum(
-                    atomic_energies,
-                    data["batch_index"],
+                if isinstance(system_energies, jnp.ndarray):
+                    if "true_sys" in out:
+                        system_energies = jnp.where(out["true_sys"], system_energies, 0.0)
+                    out["system_energies"] = system_energies
+
+                out["total_energy"] = energies + system_energies
+                return out["total_energy"], out
+
+            def energy_and_forces(variables, data):
+                def _etot(variables, coordinates):
+                    energy, out = total_energy(
+                        variables, {**data, "coordinates": coordinates}
+                    )
+                    return energy.sum(), out
+
+                de, out = jax.grad(_etot, argnums=1, has_aux=True)(
+                    variables, data["coordinates"]
+                )
+                out["forces"] = -de
+
+                return out["total_energy"], out["forces"], out
+
+            def energy_and_forces_and_virial(variables, data):
+                assert "cells" in data
+                cells = data["cells"]
+                batch_index = data["batch_index"]
+                x = data["coordinates"]
+
+                def _etot(variables, coordinates, cells):
+                    reciprocal_cells = jnp.linalg.inv(cells)
+                    energy, out = total_energy(
+                        variables,
+                        {
+                            **data,
+                            "coordinates": coordinates,
+                            "cells": cells,
+                            "reciprocal_cells": reciprocal_cells,
+                        },
+                    )
+                    return energy.sum(), out
+
+                (dedx, dedcells), out = jax.grad(_etot, argnums=(1, 2), has_aux=True)(
+                    variables, x, cells
+                )
+                # dedx = jnp.einsum("sij,si->sj", reciprocal_cells[batch_index], deds)
+                out["forces"] = -dedx
+                fx = jax.ops.segment_sum(
+                    dedx[:, :, None] * x[:, None, :],
+                    batch_index,
                     num_segments=len(data["natoms"]),
                 )
-            else:
-                energies = 0.0
 
-            if isinstance(system_energies, jnp.ndarray):
-                if "true_sys" in out:
-                    system_energies = jnp.where(out["true_sys"], system_energies, 0.0)
-                out["system_energies"] = system_energies
+                # out["virial_tensor"] = (
+                #     jnp.einsum("sik,skj->sij", dedcells, cells) + fx
+                # )
+                out["virial_tensor"] = jax.vmap(jnp.matmul)(dedcells, cells) + fx
 
-            out["total_energy"] = energies + system_energies
-            return out["total_energy"], out
-
-        def energy_and_forces(variables, data):
-            def _etot(variables, coordinates):
-                energy, out = total_energy(
-                    variables, {**data, "coordinates": coordinates}
-                )
-                return energy.sum(), out
-
-            de, out = jax.grad(_etot, argnums=1, has_aux=True)(
-                variables, data["coordinates"]
-            )
-            out["forces"] = -de
-
-            return out["total_energy"], out["forces"], out
-
-        def energy_and_forces_and_virial(variables, data):
-            assert "cells" in data
-            cells = data["cells"]
-            batch_index = data["batch_index"]
-            x = data["coordinates"]
-
-            def _etot(variables, coordinates, cells):
-                reciprocal_cells = jnp.linalg.inv(cells)
-                energy, out = total_energy(
-                    variables,
-                    {
-                        **data,
-                        "coordinates": coordinates,
-                        "cells": cells,
-                        "reciprocal_cells": reciprocal_cells,
-                    },
-                )
-                return energy.sum(), out
-
-            (dedx, dedcells), out = jax.grad(_etot, argnums=(1, 2), has_aux=True)(
-                variables, x, cells
-            )
-            # dedx = jnp.einsum("sij,si->sj", reciprocal_cells[batch_index], deds)
-            out["forces"] = -dedx
-            fx = jax.ops.segment_sum(
-                dedx[:, :, None] * x[:, None, :],
-                batch_index,
-                num_segments=len(data["natoms"]),
-            )
-
-            # out["virial_tensor"] = (
-            #     jnp.einsum("sik,skj->sij", dedcells, cells) + fx
-            # )
-            out["virial_tensor"] = jax.vmap(jnp.matmul)(dedcells, cells) + fx
-
-            return out["total_energy"], out["forces"], out["virial_tensor"], out
+                return out["total_energy"], out["forces"], out["virial_tensor"], out
 
         if jit:
             object.__setattr__(self, "_total_energy", jax.jit(total_energy))

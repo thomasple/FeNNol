@@ -291,17 +291,22 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
 
     print_timings = parameters.get("print_timings", False)
 
+    if "energy_terms" in training_parameters:
+        model.set_energy_terms(training_parameters["energy_terms"], jit=False)
+    print("energy terms:", model.energy_terms)
+
     if compute_forces:
         print("Computing forces")
-
         def evaluate(model, variables, data):
             _, _, output = model._energy_and_forces(variables, data)
             return output
-
-    else:
-
+    elif model.energy_terms is not None:
         def evaluate(model, variables, data):
             _, output = model._total_energy(variables, data)
+            return output
+    else:
+        def evaluate(model, variables, data):
+            output = model.modules.apply(variables, data)
             return output
 
     train_step = get_train_step_function(
@@ -321,9 +326,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         return_targets=False,
     )
 
-    if "energy_terms" in training_parameters:
-        model.set_energy_terms(training_parameters["energy_terms"], jit=False)
-    print("energy terms:", model.energy_terms)
+    
 
     keep_all_bests = training_parameters.get("keep_all_bests", False)
     previous_best_name = None
