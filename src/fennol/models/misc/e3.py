@@ -136,7 +136,7 @@ class FilteredTensorProduct(nn.Module):
         npath = len(w3js)
         w3j = jnp.asarray(np.stack(w3js))
 
-        weights = self.param("weights", jax.nn.initializers.normal(), (npath,))
+        weights = self.param("weights", jax.nn.initializers.normal(stddev=1./npath**0.5), (npath,))
 
         ww3j = jnp.einsum("p,pabc->abc", weights, w3j)
         return jnp.einsum("...a,...b,abc->...c", x1, x2, ww3j)
@@ -166,7 +166,7 @@ class ChannelMixing(nn.Module):
         nchannels_out = self.nchannels_out or self.nchannels
         weights = self.param(
             "weights",
-            jax.nn.initializers.normal(),
+            jax.nn.initializers.normal(stddev=1./self.nchannels**0.5),
             (nchannels_out, self.nchannels),
         )
         out = jnp.einsum("ij,...jk->...ik", weights, x)
@@ -206,7 +206,7 @@ class ChannelMixingE3(nn.Module):
         weights = jnp.repeat(
             self.param(
                 "weights",
-                jax.nn.initializers.normal(),
+                jax.nn.initializers.normal(stddev=1./self.nchannels**0.5),
                 (nchannels_out, self.nchannels, self.lmax + 1),
             ),
             nrep,

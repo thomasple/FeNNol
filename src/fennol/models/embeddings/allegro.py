@@ -114,7 +114,7 @@ class AllegroEmbedding(nn.Module):
         assert lmax_density >= self.lmax
 
         Yij = generate_spherical_harmonics(lmax=lmax_density, normalize=False)(
-            graph["vec"] / graph["distances"][:, None]
+            graph["vec"] / graph["distances"][:, None]  
         )[:, None, :]
 
         nel = (self.lmax + 1) ** 2

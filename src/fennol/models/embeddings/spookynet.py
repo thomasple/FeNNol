@@ -58,6 +58,7 @@ class SpookyNetEmbedding(nn.Module):
     kernel_init: Union[Callable, str] = scaled_orthogonal(scale=1.0, mode="fan_avg")
     use_spin_encoding: bool = True
     use_charge_encoding: bool = True
+    total_charge_key: str = "total_charge"
 
     FID: str = "SPOOKYNET"
 
@@ -101,9 +102,9 @@ class SpookyNetEmbedding(nn.Module):
         batch_index = inputs["batch_index"]
         natoms = inputs["natoms"]
         if self.use_charge_encoding and (
-            "total_charge" in inputs or self.is_initializing()
+            self.total_charge_key in inputs or self.is_initializing()
         ):
-            Q = inputs.get("total_charge", jnp.zeros(natoms.shape[0], dtype=xi.dtype))
+            Q = inputs.get(self.total_charge_key, jnp.zeros(natoms.shape[0], dtype=xi.dtype))
             kq_pos, kq_neg, vq_pos, vq_neg = self.param(
                 "kv_charge",
                 lambda key, shape: jax.random.normal(key, shape, dtype=xi.dtype),

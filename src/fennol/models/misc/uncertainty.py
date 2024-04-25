@@ -15,15 +15,12 @@ class EnsembleStatistics(nn.Module):
     Parameters:
         key (str): The key to access the input data from the `inputs` dictionary.
         axis (int, optional): The axis along which to compute the mean and variance. Defaults to -1.
-        output_key (str, optional): The key to use for the output mean and variance in the `output` dictionary. 
-            If not provided, the keys will be constructed by appending "_mean" and "_var" to the `key` parameter.
         shuffle_ensemble (bool, optional): Whether to shuffle the ensemble. Defaults to False.
 
     """
 
     key: str
     axis: int = -1
-    output_key: Optional[str] = None
     shuffle_ensemble: bool = False
 
     FID: str = "ENSEMBLE_STAT"

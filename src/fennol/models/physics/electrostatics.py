@@ -400,6 +400,7 @@ class QeqD4(nn.Module):
     chi_key: Optional[str] = None
     c3_key: Optional[str] = None
     c4_key: Optional[str] = None
+    total_charge_key: str = "total_charge"
 
     FID: str = "QEQ_D4"
 
@@ -524,8 +525,8 @@ class QeqD4(nn.Module):
                 return jnp.concatenate((Al, Aq))
 
             Qtot = (
-                inputs["total_charge"].astype(chi.dtype)
-                if "total_charge" in inputs
+                inputs[self.total_charge_key].astype(chi.dtype)
+                if self.total_charge_key in inputs
                 else jnp.zeros(nsys, dype=chi.dtype)
             )
             b = jnp.concatenate([Qtot, -chi])
@@ -605,6 +606,7 @@ class ChargeCorrection(nn.Module):
     ratioeta_key: str = None
     trainable: bool = False
     cn_key: str = None
+    total_charge_key: str = "total_charge"
 
     FID: str = "CHARGE_CORRECTION"
 
@@ -618,8 +620,8 @@ class ChargeCorrection(nn.Module):
             q = jnp.squeeze(q, axis=-1)
         qtot = jax.ops.segment_sum(q, batch_index, nsys)
         Qtot = (
-            inputs["total_charge"].astype(q.dtype)
-            if "total_charge" in inputs
+            inputs[self.total_charge_key].astype(q.dtype)
+            if self.total_charge_key in inputs
             else jnp.zeros(qtot.shape[0], dtype=q.dtype)
         )
         dq = Qtot - qtot
@@ -657,3 +659,41 @@ class ChargeCorrection(nn.Module):
             self.dq_key: dq,
             "charge_correction_energy": ecorr,
         }
+
+class DistributeElectrons(nn.Module):
+    embedding_key: str
+    output_key: str = "charges"
+    total_charge_key: str = "total_charge"
+
+    FID: str = "DISTRIBUTE_ELECTRONS"
+
+    @nn.compact
+    def __call__(self, inputs) -> Any:
+        species = inputs["species"]
+        Nel = jnp.asarray(VALENCE_ELECTRONS)[species]
+
+        ei = nn.Dense(1, use_bias=True, name="wi")(inputs[self.embedding_key]).squeeze(-1)
+        wi = jnp.log1p(jnp.exp(ei))
+
+        batch_index = inputs["batch_index"]
+        nsys = inputs["natoms"].shape[0]
+        wtot = jax.ops.segment_sum(wi, inputs["batch_index"], inputs["natoms"].shape[0])
+
+        Qtot = (
+            inputs[self.total_charge_key].astype(ei.dtype)
+            if self.total_charge_key in inputs
+            else jnp.zeros(nsys, dtype=ei.dtype)
+        )
+        Neltot = jax.ops.segment_sum(Nel, batch_index, nsys) - Qtot
+
+        f = Neltot / wtot
+        Ni = wi* f[batch_index]
+        q = Nel-Ni
+        
+
+        output_key = self.output_key if self.output_key is not None else self.key
+        return {
+            **inputs,
+            output_key: q,
+        }
+

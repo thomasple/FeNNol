@@ -205,7 +205,7 @@ class Concatenate(nn.Module):
 
 class Activation(nn.Module):
     key: str
-    activation: Union[Callable, str] = nn.silu
+    activation: Union[Callable, str]
     scale_out: float = 1.0
     shift_out: float = 0.0
     output_key: Optional[str] = None

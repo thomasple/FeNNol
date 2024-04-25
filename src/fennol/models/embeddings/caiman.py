@@ -15,7 +15,7 @@ class CaimanEmbedding(nn.Module):
 
     FID : CAIMAN
 
-    This is en E(3) equivariant embedding that forms an equivariant neighbor density
+    This is an E(3) equivariant embedding that forms an equivariant neighbor density
     and then uses multiple self-interaction tensor products to generate a tensorial embedding
     along with a scalar embedding (similar to the tensor/scalar tracks in allegro).
 
@@ -31,8 +31,6 @@ class CaimanEmbedding(nn.Module):
         The number of layers.
     lmax : int, default=2
         The maximum value of l.
-    twobody_hidden : Sequence[int], default=[128]
-        The hidden layers for the two-body interaction.
     embedding_hidden : Sequence[int], default=[]
         The hidden layers for the embedding.
     latent_hidden : Sequence[int], default=[128]
@@ -60,7 +58,6 @@ class CaimanEmbedding(nn.Module):
     nchannels_density: Optional[int] = None
     nlayers: int = 3
     lmax: int = 2
-    twobody_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
     embedding_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [])
     latent_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
     activation: Union[Callable, str] = nn.silu
