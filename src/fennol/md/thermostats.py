@@ -14,25 +14,26 @@ from ..utils.deconvolution import (
 )
 
 
-def get_thermostat(
-    thermostat_name,
-    simulation_parameters,
-    dt,
-    mass,
-    fprec,
-    gamma=None,
-    kT=None,
-    species=None,
-    rng_key=None,
-    nbeads=None,
-):
+def get_thermostat(simulation_parameters, dt, system_data, fprec, rng_key=None):
     state = {}
     postprocess = None
+    
 
-    thermostat_name = str(thermostat_name).upper()
+    thermostat_name = str(simulation_parameters.get("thermostat", "LGV")).upper()
     compute_thermostat_energy = simulation_parameters.get(
         "include_thermostat_energy", False
     )
+
+    kT = system_data.get("kT", None)
+    nbeads = system_data.get("nbeads", None)
+    mass = system_data["mass"]
+    gamma = simulation_parameters.get("gamma", 1.0 / au.THZ) / au.FS
+    species = system_data["species"]
+
+    if nbeads is not None:
+        trpmd_lambda = simulation_parameters.get("trpmd_lambda", 1.0)
+        gamma = np.maximum(trpmd_lambda * system_data["omk"], gamma)
+
     if thermostat_name in ["LGV", "LANGEVIN", "FFLGV"]:
         assert rng_key is not None, "rng_key must be provided for QTB thermostat"
         assert kT is not None, "kT must be specified for QTB thermostat"
@@ -65,7 +66,6 @@ def get_thermostat(
         if compute_thermostat_energy:
             state["thermostat_energy"] = 0.0
         if thermostat_name == "FFLGV":
-
             def thermostat(vel, state):
                 rng_key, noise_key = jax.random.split(state["rng_key"])
                 noise = jax.random.normal(noise_key, vel.shape, dtype=vel.dtype)
@@ -86,7 +86,6 @@ def get_thermostat(
                 return vel, new_state
 
         else:
-
             def thermostat(vel, state):
                 rng_key, noise_key = jax.random.split(state["rng_key"])
                 noise = jax.random.normal(noise_key, vel.shape, dtype=vel.dtype)
@@ -305,7 +304,7 @@ def get_thermostat(
     else:
         raise ValueError(f"Unknown thermostat {thermostat_name}")
 
-    return thermostat, postprocess, state, vel
+    return thermostat, postprocess, state, vel,thermostat_name
 
 
 def initialize_qtb(
@@ -537,9 +536,9 @@ def initialize_qtb(
 
     def compute_corr_kin(post_state, niter=7, verbose=False):
         if not post_state["do_corr_kin"]:
-            return post_state["corr_kin_prev"],post_state
+            return post_state["corr_kin_prev"], post_state
         if classical_kernel or hbar == 0:
-            return 1.0,post_state
+            return 1.0, post_state
 
         K_D = post_state.get("K_D", None)
         mCvv = (post_state["mCvv_avg"][:, :nom] * n_of_type[:, None]).sum(axis=0) / nat
@@ -560,7 +559,9 @@ def initialize_qtb(
         mCvvsum = mCvv.sum()
         rec_ratio = mCvvsum / s_rec.sum()
         if rec_ratio < 0.95 or rec_ratio > 1.05:
-            print("# WARNING: reconvolution error is too high, corr_kin was not updated")
+            print(
+                "# WARNING: reconvolution error is too high, corr_kin was not updated"
+            )
             return
 
         corr_kin = mCvvsum / s_out.sum()
@@ -569,7 +570,7 @@ def initialize_qtb(
         else:
             isame_kin = 0
 
-        print("# corr_kin: ", corr_kin)
+        # print("# corr_kin: ", corr_kin)
         do_corr_kin = post_state["do_corr_kin"]
         if isame_kin > 10:
             print(
@@ -594,7 +595,9 @@ def initialize_qtb(
         gamma_ratio = jnp.concatenate(
             (
                 post_state["gammar"].T * post_state["corr_pot"][:, None],
-                jnp.ones((kernel.shape[0] - nom, nspecies), dtype=post_state["gammar"].dtype),
+                jnp.ones(
+                    (kernel.shape[0] - nom, nspecies), dtype=post_state["gammar"].dtype
+                ),
             ),
             axis=0,
         )
@@ -606,7 +609,9 @@ def initialize_qtb(
         white_noise = jnp.concatenate(
             (
                 post_state["white_noise"][nseg:],
-                jax.random.normal(noise_key, (nseg, nat, 3), dtype=post_state["white_noise"].dtype),
+                jax.random.normal(
+                    noise_key, (nseg, nat, 3), dtype=post_state["white_noise"].dtype
+                ),
             ),
             axis=0,
         )
