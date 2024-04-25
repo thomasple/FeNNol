@@ -13,7 +13,7 @@ conda activate fennol
 The first step is to install jax (see details at: https://jax.readthedocs.io/en/latest/installation.html).
 For a conda installation with CUDA 11.8, use:
 ```bash
-conda install jaxlib=*=*cuda11* jax cuda-nvcc=11.8 -c conda-forge -c nvidia
+conda install jaxlib=*=*cuda11* jax=0.4.25 cuda-nvcc=11.8 -c conda-forge -c nvidia
 ```
 and make sure that jax uses the correct version of CUDA/CuDNN/ptxas by correctly setting your PATH and LD_LIBRARY_PATH.
 For example, you can update the `LD_LIBRARY_PATH` as following so that jax uses the CUDA libraries that you just installed with conda:
@@ -37,29 +37,7 @@ pip install --upgrade e3nn-jax
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
-
-
-
-## TODO:
-- [X] Preprocessing system 
-- [ ] Improve neighbor lists (PBC, parallelization, GPU, external calls...)
-- [X] Add e3 tensor products 
-      - [X] start by filtered TPs
-      - [X] and then maybe general FullyConnectedTP -> do we need e3nn-jax ?
-      - [X] If needed, add custom e3Linear layer
-- [X] Port modules from torchnff
-- [X] Convert ANI models parameters
-- [X] Add a MD code (with adQTB) -> test efficiency with ANI
-      - [X] classical MD
-      - [X] QTB
-      - [X] RPMD
-      - [ ] spectra
-      - [ ] histograms
-- [X] Implement a save/load system like in torchnff
-- [X] Add method to load a pretrained model
-- [X] generic training system ?
-      - [ ] more control over the optimizer
-      - [ ] more flexible data loading (conversion script ?)
-- [ ] Add tests (?)
-- [ ] Add examples
-- [ ] DOCUMENTATION / TUTORIALS
+- For the Deep-HP interface, cffi, pydlpack and pycuda are required:
+```bash
+conda install cffi pydlpack pycuda
+```
