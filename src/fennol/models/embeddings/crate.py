@@ -146,6 +146,7 @@ class CRATEmbedding(nn.Module):
     lode_shift: float = 1.0
 
     charge_embedding: bool = False
+    total_charge_key: str = "total_charge"
 
     FID: str | Tuple[str] = ("CRATE","MACARON")
 
@@ -203,7 +204,7 @@ class CRATEmbedding(nn.Module):
             natoms = inputs["natoms"]
             nsys = natoms.shape[0]
             Ntot = jax.ops.segment_sum(species, batch_index, nsys) - inputs.get(
-                "total_charge", jnp.zeros(nsys)
+                self.total_charge_key, jnp.zeros(nsys)
             )
             ai = jax.nn.softplus(qi.squeeze(-1))
             A = jax.ops.segment_sum(ai, batch_index, nsys)
@@ -325,15 +326,15 @@ class CRATEmbedding(nn.Module):
             Yij = generate_spherical_harmonics(lmax=self.lmax, normalize=False)(
                 graph["vec"] / graph["distances"][:, None]
             )[:, None, :]
-            ls = [0]
-            for l in range(1, self.lmax + 1):
-                ls = ls + [l] * (2 * l + 1)
-            ls = jnp.asarray(np.array(ls)[None, :], dtype=distances.dtype)
-            lcut = (0.5 + 0.5 * jnp.cos((np.pi / cutoff) * distances[:, None])) ** (
-                ls + 1
-            )
-            lcut = jnp.where(graph["edge_mask"][:, None], lcut, 0.0)
-            rijl1 = (lcut * distances[:, None] ** ls)[:, None, :]
+            #ls = [0]
+            #for l in range(1, self.lmax + 1):
+            #    ls = ls + [l] * (2 * l + 1)
+            #ls = jnp.asarray(np.array(ls)[None, :], dtype=distances.dtype)
+            #lcut = (0.5 + 0.5 * jnp.cos((np.pi / cutoff) * distances[:, #None])) ** (
+            #    ls + 1
+            #)
+            # lcut = jnp.where(graph["edge_mask"][:, None], lcut, 0.0)
+            # rijl1 = (lcut * distances[:, None] ** ls)[:, None, :]
 
         ##################################################
         if use_angles:
@@ -480,7 +481,21 @@ class CRATEmbedding(nn.Module):
                         2,
                         axis=-1,
                     )
-                    lij = lj[edge_dst, :, None] * rijl1
+                    Wa = self.param(
+                        f"We3_{layer}",
+                        nn.initializers.normal(
+                            stddev=1.0
+                            / (self.nchannels_l * radial_basis.shape[1]) ** 0.5
+                        ),
+                        (self.nchannels_l, radial_basis.shape[1], self.nchannels_l),
+                    )
+                    lij = jnp.einsum(
+                        "...i,...j,ijk->...k",
+                        lj[edge_dst],
+                        radial_basis,
+                        Wa,
+                    )[:,:,None]
+                    # lij = lj[edge_dst, :, None] * rijl1
                     rhoij = lij * (Yij if layer == 0 else Vi[edge_dst])
                     drhoi = jax.ops.segment_sum(rhoij, edge_src, species.shape[0])
                     if layer > 0:
