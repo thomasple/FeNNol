@@ -5,13 +5,7 @@ import dataclasses
 import numpy as np
 from typing import Any, Dict, Union, Callable, Sequence, Optional
 
-from ..misc.encodings import SpeciesEncoding, RadialBasis, positional_encoding
-from ...utils.spherical_harmonics import generate_spherical_harmonics, CG_SO3
-from ...utils.activations import activation_from_str, tssr2
 from ...utils.initializers import initializer_from_str
-from ..misc.nets import FullyConnectedNet
-from ...utils.periodic_table import D3_COV_RADII, D3_VDW_RADII
-from ...utils import AtomicUnits as au
 from ..misc.nets import GatedPerceptron
 
 

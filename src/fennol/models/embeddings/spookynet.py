@@ -6,9 +6,8 @@ from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
 from typing import Dict, Union, Callable, Sequence, Optional
-from ...utils.activations import activation_from_str, tssr2
 from ...utils.initializers import initializer_from_str, scaled_orthogonal
-from ..misc.nets import FullyConnectedNet, ResMLP
+from ..misc.nets import  ResMLP
 
 
 class SpookyNetEmbedding(nn.Module):

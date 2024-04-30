@@ -6,7 +6,7 @@ from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
 from typing import Dict, Union, Callable, Sequence, Optional
-from ...utils.activations import activation_from_str, tssr2
+from ...utils.activations import activation_from_str, tssr3
 from ..misc.nets import FullyConnectedNet
 
 
@@ -135,7 +135,7 @@ class PAINNEmbedding(nn.Module):
             )
 
             scals = (u * v).sum(axis=1)
-            norms = tssr2((v**2).sum(axis=1))
+            norms = tssr3((v**2).sum(axis=1))
 
             A = FullyConnectedNet(
                 [*self.update_hidden, self.dim + 2 * nchannels],

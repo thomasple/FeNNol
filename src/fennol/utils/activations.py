@@ -41,6 +41,15 @@ def tssr2(x):
     axx = jnp.where(mask, 1.0, ax)
     return jnp.sign(x) * jnp.where(mask, 1.25 * ax - 0.25 * ax**3, axx**0.5)
 
+@jax.jit
+def tssr3(x):
+    ax = jnp.abs(x)
+    mask = ax <= 1.0
+    axx = jnp.where(mask, 1.0, ax)
+    ax2 = ax*ax
+    dax2 = ax-ax2
+    poly = 2.1875*dax2 + ax2*(ax + 0.3125*dax2)
+    return jnp.sign(x) * jnp.where(mask, poly, axx**0.5)
 
 @jax.jit
 def pow(x, a):
@@ -91,6 +100,7 @@ def activation_from_str(activation: Union[str,Callable,None])->Callable:
                 "aptx": aptx,
                 "tssr": tssr,
                 "tssr2": tssr2,
+                "tssr3": tssr3,
                 "ssp": ssp,
             },
         )

@@ -6,7 +6,7 @@ from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
 from typing import Dict, Union, Callable
-from ...utils.activations import activation_from_str, tssr2
+from ...utils.activations import activation_from_str, tssr3
 from ..misc.nets import FullyConnectedNet
 
 
@@ -161,7 +161,7 @@ class HIPNNEmbedding(nn.Module):
                     Ml = jax.lax.dynamic_slice_in_dim(
                         Mi, start_index=l**2 - 1, slice_size=2 * l + 1, axis=-1
                     )
-                    zint = zint + ts[l, 2] * tssr2(
+                    zint = zint + ts[l, 2] * tssr3(
                         nn.Dense(self.dim, name=f"linear_{layer}_l{l}")(
                             jnp.sum(Ml**2, axis=-1)
                         )
