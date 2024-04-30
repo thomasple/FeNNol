@@ -95,6 +95,7 @@ class FilteredTensorProduct(nn.Module):
     lmax2: int
     lmax_out: Optional[int] = None
     ignore_parity: bool = False
+    weights_by_channel: bool = False
 
     @nn.compact
     def __call__(self, x1, x2) -> None:
@@ -135,6 +136,13 @@ class FilteredTensorProduct(nn.Module):
                     w3js.append(w3j_full)
         npath = len(w3js)
         w3j = jnp.asarray(np.stack(w3js))
+
+        if self.weights_by_channel:
+            nchannels = x1.shape[-2]
+            weights = self.param("weights", jax.nn.initializers.normal(stddev=1./npath**0.5), (nchannels,npath,))
+            ww3j = jnp.einsum("np,pabc->nabc", weights, w3j)
+            return jnp.einsum("...na,...nb,nabc->...nc", x1, x2, ww3j)
+
 
         weights = self.param("weights", jax.nn.initializers.normal(stddev=1./npath**0.5), (npath,))
 
