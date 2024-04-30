@@ -3,15 +3,15 @@ import jax.numpy as jnp
 import flax.linen as nn
 import dataclasses
 import numpy as np
-from typing import Dict, Union, Callable, Sequence, Optional,Tuple
+from typing import Dict, Union, Callable, Sequence, Optional, Tuple
 
 from ..misc.encodings import SpeciesEncoding, RadialBasis, positional_encoding
 from ...utils.spherical_harmonics import generate_spherical_harmonics, CG_SO3
-from ...utils.activations import activation_from_str, tssr2
+from ...utils.activations import activation_from_str, tssr3
 from ...utils.initializers import initializer_from_str
-from ..misc.nets import FullyConnectedNet,ZAcNet
+from ..misc.nets import FullyConnectedNet, ZAcNet
 from ..misc.e3 import ChannelMixing, ChannelMixingE3, FilteredTensorProduct
-from ...utils.periodic_table import D3_COV_RADII, D3_VDW_RADII
+from ...utils.periodic_table import D3_COV_RADII, D3_VDW_RADII, VALENCE_ELECTRONS
 from ...utils import AtomicUnits as au
 
 
@@ -67,7 +67,7 @@ class CRATEmbedding(nn.Module):
         The activation function for the mixing network.
     kernel_init : Union[str, Callable], default=nn.linear.default_kernel_init
         The kernel initialization function for Dense operations.
-    activation_mixing : Union[Callable, str], default=tssr2
+    activation_mixing : Union[Callable, str], default=tssr3
         The activation function applied after mixing.
     use_zacnet : bool, default=False
         Whether to use ZacNet.
@@ -86,7 +86,7 @@ class CRATEmbedding(nn.Module):
     radial_basis_angle : Optional[dict], default=None
         The dictionary of parameters for radial basis functions for angle embedding.
         If None, the radial basis for angles is the same as the radial basis for distances.
-    
+
     graph_lode : Optional[str], default=None
         The key for the lode graph data in the inputs dictionary.
     lode_channels : int, default=16
@@ -111,7 +111,7 @@ class CRATEmbedding(nn.Module):
 
     dim_src: int = 64
     dim_dst: int = 32
-    
+
     angle_style: str = "fourier"
     dim_angle: int = 8
     nmax_angle: int = 4
@@ -124,16 +124,19 @@ class CRATEmbedding(nn.Module):
     lmax: int = 0
     nchannels_l: int = 16
     n_tp: int = 1
+    ignore_irreps_parity: bool = False
 
     mixing_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [])
+    pair_mixing_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [])
     activation: Union[Callable, str] = nn.silu
     kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
-    activation_mixing: Union[Callable, str] = tssr2
+    activation_mixing: Union[Callable, str] = tssr3
     use_zacnet: bool = False
 
     graph_key: str = "graph"
     graph_angle_key: Optional[str] = None
     embedding_key: Optional[str] = None
+    pair_embedding_key: Optional[str] = None
 
     species_encoding: dict = dataclasses.field(default_factory=dict)
     radial_basis: dict = dataclasses.field(default_factory=dict)
@@ -148,8 +151,7 @@ class CRATEmbedding(nn.Module):
     charge_embedding: bool = False
     total_charge_key: str = "total_charge"
 
-    FID: str | Tuple[str] = ("CRATE","MACARON")
-
+    FID: str | Tuple[str] = "CRATE"
 
     @nn.compact
     def __call__(self, inputs):
@@ -191,7 +193,9 @@ class CRATEmbedding(nn.Module):
 
         ##################################################
         ### SPECIES ENCODING ###
-        species_encoder = SpeciesEncoding(**self.species_encoding, name="SpeciesEncoding")
+        species_encoder = SpeciesEncoding(
+            **self.species_encoding, name="SpeciesEncoding"
+        )
         zi = species_encoder(species)
 
         if self.charge_embedding:
@@ -203,7 +207,8 @@ class CRATEmbedding(nn.Module):
             batch_index = inputs["batch_index"]
             natoms = inputs["natoms"]
             nsys = natoms.shape[0]
-            Ntot = jax.ops.segment_sum(species, batch_index, nsys) - inputs.get(
+            Zi = jnp.asarray(VALENCE_ELECTRONS)[species]
+            Ntot = jax.ops.segment_sum(Zi, batch_index, nsys) - inputs.get(
                 self.total_charge_key, jnp.zeros(nsys)
             )
             ai = jax.nn.softplus(qi.squeeze(-1))
@@ -232,7 +237,7 @@ class CRATEmbedding(nn.Module):
         do_lode = self.graph_lode is not None
         if do_lode:
             graph_lode = inputs[self.graph_lode]
-            rij_lr = graph_lode["distances"]
+            rij_lr = graph_lode["distances"]/au.BOHR
             # unswitch = 0.5 - 0.5 * jnp.cos(
             #     (np.pi / self.lode_switch) * (rij_lr - cutoff + self.lode_shift)
             # )
@@ -393,6 +398,15 @@ class CRATEmbedding(nn.Module):
                     -1, 1, xa.shape[1] * radial_basis_angle.shape[1]
                 )
 
+            if self.pair_embedding_key is not None:
+                if filtered:
+                    ang_pair_src = filter_indices[angle_src]
+                    ang_pair_dst = filter_indices[angle_dst]
+                else:
+                    ang_pair_src = angle_src
+                    ang_pair_dst = angle_dst
+                ang_pairs = jnp.concatenate((ang_pair_src, ang_pair_dst))
+
         ##################################################
         ### DIMENSIONS ###
         dim_src = (
@@ -403,14 +417,15 @@ class CRATEmbedding(nn.Module):
         assert (
             len(dim_src) == self.nlayers
         ), f"dim_src must be an integer or a list of length {self.nlayers}"
-        dim_dst = (
-            [self.dim_dst] * self.nlayers
-            if isinstance(self.dim_dst, int)
-            else self.dim_dst
-        )
-        assert (
-            len(dim_dst) == self.nlayers
-        ), f"dim_dst must be an integer or a list of length {self.nlayers}"
+        dim_dst = self.dim_dst
+        # dim_dst = (
+        #     [self.dim_dst] * self.nlayers
+        #     if isinstance(self.dim_dst, int)
+        #     else self.dim_dst
+        # )
+        # assert (
+        #     len(dim_dst) == self.nlayers
+        # ), f"dim_dst must be an integer or a list of length {self.nlayers}"
 
         if use_angles:
             dim_angle = (
@@ -423,9 +438,21 @@ class CRATEmbedding(nn.Module):
             ), f"dim_angle must be an integer or a list of length {self.nlayers}"
             # nmax_angle = [self.nmax_angle]*self.nlayers if isinstance(self.nmax_angle, int) else self.nmax_angle
             # assert len(nmax_angle) == self.nlayers, f"nmax_angle must be an integer or a list of length {self.nlayers}"
-        
-        message_passing = [self.message_passing] * self.nlayers if isinstance(self.message_passing, bool) else self.message_passing
-        assert len(message_passing) == self.nlayers, f"message_passing must be a boolean or a list of length {self.nlayers}"
+
+        message_passing = (
+            [self.message_passing] * self.nlayers
+            if isinstance(self.message_passing, bool)
+            else self.message_passing
+        )
+        assert (
+            len(message_passing) == self.nlayers
+        ), f"message_passing must be a boolean or a list of length {self.nlayers}"
+
+        ##################################################
+        ### INITIALIZE PAIR EMBEDDING ###
+        if self.pair_embedding_key is not None:
+            xij_s,xij_d = jnp.split(nn.Dense(2*dim_dst, name="pair_init_linear")(zi), [dim_dst], axis=-1)
+            xij = xij_s[edge_src]*xij_d[edge_dst]
 
         ##################################################
         if self.keep_all_layers:
@@ -434,10 +461,10 @@ class CRATEmbedding(nn.Module):
         ### LOOP OVER LAYERS ###
         for layer in range(self.nlayers):
             ##################################################
-            ### COMPACT DESCRIPTORS + ANGLE SHIFTS ###
+            ### COMPACT DESCRIPTORS ###
             si, si_dst = jnp.split(
                 nn.Dense(
-                    dim_src[layer] + dim_dst[layer],
+                    dim_src[layer] + dim_dst,
                     name=f"species_linear_{layer}",
                     use_bias=True,
                 )(xi),
@@ -448,20 +475,34 @@ class CRATEmbedding(nn.Module):
             )
 
             ##################################################
-            if message_passing[layer]:
+            if message_passing[layer] or layer == 0:
                 ### MESSAGE PASSING ###
                 si_mp = si_dst[edge_dst]
             else:
+                # if layer == 0:
+                #     si_mp = si_dst[edge_dst]
                 ### ATTENTION TO SIMULATE MP ###
                 Q = nn.Dense(
-                    dim_dst[layer]*self.att_dim, name=f"queries_{layer}", use_bias=False
-                )(si_dst).reshape(-1,dim_dst[layer],self.att_dim)[edge_src]
+                    dim_dst * self.att_dim, name=f"queries_{layer}", use_bias=False
+                )(si_dst).reshape(-1, dim_dst, self.att_dim)[edge_src]
                 K = nn.Dense(
-                        dim_dst[layer]*self.att_dim, name=f"keys_{layer}", use_bias=False
-                    )(zi).reshape(-1,dim_dst[layer],self.att_dim)[edge_dst]
+                    dim_dst * self.att_dim, name=f"keys_{layer}", use_bias=False
+                )(zi).reshape(-1, dim_dst, self.att_dim)[edge_dst]
 
-                si_mp = tssr2((K*Q).sum(axis=-1)/self.att_dim**0.5) 
+                si_mp = (K * Q).sum(axis=-1) / self.att_dim**0.5
+                # Vmp = jax.ops.segment_sum(
+                #     (KQ * switch)[:, :, None] * Yij, edge_src, species.shape[0]
+                # )
+                # si_mp = (Vmp[edge_src] * Yij).sum(axis=-1)
+                # Q = nn.Dense(
+                #     dim_dst * dim_dst, name=f"queries_{layer}", use_bias=False
+                # )(si_dst).reshape(-1, dim_dst, dim_dst)
+                # si_mp = (
+                #     si_mp + jax.vmap(jnp.dot)(Q[edge_src], si_mp) / self.dim_dst**0.5
+                # )
 
+            if self.pair_embedding_key is not None:
+                si_mp = si_mp + xij
 
             ##################################################
             ### PAIR EMBEDDING ###
@@ -475,71 +516,49 @@ class CRATEmbedding(nn.Module):
             ##################################################
             ### EQUIVARIANT EMBEDDING ###
             if self.lmax > 0:
-                if message_passing[layer] or layer == 0:
-                    li, lj = jnp.split(
-                        nn.Dense(2 * self.nchannels_l, name=f"e3_channel_{layer}")(xi),
-                        2,
-                        axis=-1,
-                    )
-                    Wa = self.param(
-                        f"We3_{layer}",
-                        nn.initializers.normal(
-                            stddev=1.0
-                            / (self.nchannels_l * radial_basis.shape[1]) ** 0.5
-                        ),
-                        (self.nchannels_l, radial_basis.shape[1], self.nchannels_l),
-                    )
-                    lij = jnp.einsum(
-                        "...i,...j,ijk->...k",
-                        lj[edge_dst],
-                        radial_basis,
-                        Wa,
-                    )[:,:,None]
-                    # lij = lj[edge_dst, :, None] * rijl1
-                    rhoij = lij * (Yij if layer == 0 else Vi[edge_dst])
-                    drhoi = jax.ops.segment_sum(rhoij, edge_src, species.shape[0])
-                    if layer > 0:
-                        drhoi = drhoi + li[:, :, None] * Vi
+                if layer == 0 or not message_passing[layer]:
+                    Vij = Yij
                 else:
-                    li = nn.Dense(self.nchannels_l, name=f"e3_channel_{layer}")(xi)
-                    drhoi = li[:, :, None] * Vi
+                    Vij = Vi[edge_dst]
+                drhoi = jax.ops.segment_sum(
+                    nn.Dense(
+                        self.nchannels_l, name=f"e3_channel_{layer}", use_bias=False
+                    )(Lij)[:, :, None]
+                    * Vij,
+                    edge_src,
+                    species.shape[0],
+                )
 
                 if layer == 0:
-                    rhoi = ChannelMixing(
-                        self.lmax,
-                        drhoi.shape[-2],
-                        self.nchannels_l,
-                        name=f"e3_mixing_{layer}",
-                    )(drhoi)
-                    Vi = li[:, :, None] * ChannelMixingE3(
+                    rhoi = drhoi
+                    Vi = ChannelMixingE3(
                         self.lmax,
                         self.nchannels_l,
                         self.nchannels_l,
                         name=f"e3_initial_mixing_{layer}",
                     )(rhoi)
                 else:
-                    rhoi = rhoi + ChannelMixing(
-                        self.lmax,
-                        drhoi.shape[-2],
-                        self.nchannels_l,
-                        name=f"e3_mixing_{layer}",
-                    )(drhoi)
+                    rhoi = rhoi + drhoi
                 Vi0 = []
                 for itp in range(self.n_tp):
                     dVi = FilteredTensorProduct(
-                        self.lmax, self.lmax, name=f"tensor_product_{layer}_{itp}"
+                        self.lmax, self.lmax, name=f"tensor_product_{layer}_{itp}",ignore_parity=self.ignore_irreps_parity,weights_by_channel=False
                     )(rhoi, Vi)
-                    Vi = (
-                        ChannelMixing(
+                    Vi = ChannelMixing(
                             self.lmax,
                             self.nchannels_l,
                             self.nchannels_l,
                             name=f"tp_mixing_{layer}_{itp}",
-                        )(Vi)
-                        + dVi
-                    )
+                        )(Vi + dVi)
                     Vi0.append(dVi[:, :, 0])
                 Vi0 = jnp.concatenate(Vi0, axis=-1)
+                if self.pair_embedding_key is not None:
+                    Vij = Vi[edge_src]*Yij
+                    Vij0 = [Vij[...,0]]
+                    for l in range(1,self.lmax+1):
+                        Vij0.append(Vij[...,l**2:(l+1)**2].sum(axis=-1))
+                    Vij0 = jnp.concatenate(Vij0,axis=-1)
+
 
             ##################################################
             ### ANGLE EMBEDDING ###
@@ -582,6 +601,13 @@ class CRATEmbedding(nn.Module):
                     radang, central_atom, species.shape[0]
                 )
 
+                if self.pair_embedding_key is not None:
+                    ang_ij = jax.ops.segment_sum(
+                        jnp.concatenate((radang, radang)),
+                        ang_pairs,
+                        edge_src.shape[0],
+                    )
+
             ##################################################
             ### CONCATENATE EMBEDDING COMPONENTS ###
             components = [si, Li]
@@ -595,6 +621,16 @@ class CRATEmbedding(nn.Module):
             dxi = jnp.concatenate(components, axis=-1)
 
             ##################################################
+            ### CONCATENATE PAIR EMBEDDING COMPONENTS ###
+            if self.pair_embedding_key is not None:
+                components = [si[edge_src], xij, Lij]
+                if use_angles:
+                    components.append(ang_ij)
+                if self.lmax > 0:
+                    components.append(Vij0)
+                dxij = jnp.concatenate(components, axis=-1)
+
+            ##################################################
             ### MIX AND APPLY NONLINEARITY ###
             if self.use_zacnet:
                 dxi = actmix(
@@ -602,10 +638,10 @@ class CRATEmbedding(nn.Module):
                         [*self.mixing_hidden, self.dim],
                         zmax=species_encoder.zmax,
                         activation=self.activation,
-                        name=f"dxi_{layer}", 
+                        name=f"dxi_{layer}",
                         use_bias=True,
                         kernel_init=kernel_init,
-                    )((species,dxi))
+                    )((species, dxi))
                 )
             else:
                 dxi = actmix(
@@ -617,6 +653,20 @@ class CRATEmbedding(nn.Module):
                         kernel_init=kernel_init,
                     )(dxi)
                 )
+
+            if self.pair_embedding_key is not None:
+                ### UPDATE PAIR EMBEDDING ###
+                # dxij = tssr3(nn.Dense(dim_dst, name=f"dxij_{layer}",use_bias=False)(dxij))
+                dxij = actmix(
+                    FullyConnectedNet(
+                        [*self.pair_mixing_hidden, dim_dst],
+                        activation=self.activation,
+                        name=f"dxij_{layer}",
+                        use_bias=False,
+                        kernel_init=kernel_init,
+                    )(dxij)
+                )
+                xij = xij + dxij
 
             ##################################################
             ### UPDATE EMBEDDING ###
@@ -636,7 +686,9 @@ class CRATEmbedding(nn.Module):
             if self.keep_all_layers:
                 xis.append(xi)
 
-        embedding_key = self.embedding_key if self.embedding_key is not None else self.name
+        embedding_key = (
+            self.embedding_key if self.embedding_key is not None else self.name
+        )
         output = {
             **inputs,
             embedding_key: xi,
@@ -647,4 +699,6 @@ class CRATEmbedding(nn.Module):
             output[embedding_key + "_layers"] = jnp.stack(xis, axis=1)
         if self.charge_embedding:
             output[embedding_key + "_charge"] = charge_embedding
+        if self.pair_embedding_key is not None:
+            output[self.pair_embedding_key] = xij
         return output
