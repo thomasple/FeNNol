@@ -43,6 +43,37 @@ class ApplySwitch(nn.Module):
         output_key = self.key if self.output_key is None else self.output_key
         return {**inputs, output_key: output}
 
+class AtomToEdge(nn.Module):
+    _graphs_properties: Dict
+    key: str
+    output_key: Optional[str] = None
+    graph_key: str = "graph"
+    switch: bool = False
+    switch_key: Optional[str] = None
+    use_source: bool = False
+
+    FID: str = "ATOM_TO_EDGE"
+
+    @nn.compact
+    def __call__(self, inputs) -> Any:
+        graph = inputs[self.graph_key]
+        nat = inputs["species"].shape[0]
+        edge_src, edge_dst = graph["edge_src"], graph["edge_dst"]
+
+        x = inputs[self.key]
+        if self.use_source:
+            x_edge  = x[edge_src]
+        else:
+            x_edge = x[edge_dst]
+
+        if self.switch:
+            switch = (
+                graph["switch"] if self.switch_key is None else inputs[self.switch_key]
+            )
+            x_edge = apply_switch(x_edge, switch)
+
+        output_key = self.key if self.output_key is None else self.output_key
+        return {**inputs, output_key: x_edge}
 
 class ScatterEdges(nn.Module):
     _graphs_properties: Dict
