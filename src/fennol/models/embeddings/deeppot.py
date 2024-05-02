@@ -140,42 +140,31 @@ class DeepPotE3Embedding(nn.Module):
 
     FID : DEEPPOT_E3
 
-    Reference
-    ----------
+    ### Reference
     L. Zhang, J. Han, H. Wang, W. A. Saidi, R. Car, Weinan E, End-to-end Symmetry Preserving Inter-atomic Potential Energy Model for Finite and Extended Systems,
     Conference on Neural Information Processing Systems (NeurIPS), 2018,
     https://doi.org/10.48550/arXiv.1805.09003
 
-    Parameters
-    ----------
-    dim : int, default=64
-        The dimension of the embedding.
-    embedding_key : str, default="embedding"
-        The key to use for the output embedding in the returned dictionary.
-    graph_key : str, default="graph"
-        The key in the input dictionary that corresponds to the radial graph.
-    species_encoding : dict, default={}
-        The species encoding parameters.
-    embedding_hidden : Sequence[int], default=[64, 64, 64]
-        The hidden layers of the embedding network.
-    activation : Union[Callable, str], default=nn.silu
-        The activation function.
-    concatenate_species : bool, default=False
-        Whether to concatenate the species encoding with the embedding.
-    divide_distances : bool, default=True
-        Whether to divide the switch by the distance in s_ij.
     """
     _graphs_properties: Dict
     dim: int = 64
+    """The dimension of the embedding."""
     embedding_key: str = "embedding"
+    """The key to use for the output embedding in the returned dictionary."""
     graph_key: str = "graph"
+    """The key in the input dictionary that corresponds to the graph."""
     species_encoding: dict = dataclasses.field(default_factory=dict)
+    """The species encoding parameters. See `fennol.models.misc.encodings.SpeciesEncoding`"""
     embedding_hidden: Sequence[int] = dataclasses.field(
         default_factory=lambda: [64, 64, 64]
     )
-    activation: Union[Callable, str] = nn.silu
+    """The hidden layers of the embedding network."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function."""
     concatenate_species: bool = False
+    """Whether to concatenate the species encoding with the embedding."""
     divide_distances: bool = True
+    """Whether to divide the switch by the distance in s_ij."""
 
     FID: ClassVar[str] = "DEEPPOT_E3"
 
