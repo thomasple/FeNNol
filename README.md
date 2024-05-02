@@ -2,6 +2,9 @@
 ### Force-field-enhanced Neural Networks optimized library
 FeNNol is a library for building, training and running neural network potentials for molecular simulations. It is based on the JAX library and is designed to be fast and flexible.
 
+### Warning
+FeNNol is in early stages of development: some APIs are subject to change and documentation is still minimal (but should improve soon !). 
+This is also a temporary repository for the preprint https://arxiv.org/.... The library will soon be moved to a more permanent location.
 
 ## Installation
 You can start with a fresh environment using conda:
@@ -25,7 +28,7 @@ Then, you can clone and install FeNNol using pip:
 ```bash
 git clone ...
 cd FeNNol
-pip install -e .
+pip install .
 ```
 
 *Optional dependencies*:
