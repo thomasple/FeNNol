@@ -1,6 +1,7 @@
-# FeNNol
-### Force-field-enhanced Neural Networks optimized library
+## FeNNol: Force-field-enhanced Neural Networks optimized library
 FeNNol is a library for building, training and running neural network potentials for molecular simulations. It is based on the JAX library and is designed to be fast and flexible.
+
+FeNNol's documentation is available [here](https://thomasple.github.io/FeNNol/).
 
 ### Warning
 FeNNol is in early stages of development: some APIs are subject to change and documentation is still minimal (but should improve soon !). 
