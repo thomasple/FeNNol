@@ -72,7 +72,7 @@ def main():
     jax.config.update("jax_default_device", _device)
 
     ### Set the precision
-    enable_x64 = simulation_parameters.get("enable_x64", False)
+    enable_x64 = simulation_parameters.get("double_precision", False)
     jax.config.update("jax_enable_x64", enable_x64)
     fprec = "float64" if enable_x64 else "float32"
 
