@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
-from typing import Sequence, Dict, Optional, Union, Callable
+from typing import Sequence, Dict, Optional, Union, Callable, ClassVar
 import numpy as np
 import dataclasses
 
@@ -16,56 +16,41 @@ class DeepPotEmbedding(nn.Module):
 
     FID : DEEPPOT
 
-    Reference
-    ----------
+    ### Reference
     Zhang, L., Han, J., Wang, H., Car, R., & E, W. (2018). Deep Potential Molecular dynamics: A scalable model with the accuracy of quantum mechanics. Phys. Rev. Lett., 120(14), 143001. https://doi.org/10.1103/PhysRevLett.120.143001
-
-    Parameters
-    ----------
-    dim : int, default=64
-        The dimension of the embedding.
-    subdim : int, default=8
-        The first dimensions to select for the embedding tensor product.
-    radial_dim : Optional[int], default=None
-        The dimension of the radial embedding for tensor combination. 
-        If None, we use a neural net to combine chemical and radial information, like in the original DeepPot.
-    embedding_key : str, default="embedding"
-        The key to use for the output embedding in the returned dictionary.
-    graph_key : str, default="graph"
-        The key in the input dictionary that corresponds to the radial graph.
-    species_encoding : dict, default={}
-        The species encoding parameters.
-    radial_basis : Optional[dict], default=None
-        The radial basis parameters. If None, the radial basis is the s_ij like in the original DeepPot.
-    embedding_hidden : Sequence[int], default=[64, 64, 64]
-        The hidden layers of the embedding network.
-    activation : Union[Callable, str], default=nn.silu
-        The activation function.
-    concatenate_species : bool, default=False
-        Whether to concatenate the species encoding with the embedding.
-    divide_distances : bool, default=True
-        Whether to divide the switch by the distance in s_ij.
-    species_order : Optional[Sequence[str]], default=None
-        Species considered by the network when using species-specialized embedding network.
 
     """
     _graphs_properties: Dict
     dim: int = 64
+    """The dimension of the embedding."""
     subdim: int = 8
+    """The first dimensions to select for the embedding tensor product."""
     radial_dim: Optional[int] = None
+    """The dimension of the radial embedding for tensor combination. 
+        If None, we use a neural net to combine chemical and radial information, like in the original DeepPot."""
     embedding_key: str = "embedding"
+    """The key to use for the output embedding in the returned dictionary."""
     graph_key: str = "graph"
+    """The key in the input dictionary that corresponds to the radial graph."""
     species_encoding: dict = dataclasses.field(default_factory=dict)
+    """The species encoding parameters. See `fennol.models.misc.encodings.SpeciesEncoding`"""
     radial_basis: Optional[dict] = None
+    """The radial basis parameters. See `fennol.models.misc.encodings.RadialBasis`. 
+        If None, the radial basis is the s_ij like in the original DeepPot."""
     embedding_hidden: Sequence[int] = dataclasses.field(
         default_factory=lambda: [64, 64, 64]
     )
-    activation: Union[Callable, str] = nn.silu
+    """The hidden layers of the embedding network."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function."""
     concatenate_species: bool = False
+    """Whether to concatenate the species encoding with the embedding."""
     divide_distances: bool = True
+    """Whether to divide the switch by the distance in s_ij."""
     species_order: Optional[Union[str,Sequence[str]]] = None
+    """Species considered by the network when using species-specialized embedding network."""
 
-    FID: str = "DEEPPOT"
+    FID: ClassVar[str] = "DEEPPOT"
 
     @nn.compact
     def __call__(self, inputs):
@@ -192,7 +177,7 @@ class DeepPotE3Embedding(nn.Module):
     concatenate_species: bool = False
     divide_distances: bool = True
 
-    FID: str = "DEEPPOT_E3"
+    FID: ClassVar[str] = "DEEPPOT_E3"
 
     @nn.compact
     def __call__(self, inputs):

@@ -5,7 +5,7 @@ from ...utils.spherical_harmonics import generate_spherical_harmonics, CG_SO3
 from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
-from typing import Dict, Union, Callable
+from typing import Dict, Union, Callable, ClassVar
 from ...utils.activations import activation_from_str, tssr3
 from ..misc.nets import FullyConnectedNet
 
@@ -13,53 +13,39 @@ from ..misc.nets import FullyConnectedNet
 class HIPNNEmbedding(nn.Module):
     """Hierarchically Interacting Particle Neural Network
 
+    ### Reference
     Adapted from N. Lubbers, J. S. Smith and K. Barros, Hierarchical modeling of molecular energies using a deep neural network
-    J. Chem. Phys. 148, 241715 (2018) (J. Chem. Phys. 148, 241715 (2018))
+    J. Chem. Phys. 148, 241715 (2018) (J. Chem. Phys. 148, 241715 (2018)) (https://doi.org/10.1063/1.5011181)
 
-    Parameters
-    ----------
-    dim : int, default=80
-        The dimension of the embedding.
-    n_onsite : int, default=3
-        The number of onsite layers per interaction layer.
-    nlayers : int, default=2
-        The number of interaction layers.
-    lmax : int, default=0
-        The maximum value of l for spherical harmonics.
-    n_message : int, default=0
-        The number of layers for the message NN.
-        If 0, the message is formed from a filtered tensorial combination of radial and chemical features.
-    activation : Union[Callable, str], default=nn.silu
-        The activation function.
-    graph_key : str, default="graph"
-        The key for the graph input.
-    embedding_key : str, default="embedding"
-        The key for the embedding output.
-    species_encoding : dict, default={}
-        The species encoding parameters.
-    radial_basis : dict, default={"dim": 20}
-        The radial basis parameters.
-    keep_all_layers : bool, default=True
-        Whether to keep embeddings from each layer in the output.
-    graph_l_key : str, default="graph"
-        The key for the graph input for the spherical harmonics.
-    
     """
+    
     _graphs_properties: Dict
     dim: int = 80
+    """The dimension of the embedding."""
     n_onsite: int = 3
+    """The number of onsite layers per interaction layer."""
     nlayers: int = 2
+    """The number of interaction layers."""
     lmax: int = 0
+    """The maximum value degree of spherical harmonics."""
     n_message: int = 0
-    activation: Union[Callable, str] = nn.silu
+    """The number of layers for the message NN."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function."""
     graph_key: str = "graph"
+    """The key for the graph input."""
     embedding_key: str = "embedding"
+    """The key for the embedding output."""
     species_encoding: dict = dataclasses.field(default_factory=dict)
+    """The species encoding parameters. See `fennol.models.misc.encodings.SpeciesEncoding`."""
     radial_basis: dict = dataclasses.field(default_factory=lambda: {"dim": 20})
+    """The radial basis parameters. See `fennol.models.misc.encodings.RadialBasis`."""
     keep_all_layers: bool = True
+    """Whether to keep embeddings from each layer in the output."""
     graph_l_key: str = "graph"
+    """The key for the graph input for the spherical harmonics."""
 
-    FID: str = "HIPNN"
+    FID: ClassVar[str] = "HIPNN"
 
 
     @nn.compact

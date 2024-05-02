@@ -7,44 +7,31 @@ Created by C. Cattin 2024
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
+from typing import ClassVar
 
 from fennol.utils import AtomicUnits as Au
 
 
 class ElectricField(nn.Module):
-    """Electric field model for FENNOL.
+    """Electric field from distributed point charges with short-range damping.
 
-    Attributes
-    ----------
-    name : str
-        Name of the electric field model.
-    damping_param : float
-        Damping parameter for the electric field.
-    charges_key : str
-        Key of the charges in the input.
-    graph_key : str
-        Key of the graph in the input.
-    polarisability_key : str
-        Key of the polarisability in the input.
+    The short-range damping is defined as in AMOEBA+
+
     """
 
     damping_param: float = 0.7
+    """Damping parameter for the electric field."""
     charges_key: str = 'charges'
+    """Key of the charges in the input."""
     graph_key: str = 'graph'
+    """Key of the graph in the input."""
     polarisability_key: str = 'polarisability'
+    """Key of the polarisability in the input."""
 
-    FID: str = 'ELECTRIC_FIELD'
+    FID: ClassVar[str] = 'ELECTRIC_FIELD'
 
     @nn.compact
     def __call__(self, inputs):
-        """Forward pass of the electric field model.
-
-        Parameters
-        ----------
-        inputs : dict
-            Input dictionary containing all the info about the system.
-            This dictionary is given from the FENNIX class.
-        """
         species = inputs['species']
 
         # Graph information

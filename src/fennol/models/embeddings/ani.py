@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
-from typing import Sequence, Dict, Union
+from typing import Sequence, Dict, Union,ClassVar
 import numpy as np
 from ...utils.periodic_table import PERIODIC_TABLE
 
@@ -11,54 +11,37 @@ class ANIAEV(nn.Module):
 
     FID : ANI_AEV
 
-    Reference
-    ----------
+    ### Reference
     J. S. Smith, O. Isayev and A. E. Roitberg, ANI-1: an extensible neural network potential with DFT accuracy at force field computational cost, Chem. Sci., 2017, 8, 3192
-
-
-    Parameters
-    ----------
-    species_order : Sequence[str]
-        The chemical species which are considered by the model.
-    graph_angle_key : str
-        The key in the input dictionary that corresponds to the angular graph.
-    radial_eta : float, default=16.0
-        Controls the width of the gaussian sensity functions in radial AEV.
-    angular_eta : float, default=8.0
-        Controls the width of the gaussian sensity functions in angular AEV.
-    radial_dist_divisions : int, default=16
-        Number of basis function to encode ditance in radial AEV.
-    angular_dist_divisions : int, default=4
-        Number of basis function to encode ditance in angular AEV.
-    zeta : float, default=32.0
-        The power parameter in angle embedding.
-    angle_sections : int, default=4
-        The number of angle sections.
-    radial_start : float, default=0.8
-        The starting distance in radial AEV.
-    angular_start : float, default=0.8
-        The starting distance in angular AEV.
-    embedding_key : str, default="embedding"
-        The key to use for the output embedding in the returned dictionary.
-    graph_key : str, default="graph"
-        The key in the input dictionary that corresponds to the radial graph.
     """
 
     _graphs_properties: Dict
     species_order: Union[str,Sequence[str]]
+    """ The chemical species which are considered by the model."""
     graph_angle_key: str
+    """ The key in the input dictionary that corresponds to the angular graph."""
     radial_eta: float = 16.0
+    """ Controls the width of the gaussian sensitivity functions in radial AEV."""
     angular_eta: float = 8.0
+    """ Controls the width of the gaussian sensitivity functions in angular AEV."""
     radial_dist_divisions: int = 16
+    """ Number of basis function to encode distance in radial AEV."""
     angular_dist_divisions: int = 4
+    """ Number of basis function to encode distance in angular AEV."""
     zeta: float = 32.0
+    """ The power parameter in angle embedding."""
     angle_sections: int = 4
+    """ The number of angle sections."""
     radial_start: float = 0.8
+    """ The starting distance in radial AEV."""
     angular_start: float = 0.8
+    """ The starting distance in angular AEV."""
     embedding_key: str = "embedding"
+    """ The key to use for the output embedding in the returned dictionary."""
     graph_key: str = "graph"
+    """ The key in the input dictionary that corresponds to the radial graph."""
 
-    FID: str = "ANI_AEV"
+    FID: ClassVar[str] = "ANI_AEV"
 
     @nn.compact
     def __call__(self, inputs):

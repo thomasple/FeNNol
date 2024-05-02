@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import flax.linen as nn
 import dataclasses
 import numpy as np
-from typing import Any, Dict, Union, Callable, Sequence, Optional
+from typing import Any, Dict, Union, Callable, Sequence, Optional, ClassVar
 
 from ...utils.initializers import initializer_from_str
 from ..misc.nets import GatedPerceptron
@@ -12,54 +12,38 @@ from ..misc.nets import GatedPerceptron
 class CHGNetEmbedding(nn.Module):
     """ Crystal Hamiltonian Graph Neural Network
 
-    FID : CHGNET
+    FID: CHGNET
 
-    Reference
-    ----------
+    ### Reference
     Deng, B., Zhong, P., Jun, K. et al. CHGNet as a pretrained universal neural network potential for charge-informed atomistic modelling.
         Nat Mach Intell 5, 1031–1041 (2023). https://doi.org/10.1038/s42256-023-00716-3
     
-    Parameters
-    ----------
-    dim : int, default=64
-        The dimension of the embedding.
-    nmax_angle : int, default=4
-        The maximum fourier order for the angle representation.
-    nlayers : int, default=3
-        The number of layers.
-    graph_key : str, default="graph"
-        The key for the graph input.
-    graph_angle_key : Optional[str], default=None
-        The key for the angular graph input.
-    embedding_key : str, default="embedding"
-        The key for the embedding output.
-    species_encoding : dict, default={}
-        The species encoding parameters.
-    radial_basis : dict, default={}
-        The radial basis parameters.
-    radial_basis_angle : Optional[dict], default=None
-        The radial basis parameters for angles.
-    keep_all_layers : bool, default=False
-        Whether to keep all layers in the output.
-    kernel_init : Union[str, Callable], default=nn.linear.default_kernel_init
-        The kernel initializer for Dense operations.
-
     """
     _graphs_properties: Dict
     dim: int = 64
+    """The dimension of the embedding."""
     nmax_angle: int = 4
+    """ The maximum fourier order for the angle representation."""
     nlayers: int = 3
+    """The number of layers."""
     graph_key: str = "graph"
+    """The key for the graph input."""
     graph_angle_key: Optional[str] = None
+    """The key for the angular graph input."""
     embedding_key: str = "embedding"
+    """The key for the embedding output."""
     species_encoding: dict = dataclasses.field(default_factory=dict)
+    """The species encoding parameters. See `fennol.models.misc.encodings.SpeciesEncoding`"""
     radial_basis: dict = dataclasses.field(default_factory=dict)
+    """The radial basis parameters. See `fennol.models.misc.encodings.RadialBasis`"""
     radial_basis_angle: Optional[dict] = None
+    """The radial basis parameters for angle embedding. See `fennol.models.misc.encodings.RadialBasis`"""
     keep_all_layers: bool = False
-    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+    """Whether to keep all layers in the output."""
+    kernel_init: Union[str, Callable] = "lecun_normal()"
+    """The kernel initializer for Dense operations."""
 
-
-    FID: str  = "CHGNET"
+    FID: ClassVar[str]  = "CHGNET"
 
     @nn.compact
     def __call__(self, inputs):

@@ -1,10 +1,9 @@
 import flax.linen as nn
-from typing import Any, Sequence, Callable, Union
+from typing import Any, Sequence, Callable, Union, ClassVar,Optional,Dict, List
 import jax.numpy as jnp
 import jax
 import numpy as np
 from functools import partial
-from typing import Optional, Tuple, Dict, List, Union
 from ...utils.activations import activation_from_str
 from ...utils.periodic_table import (
     CHEMICAL_PROPERTIES,
@@ -26,7 +25,7 @@ class ApplySwitch(nn.Module):
     graph_key: Optional[str] = None
     output_key: Optional[str] = None
 
-    FID: str = "APPLY_SWITCH"
+    FID: ClassVar[str] = "APPLY_SWITCH"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -52,7 +51,7 @@ class AtomToEdge(nn.Module):
     switch_key: Optional[str] = None
     use_source: bool = False
 
-    FID: str = "ATOM_TO_EDGE"
+    FID: ClassVar[str] = "ATOM_TO_EDGE"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -83,7 +82,7 @@ class ScatterEdges(nn.Module):
     switch: bool = False
     switch_key: Optional[str] = None
 
-    FID: str = "SCATTER_EDGES"
+    FID: ClassVar[str] = "SCATTER_EDGES"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -114,7 +113,7 @@ class EdgeConcatenate(nn.Module):
     switch_key: Optional[str] = None
     axis: int = -1
     
-    FID: str = "EDGE_CONCATENATE"
+    FID: ClassVar[str] = "EDGE_CONCATENATE"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -141,7 +140,7 @@ class ScatterSystem(nn.Module):
     key: str
     output_key: Optional[str] = None
 
-    FID: str = "SCATTER_SYSTEM"
+    FID: ClassVar[str] = "SCATTER_SYSTEM"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -163,7 +162,7 @@ class SumAxis(nn.Module):
     output_key: Optional[str] = None
     norm: Optional[str] = None
 
-    FID: str = "SUM_AXIS"
+    FID: ClassVar[str] = "SUM_AXIS"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -190,7 +189,7 @@ class Split(nn.Module):
     sizes: Union[int, Sequence[int]] = 1
     squeeze: bool = True
 
-    FID: str = "SPLIT"
+    FID: ClassVar[str] = "SPLIT"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -225,7 +224,7 @@ class Concatenate(nn.Module):
     axis: int = -1
     output_key: Optional[str] = None
 
-    FID: str = "CONCATENATE"
+    FID: ClassVar[str] = "CONCATENATE"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -241,7 +240,7 @@ class Activation(nn.Module):
     shift_out: float = 0.0
     output_key: Optional[str] = None
 
-    FID: str = "ACTIVATION"
+    FID: ClassVar[str] = "ACTIVATION"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -262,7 +261,7 @@ class Scale(nn.Module):
     output_key: Optional[str] = None
     trainable: bool = False
 
-    FID: str = "SCALE"
+    FID: ClassVar[str] = "SCALE"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -282,7 +281,7 @@ class Add(nn.Module):
     keys: Sequence[str]
     output_key: Optional[str] = None
 
-    FID: str = "ADD"
+    FID: ClassVar[str] = "ADD"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -298,7 +297,7 @@ class Multiply(nn.Module):
     keys: Sequence[str]
     output_key: Optional[str] = None
 
-    FID: str = "MULTIPLY"
+    FID: ClassVar[str] = "MULTIPLY"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -314,7 +313,7 @@ class Transpose(nn.Module):
     axes: Sequence[int] 
     output_key: Optional[str] = None
 
-    FID: str = "TRANSPOSE"
+    FID: ClassVar[str] = "TRANSPOSE"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -327,7 +326,7 @@ class Reshape(nn.Module):
     shape: Sequence[int]
     output_key: Optional[str] = None
 
-    FID: str = "RESHAPE"
+    FID: ClassVar[str] = "RESHAPE"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -340,7 +339,7 @@ class ChemicalConstant(nn.Module):
     output_key: Optional[str] = None
     trainable: bool = False
 
-    FID: str = "CHEMICAL_CONSTANT"
+    FID: ClassVar[str] = "CHEMICAL_CONSTANT"
 
 
     @nn.compact
@@ -378,7 +377,7 @@ class SwitchFunction(nn.Module):
     p: Optional[float] = None
     trainable: bool = False
 
-    FID: str = "SWITCH_FUNCTION"
+    FID: ClassVar[str] = "SWITCH_FUNCTION"
 
 
     @nn.compact

@@ -5,39 +5,34 @@ from ...utils.spherical_harmonics import generate_spherical_harmonics, CG_SO3
 from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
-from typing import Dict
+from typing import Dict, ClassVar
 
 
 class GaussianMomentsEmbedding(nn.Module):
-    """
-    Gaussian moments embedding adapted from J. Chem. Theory Comput. 2020, 16, 8, 5410–5421
-    (https://pubs.acs.org/doi/full/10.1021/acs.jctc.0c00347)
+    """Gaussian moments embedding
 
     The construction of this embedding is similar to ACE but with a fixed lmax=3 and
     a subset of tensor product paths chosen by hand.
 
-    Parameters
-    ----------
-    nchannels : int, default=7
-        The number of chemical-radial (chemrad) channels for the density representation.
-    graph_key : str, default="graph"
-        The key in the input dictionary that corresponds to the molecular graph.
-    embedding_key : str, default="embedding"
-        The key in the output dictionary where the computed embedding will be stored.
-    species_encoding : dict, default={}
-        A dictionary of parameters for the species encoding.
-    radial_basis : dict, default={}
-        A dictionary of parameters for the radial basis.
+    ### Reference 
+    adapted from J. Chem. Theory Comput. 2020, 16, 8, 5410–5421
+    (https://pubs.acs.org/doi/full/10.1021/acs.jctc.0c00347)
+
     """
 
     _graphs_properties: Dict
     nchannels: int = 7
+    """The number of chemical-radial (chemrad) channels for the density representation."""
     graph_key: str = "graph"
+    """The key in the input dictionary that corresponds to the molecular graph."""
     embedding_key: str = "embedding"
+    """The key in the output dictionary where the computed embedding will be stored."""
     species_encoding: dict = dataclasses.field(default_factory=dict)
+    """A dictionary of parameters for the species encoding. See `fennol.models.misc.encodings.SpeciesEncoding`"""
     radial_basis: dict = dataclasses.field(default_factory=dict)
+    """A dictionary of parameters for the radial basis. See `fennol.models.misc.encodings.RadialBasis`"""
 
-    FID: str = "GAUSSIAN_MOMENTS"
+    FID: ClassVar[str] = "GAUSSIAN_MOMENTS"
 
 
     @nn.compact

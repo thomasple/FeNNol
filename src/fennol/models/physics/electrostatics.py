@@ -4,7 +4,7 @@ import flax.linen as nn
 import numpy as np
 
 # from jaxopt.linear_solve import solve_cg, solve_iterative_refinement, solve_gmres
-from typing import Any, Dict, Union, Callable, Sequence, Optional
+from typing import Any, Dict, Union, Callable, Sequence, Optional, ClassVar
 from ...utils import AtomicUnits as au
 import dataclasses
 from ...utils.periodic_table import (
@@ -102,19 +102,33 @@ def ewald_reciprocal(q, batch_index, k_points, phiscale, selfscale, expfac, ks):
 
 
 class Coulomb(nn.Module):
+    """Coulomb interaction between distributed point charges
+
+    FID : COULOMB   
+    
+    """
     _graphs_properties: Dict
     graph_key: str = "graph"
+    """Key for the graph in the inputs"""
     charges_key: str = "charges"
+    """Key for the charges in the inputs"""
     energy_key: Optional[str] = None
+    """Key for the energy in the outputs"""
     # switch_fraction: float = 0.9
     scale: Optional[float] = None
+    """Scaling factor for the energy"""
     charge_scale: Optional[float] = None
+    """Scaling factor for the charges"""
     damp_style: Optional[str] = None
+    """Damping style. Available options are: None, 'TS', 'OQDO', 'D3', 'SPOOKY', 'CP', 'KEY'"""
     damp_params: Dict = dataclasses.field(default_factory=dict)
+    """Damping parameters"""
     bscreen: float = -1.0
+    """Screening parameter. If >0, the Coulomb potential becomes a Yukawa potential and the reciprocal space is not computed"""
     trainable: bool = True
+    """Whether the parameters are trainable"""
 
-    FID: str = "COULOMB"
+    FID: ClassVar[str] = "COULOMB"
 
     @nn.compact
     def __call__(self, inputs):
@@ -145,7 +159,7 @@ class Coulomb(nn.Module):
 
         if self.bscreen > 0.0:
             # dirfact = jax.scipy.special.erfc(self.bscreen * distances)
-            dirfact = jnp.exp(-((self.bscreen * distances) ** 2))
+            dirfact = jnp.exp(-self.bscreen * distances)
         elif do_recip:
             k_points = graph["k_points"]
             bewald = graph["b_ewald"]
@@ -392,17 +406,33 @@ class Coulomb(nn.Module):
 
 
 class QeqD4(nn.Module):
-    graph_key: str = "graph"
-    trainable: bool = False
-    charges_key: str = "charges"
-    energy_key: Optional[str] = None
-    ridge: Optional[float] = None
-    chi_key: Optional[str] = None
-    c3_key: Optional[str] = None
-    c4_key: Optional[str] = None
-    total_charge_key: str = "total_charge"
+    """ QEq-D4 charge equilibration scheme
 
-    FID: str = "QEQ_D4"
+    FID : QEQ_D4
+    
+    ### Reference
+    E. Caldeweyher et al.,A generally applicable atomic-charge dependent London dispersion correction,
+    J Chem Phys. 2019 Apr 21;150(15):154122. (https://doi.org/10.1063/1.5090222)
+    """
+    graph_key: str = "graph"
+    """Key for the graph in the inputs"""
+    trainable: bool = False
+    """Whether the parameters are trainable"""
+    charges_key: str = "charges"
+    """Key for the charges in the outputs. 
+        If charges are provided in the inputs, they are not re-optimized and we only compute the energy"""
+    energy_key: Optional[str] = None
+    """Key for the energy in the outputs"""
+    chi_key: Optional[str] = None
+    """Key for additional electronegativity in the inputs"""
+    c3_key: Optional[str] = None
+    """Key for additional c3 in the inputs. Only used if charges are provided in the inputs"""
+    c4_key: Optional[str] = None
+    """Key for additional c4 in the inputs. Only used if charges are provided in the inputs"""
+    total_charge_key: str = "total_charge"
+    """Key for the total charge in the inputs"""
+
+    FID: ClassVar[str] = "QEQ_D4"
 
     @nn.compact
     def __call__(self, inputs):
@@ -600,15 +630,28 @@ class QeqD4(nn.Module):
 
 
 class ChargeCorrection(nn.Module):
-    key: str = "charges"
-    output_key: str = None
-    dq_key: str = "delta_qtot"
-    ratioeta_key: str = None
-    trainable: bool = False
-    cn_key: str = None
-    total_charge_key: str = "total_charge"
+    """Charge correction scheme
+    
+    FID: CHARGE_CORRECTION
 
-    FID: str = "CHARGE_CORRECTION"
+    Used to correct the provided charges to sum to the total charge of the system.
+    """
+    key: str = "charges"
+    """Key for the charges in the inputs"""
+    output_key: str = None
+    """Key for the corrected charges in the outputs. If None, it is the same as the input key"""
+    dq_key: str = "delta_qtot"
+    """Key for the deviation of the raw charge sum in the outputs"""
+    ratioeta_key: str = None
+    """Key for the ratio of hardness between AIM and free atom in the inputs. Used to adjust charge redistribution."""
+    trainable: bool = False
+    """Whether the parameters are trainable"""
+    cn_key: str = None
+    """Key for the coordination number in the inputs. Used to adjust charge redistribution."""
+    total_charge_key: str = "total_charge"
+    """Key for the total charge in the inputs"""
+
+    FID: ClassVar[str] = "CHARGE_CORRECTION"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -661,11 +704,20 @@ class ChargeCorrection(nn.Module):
         }
 
 class DistributeElectrons(nn.Module):
-    embedding_key: str
-    output_key: str = "charges"
-    total_charge_key: str = "total_charge"
+    """Distribute valence electrons between the atoms
 
-    FID: str = "DISTRIBUTE_ELECTRONS"
+    FID: DISTRIBUTE_ELECTRONS
+
+    Used to predict charges that sum to the total charge of the system.
+    """
+    embedding_key: str
+    """Key for the embedding in the inputs that is used to predict an 'electron affinity' weight"""
+    output_key: str = "charges"
+    """Key for the charges in the outputs"""
+    total_charge_key: str = "total_charge"
+    """Key for the total charge in the inputs"""
+
+    FID: ClassVar[str] = "DISTRIBUTE_ELECTRONS"
 
     @nn.compact
     def __call__(self, inputs) -> Any:

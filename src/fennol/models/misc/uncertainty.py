@@ -1,11 +1,10 @@
 import flax.linen as nn
-from typing import Any, Sequence, Callable, Union
+from typing import Any, Sequence, Callable, Union, ClassVar,Optional
 import jax.numpy as jnp
 import jax
 import numpy as np
 from functools import partial
 import dataclasses
-from typing import Optional, Tuple, Dict, List, Union
 from ...utils.periodic_table import PERIODIC_TABLE
 
 
@@ -23,7 +22,7 @@ class EnsembleStatistics(nn.Module):
     axis: int = -1
     shuffle_ensemble: bool = False
 
-    FID: str = "ENSEMBLE_STAT"
+    FID: ClassVar[str] = "ENSEMBLE_STAT"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -56,7 +55,7 @@ class EnsembleShift(nn.Module):
     axis: int = -1
     output_key: Optional[str] = None
 
-    FID: str = "ENSEMBLE_SHIFT"
+    FID: ClassVar[str] = "ENSEMBLE_SHIFT"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -111,7 +110,7 @@ class ConstrainEvidence(nn.Module):
     self_weight: float = 10.0
     # target_dim: Optional[int] = None
 
-    FID: str = "CONSTRAIN_EVIDENCE"
+    FID: ClassVar[str] = "CONSTRAIN_EVIDENCE"
 
     @nn.compact
     def __call__(self, inputs) -> Any:

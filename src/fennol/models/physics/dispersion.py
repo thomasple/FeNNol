@@ -2,9 +2,8 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 import numpy as np
-from typing import Any, Dict, Union, Callable, Sequence, Optional
+from typing import Any, Dict, Union, Callable, Sequence, Optional, ClassVar
 from ...utils import AtomicUnits as au
-import dataclasses
 from ...utils.periodic_table import (
     D3_ELECTRONEGATIVITIES,
     D3_HARDNESSES,
@@ -19,13 +18,28 @@ from ...utils.periodic_table import (
 
 
 class VdwOQDO(nn.Module):
-    graph_key: str = "graph"
-    include_exchange: bool = True
-    ratiovol_key: Optional[str] = None
-    energy_key: Optional[str] = None
-    damped: bool = True
+    """ Dispersion and exchange based on the Optimized Quantum Drude Oscillator model.
+    
+    FID : VDW_OQDO
 
-    FID: str  = "VDW_OQDO"
+    ### Reference
+    A. Khabibrakhmanov, D. V. Fedorov, and A. Tkatchenko, Universal Pairwise Interatomic van der Waals Potentials Based on Quantum Drude Oscillators,
+    J. Chem. Theory Comput. 2023, 19, 21, 7895–7907 (https://doi.org/10.1021/acs.jctc.3c00797)
+    
+    """
+    graph_key: str = "graph"
+    """ The key for the graph input."""
+    include_exchange: bool = True
+    """ Whether to compute the exchange part."""
+    ratiovol_key: Optional[str] = None
+    """ The key for the ratio between AIM volume and free-atom volume. 
+         If None, the volume ratio is assumed to be 1.0."""
+    energy_key: Optional[str] = None
+    """ The key for the output energy."""
+    damped: bool = True
+    """ Whether to use short-range damping."""
+
+    FID: ClassVar[str]  = "VDW_OQDO"
 
     @nn.compact
     def __call__(self, inputs):

@@ -5,7 +5,7 @@ from ...utils.spherical_harmonics import generate_spherical_harmonics, CG_SO3
 from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
-from typing import Dict, Union, Callable, Sequence, Optional
+from typing import Dict, Union, Callable, Sequence, Optional, ClassVar
 from ...utils.activations import activation_from_str
 from ..misc.nets import FullyConnectedNet
 
@@ -13,50 +13,37 @@ from ..misc.nets import FullyConnectedNet
 class NewtonNetEmbedding(nn.Module):
     """ Newtonian message passing network
 
-    Reference
-    ---------
+    ### Reference
     Haghighatlari et al., NewtonNet: a Newtonian message passing network for deep learning of interatomic potentials and forces
     https://doi.org/10.1039/D2DD00008C
 
-    Parameters
-    ----------
-    dim : int, default=128
-        The dimension of the embedding.
-    nlayers : int, default=3
-        The number of interaction layers.
-    nchannels : Optional[int], default=None
-        The number of vector channels.
-    embedding_hidden : Sequence[int], default=[128]
-        The hidden layers for the embedding networks.
-    latent_hidden : Sequence[int], default=[128]
-        The hidden layers for the latent update network.
-    activation : Union[Callable, str], default=nn.silu
-        The activation function.
-    graph_key : str, default="graph"
-        The key for the graph input.
-    embedding_key : str, default="embedding"
-        The key for the output embedding.
-    species_encoding : dict, default={}
-        The species encoding parameters.
-    radial_basis : dict, default={} 
-        The radial basis parameters.
-    keep_all_layers : bool, default=False
-        Whether to keep embeddings from each layer in the output.
     """
+    
     _graphs_properties: Dict
     dim: int = 128
+    """The dimension of the embedding."""
     nlayers: int = 3
+    """The number of interaction layers."""
     nchannels: Optional[int] = None
+    """The number of vector channels. If None, it is set to dim."""
     embedding_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
+    """The hidden layers for the embedding networks."""
     latent_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
-    activation: Union[Callable, str] = nn.silu
+    """The hidden layers for the latent update network."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function."""
     graph_key: str = "graph"
+    """The key for the graph input."""
     embedding_key: str = "embedding"
+    """The key for the output embedding."""
     species_encoding: dict = dataclasses.field(default_factory=dict)
+    """The species encoding parameters. See `fennol.models.misc.encodings.SpeciesEncoding`."""
     radial_basis: dict = dataclasses.field(default_factory=dict)
+    """The radial basis parameters. See `fennol.models.misc.encodings.RadialBasis`."""
     keep_all_layers: bool = False
+    """Whether to keep embeddings from each layer in the output."""
 
-    FID: str = "NEWTONNET"
+    FID: ClassVar[str] = "NEWTONNET"
 
 
     @nn.compact

@@ -5,7 +5,7 @@ from ...utils.spherical_harmonics import generate_spherical_harmonics, CG_SO3
 from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
-from typing import Dict, Union, Callable, Sequence, Optional
+from typing import Dict, Union, Callable, Sequence, Optional, ClassVar
 from ...utils.initializers import initializer_from_str, scaled_orthogonal
 from ..misc.nets import  ResMLP
 
@@ -15,51 +15,40 @@ class SpookyNetEmbedding(nn.Module):
 
     FID : SPOOKYNET
 
-    Warning : non-local attention interaction is not yet implemented !
-
-    Reference
-    ---------
+    ### Reference
     Unke, O.T., Chmiela, S., Gastegger, M. et al. SpookyNet: Learning force fields with electronic degrees of freedom and nonlocal effects. Nat Commun 12, 7273 (2021). https://doi.org/10.1038/s41467-021-27504-0
 
-    Parameters
-    ----------
-    dim : int, default=128
-        The dimension of the embedding.
-    nlayers : int, default=3
-        The number of interaction layers.
-    graph_key : str, default="graph"
-        The key for the graph input.
-    embedding_key : str, default="embedding"
-        The key for the embedding output.
-    species_encoding : dict, default={"encoding": "electronic_structure"}
-        The species encoding parameters.
-    radial_basis : dict, default={"basis": "spooky"}
-        The radial basis parameters.
-    kernel_init : Union[Callable, str], default=scaled_orthogonal(scale=1.0, mode="fan_avg")
-        The kernel initializer for Dense operations.
-    use_spin_encoding : bool, default=True
-        Whether to use spin encoding.
-    use_charge_encoding : bool, default=True
-        Whether to use charge encoding.
-
+    
+    ### Warning
+    non-local attention interaction is not yet implemented !
 
     """
 
     _graphs_properties: Dict
     dim: int = 128
+    """ The dimension of the embedding."""
     nlayers: int = 3
+    """ The number of interaction layers."""
     graph_key: str = "graph"
+    """ The key for the graph input."""
     embedding_key: str = "embedding"
+    """ The key for the embedding output."""
     species_encoding: dict = dataclasses.field(
         default_factory=lambda: {"encoding": "electronic_structure"}
     )
+    """ The species encoding parameters. See `fennol.models.misc.encodings.SpeciesEncoding`. """
     radial_basis: dict = dataclasses.field(default_factory=lambda: {"basis": "spooky"})
-    kernel_init: Union[Callable, str] = scaled_orthogonal(scale=1.0, mode="fan_avg")
+    """ The radial basis parameters. See `fennol.models.misc.encodings.RadialBasis`. """
+    kernel_init: Union[Callable, str] = "scaled_orthogonal(scale=1.0, mode='fan_avg')"
+    """ The kernel initializer for Dense operations."""
     use_spin_encoding: bool = True
+    """ Whether to use spin encoding."""
     use_charge_encoding: bool = True
+    """ Whether to use charge encoding."""
     total_charge_key: str = "total_charge"
+    """ The key for the total charge input."""
 
-    FID: str = "SPOOKYNET"
+    FID: ClassVar[str] = "SPOOKYNET"
 
     @nn.compact
     def __call__(self, inputs):

@@ -7,46 +7,28 @@ Created by C. Cattin 2024
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
-from typing import Optional
+from typing import Optional, ClassVar
 
 from fennol.utils import AtomicUnits as Au
 
 
 class Polarisation(nn.Module):
-    """Polarisation model for FENNOL.
-
-    Attributes
-    ----------
-    name : str
-        Name of the polarisation model.
-    energy_key : str
-        Key of the energy in the input.
-    graph_key : str
-        Key of the graph in the input.
-    polarisability_key : str
-        Key of the polarisability in the input.
-    charges_key : str
-        Key of the charges in the input.
-    electric_field_key : str
-        Key of the electric field in the input.
-    induce_dipole_key : str
-        Key of the induced dipole in the input.
-    damping_param_mutual : float
-        Damping parameter for mutual polarisation.
-    damping_param_field : float
-        Damping parameter for the electric field.
-    """
+    """Polarisation model with Thole damping scheme."""
 
     energy_key: Optional[str] = None
+    """Key of the energy in the outputs."""
     graph_key: str = 'graph'
+    """Key of the graph in the inputs."""
     polarisability_key: str = 'polarisability'
-    charges_key: str = 'charges'
+    """Key of the polarisability in the inputs."""
     electric_field_key: str = 'electric_field'
+    """Key of the electric field in the inputs."""
     induce_dipole_key: str = 'induce_dipole'
+    """Key of the induced dipole in the outputs."""
     damping_param_mutual: float = 0.39
-    damping_param_field: float = 0.7
+    """Damping parameter for mutual polarisation."""
 
-    FID: str = 'POLARISATION'
+    FID: ClassVar[str] = 'POLARISATION'
 
     @nn.compact
     def __call__(self, inputs):

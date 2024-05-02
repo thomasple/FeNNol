@@ -1,10 +1,8 @@
 import flax.linen as nn
-from typing import Any, Sequence, Callable, Union
+from typing import Any, Optional, ClassVar
 import jax.numpy as jnp
 import jax
 import numpy as np
-from functools import partial
-from typing import Optional, Tuple
 from ...utils.spherical_harmonics import CG_SO3, spherical_to_cartesian_tensor
 
 ### e3nn version
@@ -12,18 +10,25 @@ try:
     import e3nn_jax as e3nn
     E3NN_AVAILABLE = True
     E3NN_EXCEPTION = None
+    Irreps = e3nn.Irreps
 except Exception as e:
     E3NN_AVAILABLE = False
     E3NN_EXCEPTION = e
+    class Irreps(tuple):
+        pass
 
 
 class FullTensorProduct(nn.Module):
     """Tensor product of two spherical harmonics"""
 
     lmax1: int
+    """The maximum order of the first spherical tensor."""
     lmax2: int
+    """The maximum order of the second spherical tensor."""
     lmax_out: Optional[int] = None
+    """The maximum order of the output spherical tensor. If None, it is the sum of lmax1 and lmax2."""
     ignore_parity: bool = False
+    """Whether to ignore the parity of the spherical tensors."""
 
     @nn.compact
     def __call__(self, x1, x2) -> None:
@@ -92,10 +97,15 @@ class FilteredTensorProduct(nn.Module):
     """Tensor product of two spherical harmonics filtered to give back the irreps of the first input"""
 
     lmax1: int
+    """The maximum order of the first spherical tensor."""
     lmax2: int
+    """The maximum order of the second spherical tensor."""
     lmax_out: Optional[int] = None
+    """The maximum order of the output spherical tensor. If None, it is the same as lmax1."""
     ignore_parity: bool = False
+    """Whether to ignore the parity of the spherical tensors."""
     weights_by_channel: bool = False
+    """Whether to use different path weights for each channel."""
 
     @nn.compact
     def __call__(self, x1, x2) -> None:
@@ -151,14 +161,21 @@ class FilteredTensorProduct(nn.Module):
 
 
 class ChannelMixing(nn.Module):
+    """Linear mixing of input channels."""
     lmax: int
+    """The maximum order of the spherical tensor."""
     nchannels: int
+    """The number of input channels."""
     nchannels_out: Optional[int] = None
+    """The number of output channels. If None, it is the same as nchannels."""
     input_key: Optional[str] = None
+    """The key in the input dictionary that corresponds to the input tensor."""
     output_key: Optional[str] = None
+    """The key in the output dictionary where the computed tensor will be stored."""
     squeeze: bool = False
+    """Whether to squeeze the output tensor to remove the channel dimension."""
 
-    FID: str = "CHANNEL_MIXING"
+    FID: ClassVar[str] = "CHANNEL_MIXING"
 
     @nn.compact
     def __call__(self, inputs):
@@ -189,14 +206,21 @@ class ChannelMixing(nn.Module):
 
 
 class ChannelMixingE3(nn.Module):
+    """Linear mixing of input channels with different weight for each angular momentum."""
     lmax: int
+    """The maximum order of the spherical tensor."""
     nchannels: int
+    """The number of input channels."""
     nchannels_out: Optional[int] = None
+    """The number of output channels. If None, it is the same as nchannels."""
     input_key: Optional[str] = None
+    """The key in the input dictionary that corresponds to the input tensor."""
     output_key: Optional[str] = None
+    """The key in the output dictionary where the computed tensor will be stored."""
     squeeze: bool = False
+    """Whether to squeeze the output tensor to remove the channel dimension."""
 
-    FID: str = "CHANNEL_MIXING_E3"
+    FID: ClassVar[str] = "CHANNEL_MIXING_E3"
 
     @nn.compact
     def __call__(self, inputs):
@@ -232,11 +256,16 @@ class ChannelMixingE3(nn.Module):
 
 
 class SphericalToCartesian(nn.Module):
+    """Convert spherical tensors to cartesian tensors."""
+    
     lmax: int
+    """The maximum order of the spherical tensor. Only implemented for lmax up to 2."""
     input_key: Optional[str] = None
+    """The key in the input dictionary that corresponds to the input tensor."""
     output_key: Optional[str] = None
+    """The key in the output dictionary where the computed tensor will be stored."""
 
-    FID: str = "SPHERICAL_TO_CARTESIAN"
+    FID: ClassVar[str] = "SPHERICAL_TO_CARTESIAN"
 
     @nn.compact
     def __call__(self, inputs) -> Any:

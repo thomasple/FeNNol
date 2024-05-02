@@ -5,7 +5,7 @@ from ...utils.spherical_harmonics import generate_spherical_harmonics
 from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
-from typing import Any, Dict, List, Union, Callable, Tuple, Sequence, Optional
+from typing import Any, Dict, List, Union, Callable, Tuple, Sequence, Optional, ClassVar
 from ..misc.nets import FullyConnectedNet
 from ..misc.e3 import FilteredTensorProduct, ChannelMixingE3, ChannelMixing
 
@@ -19,62 +19,44 @@ class MiniMaceEmbedding(nn.Module):
     Batatia et al., MACE: Higher Order Equivariant Message Passing Neural Networks for Fast and Accurate Force Fields
     https://doi.org/10.48550/arXiv.2206.07697
 
-    It is designed to neglect the most costly operations (such as pairwise tensor products)
+    It is designed to neglect the most costly operations (such as edge-wise tensor products)
     and filter the results at each atomic tensor products to control the number of tensors.
-
-    Parameters
-    ----------
-    dim : int, default=128
-        The dimension of the embedding.
-    nchannels : int, default=16
-        The number of tensor channels.
-    message_dim : int, default=16
-        The dimension of the message formed from the current embedding.
-    nlayers : int, default=2
-        The number of interaction layers.
-    ntp : int, default=2
-        The number of tensor products per layer. Related to body-order in MACE.
-    lmax : int, default=2
-        The maximum angular momentum of spherical tensors.
-    embedding_hidden : Sequence[int], default=[]
-        The hidden layers for the species embedding network.
-    latent_hidden : Sequence[int], default=[128]
-        The hidden layers for the latent update network.
-    activation : Union[Callable, str], default=nn.silu
-        The activation function.
-    graph_key : str, default="graph"
-        The key for the graph input.
-    embedding_key : str, default="embedding"
-        The key for the embedding output.
-    tensor_embedding_key : str, default="tensor_embedding"
-        The key for the tensor embedding output.
-    species_encoding : dict, default={}
-        The species encoding parameters.
-    radial_basis : dict, default={}
-        The radial basis parameters.
-    ignore_parity : bool, default=True
-        Whether to ignore parity in the tensor products 
-        (i.e. take all paths that produce a certain l, irrespective of its parity).
+    It may not have the same performance as the full MACE embedding but should be faster.
         
     """
     _graphs_properties: Dict
     dim: int = 128
+    """The dimension of the embedding."""
     nchannels: int = 16
+    """The number of tensor channels."""
     message_dim: int = 16
+    """The dimension of the message formed from the current embedding."""
     nlayers: int = 2
+    """The number of interaction layers."""
     ntp: int = 2
+    """The number of tensor products per layer."""
     lmax: int = 2
+    """The maximum angular momentum of spherical tensors."""
     embedding_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [])
+    """The hidden layers for the species embedding network."""
     latent_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
-    activation: Union[Callable, str] = nn.silu
+    """The hidden layers for the latent update network."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function."""
     graph_key: str = "graph"
+    """The key for the graph input."""
     embedding_key: str = "embedding"
+    """The key for the embedding output."""
     tensor_embedding_key: str = "tensor_embedding"
+    """The key for the tensor embedding output."""
     species_encoding: dict = dataclasses.field(default_factory=dict)
+    """The species encoding parameters. See `fennol.models.misc.encodings.SpeciesEncoding`. """
     radial_basis: dict = dataclasses.field(default_factory=dict)
+    """The radial basis parameters. See `fennol.models.misc.encodings.RadialBasis`. """
     ignore_parity: bool = True
+    """Whether to ignore parity of irreps in the tensor products"""
 
-    FID: str = "MINIMACE"
+    FID: ClassVar[str] = "MINIMACE"
 
 
     @nn.compact

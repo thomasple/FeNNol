@@ -25,21 +25,13 @@ class FENNIX:
     """
     Static wrapper for FENNIX models
 
-    The underlying model is a flax.nn.Sequential built from the `modules` dictionary
-    which references registered modules in `modules.MODULES` and provides the parameters for initialization.
+    The underlying model is a `fennol.models.modules.FENNIXModules` built from the `modules` dictionary
+    which references registered modules in `fennol.models.modules.MODULES` and provides the parameters for initialization.
 
     Since the model is static and contains variables, it must be initialized right away with either
-    `example_data` or `variables`. If `variables` is provided, it is used directly. If `example_data`
+    `example_data`, `variables` or `rng_key`. If `variables` is provided, it is used directly. If `example_data`
     is provided, the model is initialized with `example_data` and the resulting variables are stored
-    in the wrapper.
-
-    methods:
-        * __call__  : calls the jitted apply method of the underlying model and sums the energy terms
-                        in `energy_terms` provided in the constructor.
-                        It returns the total energy (of each subsystem in the batch) and the output dict.
-
-        * get_model : returns the underlying model and variables (useful for training)
-
+    in the wrapper. If only `rng_key` is provided, the model is initialized with a dummy system and the resulting.
     """
 
     cutoff: float | None
@@ -69,6 +61,33 @@ class FENNIX:
         graph_config: Dict = {},
         **kwargs,
     ) -> None:
+        """ Initialize the FENNIX model
+        
+        Arguments:
+        ----------
+        cutoff: float
+            The cutoff radius for the model
+        modules: OrderedDict
+            The dictionary defining the sequence of FeNNol modules and their parameters.
+        preprocessing: OrderedDict
+            The dictionary defining the sequence of preprocessing modules and their parameters.
+        example_data: dict
+            Example data to initialize the model. If not provided, a dummy system is generated.
+        rng_key: jax.random.PRNGKey
+            The random key to initialize the model. If not provided, jax.random.PRNGKey(0) is used (should be avoided).
+        variables: dict
+            The variables of the model (i.e. weights, biases and all other tunable parameters). 
+            If not provided, the variables are initialized (usually at random)
+        energy_terms: Sequence[str]
+            The energy terms in the model output that will be summed to compute the total energy.
+            If None, the total energy is always zero (useful for non-PES models).
+        use_atom_padding: bool
+            If True, the model will use atom padding for the input data. 
+            This is useful when one plans to frequently change the number of atoms in the system (for example during training).
+        graph_config: dict
+            Edit the graph configuration. Mostly used to change a long-range cutoff as a function of a simulation box size.
+        
+        """
         self._input_args = {
             "cutoff": cutoff,
             "modules": OrderedDict(modules),
@@ -151,6 +170,7 @@ class FENNIX:
         self._initializing = False
 
     def set_energy_terms(self, energy_terms: Sequence[str] | None, jit=True) -> None:
+        """ Set the energy terms to be computed by the model and prepare the energy and force functions."""
         object.__setattr__(self, "energy_terms", energy_terms)
         if energy_terms is None:
             def total_energy(variables, data):
@@ -367,13 +387,16 @@ class FENNIX:
             output = atom_unpadding(output)
         return output["total_energy"], output["forces"], output["virial_tensor"], output
 
-    def remove_atom_padding(self, inputs):
-        return atom_unpadding(inputs)
+    def remove_atom_padding(self, output):
+        """ remove atom padding from the output """
+        return atom_unpadding(output)
 
     def get_model(self) -> Tuple[FENNIXModules, Dict]:
+        """ return the model and its variables"""
         return self.modules, self.variables
 
     def get_preprocessing(self) -> Tuple[PreprocessingChain, Dict]:
+        """ return the preprocessing chain and its state"""
         return self.preprocessing, self.preproc_state
 
     def __setattr__(self, __name: str, __value: Any) -> None:
@@ -432,6 +455,7 @@ class FENNIX:
     def summarize(
         self, rng_key: jax.random.PRNGKey = None, example_data=None, **kwargs
     ) -> str:
+        """ Summarize the model architecture and parameters """
         if rng_key is None:
             head = "Summarizing with example data:\n"
             rng_key = jax.random.PRNGKey(0)
@@ -444,6 +468,7 @@ class FENNIX:
         return head + nn.tabulate(self.modules, rng_key, **kwargs)(inputs)
 
     def to_dict(self):
+        """ return a dictionary representation of the model"""
         return {
             **self._input_args,
             "energy_terms": self.energy_terms,
@@ -451,6 +476,7 @@ class FENNIX:
         }
 
     def save(self, filename):
+        """ save the model to a file"""
         state_dict = self.to_dict()
         state_dict["preprocessing"] = [
             [k, v] for k, v in state_dict["preprocessing"].items()
@@ -466,6 +492,7 @@ class FENNIX:
         use_atom_padding=False,
         graph_config={},
     ):
+        """ load a model from a file"""
         with open(filename, "rb") as f:
             state_dict = serialization.msgpack_restore(f.read())
         state_dict["preprocessing"] = {k: v for k, v in state_dict["preprocessing"]}

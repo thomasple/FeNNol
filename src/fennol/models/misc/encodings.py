@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
-from typing import Optional, Union, List, Sequence
+from typing import Optional, Union, List, Sequence, ClassVar
 import math
 import numpy as np
 from ...utils import AtomicUnits as au
@@ -18,27 +18,26 @@ from ...utils.periodic_table import (
 
 
 class SpeciesEncoding(nn.Module):
-    """
-    A module that encodes species information.
-    For now, the only encoding is a random vector for each species.
+    """ A module that encodes chemical species information."""
 
-    Args:
-        dim (int): The dimensionality of the output encoding.
-        zmax (int): The maximum atomic number to encode.
-        output_key (Optional[str]): The key to use for the output in the returned dictionary.
-
-    Returns:
-        jax.Array or dict: The encoded species information.
-    """
-
-    dim: int = 16
-    zmax: int = 50
-    output_key: Optional[str] = None
     encoding: str = "random"
+    """ The encoding to use. Can be one of "one_hot", "occupation", "electronic_structure", "properties", "sjs_coordinates", "random". 
+        Multiple encodings can be concatenated using the "+" separator.
+    """
+    dim: int = 16
+    """ The dimension of the encoding if not fixed by design."""
+    zmax: int = 50
+    """ The maximum atomic number to encode."""
+    output_key: Optional[str] = None
+    """ The key to use for the output in the returned dictionary."""
+    
     species_order: None | str | Sequence[str] = None
+    """ The order of the species to use for the encoding. Only used for "onehot" encoding.
+         If None, we encode all elements up to `zmax`."""
     trainable: bool = False
+    """ Whether the encoding is trainable or fixed. Does not apply to "random" encoding which is always trainable."""
 
-    FID: str = "SPECIES_ENCODING"
+    FID: ClassVar[str] = "SPECIES_ENCODING"
 
 
     @nn.compact
@@ -159,34 +158,28 @@ class SpeciesEncoding(nn.Module):
 
 
 class RadialBasis(nn.Module):
-    """
-    A module that computes a radial embedding of distances.
-    For now, the only embedding is the Bessel embedding used for example in Allegro.
-
-    Args:
-        end (float): The maximum distance to consider.
-        start (float, optional): The minimum distance to consider (default: 0.0).
-        dim (int, optional): The number of dimensions of the embedding (default: 8).
-        graph_key (str, optional): The key to use to extract the distances from a graph input (default: None).
-            If None, the input is either a graph (dict) or a JAX array containing distances.
-        output_key (str, optional): The key to use to store the embedding in the output dictionary (default: None).
-            If None, the embedding directly returned.
-
-    Returns:
-        jax.Array or dict: The radial embedding of the distances.
-    """
+    """Computes a radial encoding of distances."""
 
     end: float
+    """ The maximum distance to consider."""
     start: float = 0.0
+    """ The minimum distance to consider."""
     dim: int = 8
+    """ The dimension of the basis."""
     graph_key: Optional[str] = None
+    """ The key of the graph in the inputs."""
     output_key: Optional[str] = None
+    """ The key to use for the output in the returned dictionary."""
     basis: str = "bessel"
+    """ The basis to use. Can be one of "bessel", "gaussian", "gaussian_rinv", "fourier", "spooky"."""
     trainable: bool = False
+    """ Whether the basis parameters are trainable or fixed."""
     enforce_positive: bool = False
+    """ Whether to enforce distance-start to be positive"""
     gamma: float = 1./(2*au.BOHR)
+    """ The gamma parameter for the "spooky" basis."""
 
-    FID: str = "RADIAL_BASIS"
+    FID: ClassVar[str] = "RADIAL_BASIS"
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:

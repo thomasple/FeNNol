@@ -5,7 +5,7 @@ from ...utils.spherical_harmonics import generate_spherical_harmonics, CG_SO3
 from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
-from typing import Dict, Union, Callable, Sequence, Optional
+from typing import Dict, Union, Callable, Sequence, Optional, ClassVar
 from ...utils.activations import activation_from_str, tssr3
 from ..misc.nets import FullyConnectedNet
 
@@ -13,53 +13,39 @@ from ..misc.nets import FullyConnectedNet
 class PAINNEmbedding(nn.Module):
     """polarizable atom interaction neural network
     
-    Reference
-    ---------
+    ### Reference
     K.T. Schütt. P.-J. Kindermans, H. E. Sauceda, S. Chmiela, A. Tkatchenko, K.-R. Müller. SchNet - a deep learning architecture for molecules and materials. The Journal of Chemical Physics 148(24), 241722 (2018) 
     https://doi.org/10.1063/1.5019779
 
-    Parameters
-    ----------
-    dim : int, default=128
-        The dimension of the embedding.
-    nlayers : int, default=3
-        The number of interaction layers.
-    nchannels : Optional[int], default=None
-        The number of vector channels. If None, it is set to dim.
-    message_hidden : Sequence[int], default=[128]
-        The hidden layers for the message network.
-    update_hidden : Sequence[int], default=[128]
-        The hidden layers for the update network.
-    activation : Union[Callable, str], default=nn.silu
-        The activation function.
-    graph_key : str, default="graph"
-        The key for the graph input.
-    embedding_key : str, default="embedding"
-        The key for the embedding output.
-    tensor_embedding_key : str, default="embedding_vectors"
-        The key for the tensor embedding output.
-    species_encoding : dict, default={}
-        The species encoding parameters.
-    radial_basis : dict, default={}
-        The radial basis function parameters.
-    keep_all_layers : bool, default=False
-        Whether to keep the embedding from each layer in the output.
     """
+
     _graphs_properties: Dict
     dim: int = 128
+    """ The dimension of the embedding. """
     nlayers: int = 3
+    """ The number of interaction layers. """
     nchannels: Optional[int] = None
+    """ The number of equivariant channels. If None, it is set to dim. """
     message_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
+    """ The hidden layers for the message network."""
     update_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
-    activation: Union[Callable, str] = nn.silu
+    """ The hidden layers for the update network."""
+    activation: Union[Callable, str] = "silu"
+    """ The activation function."""
     graph_key: str = "graph"
+    """ The key for the graph input."""
     embedding_key: str = "embedding"
+    """ The key for the embedding output."""
     tensor_embedding_key: str = "embedding_vectors"
+    """ The key for the tensor embedding output."""
     species_encoding: dict = dataclasses.field(default_factory=dict)
+    """ The species encoding parameters. See `fennol.models.misc.encodings.SpeciesEncoding`."""
     radial_basis: dict = dataclasses.field(default_factory=dict)
+    """ The radial basis function parameters. See `fennol.models.misc.encodings.RadialBasis`."""
     keep_all_layers: bool = False
+    """ Whether to keep the embedding from each layer in the output."""
 
-    FID: str = "PAINN"
+    FID: ClassVar[str] = "PAINN"
 
     @nn.compact
     def __call__(self, inputs):

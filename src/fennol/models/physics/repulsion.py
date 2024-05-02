@@ -2,17 +2,28 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 import numpy as np
-from typing import Any, Dict, Union, Callable, Sequence, Optional
+from typing import Any, Dict, Union, Callable, Sequence, Optional, ClassVar
 from ...utils import AtomicUnits as au
 
 
 class RepulsionZBL(nn.Module):
+    """Repulsion energy based on the Ziegler-Biersack-Littmark potential
+
+    FID : REPULSION_ZBL
+
+    ### Reference
+    J. F. Ziegler & J. P. Biersack , The Stopping and Range of Ions in Matter
+    
+    """
     _graphs_properties: Dict
     graph_key: str = "graph"
+    """The key for the graph input."""
     energy_key: Optional[str] = None
+    """The key for the output energy."""
     trainable: bool = True
+    """Whether the parameters are trainable."""
 
-    FID: str  = "REPULSION_ZBL"
+    FID: ClassVar[str]  = "REPULSION_ZBL"
 
 
     @nn.compact

@@ -25,32 +25,22 @@ class GraphGenerator:
 
     For now, we generate all pairs of atoms and filter based on cutoff.
     If a `nblist_skin` is present in the state, we generate a second graph with a larger cutoff that includes all pairs within the cutoff+skin. This graph is then reused by the `update_skin` method to update the original graph without recomputing the full nblist.
-
-    Parameters
-    ----------
-    cutoff : float
-        Cutoff distance for the graph.
-    graph_key : str, default="graph"
-        Key of the graph in the outputs.
-    switch_params : dict, default={}
-        Parameters for the switching function.
-    k_space : bool, default=False
-        Generate k-space information for the graph.
-    kmax : int, default=30
-        Maximum number of k-points to consider.
-    kthr : float, default=1e-6
-        Threshold for k-point filtering.
-    mult_size : float, default=1.05
-        Multiplicative factor for resizing the nblist.
     """
 
     cutoff: float
+    """Cutoff distance for the graph."""
     graph_key: str = "graph"
+    """Key of the graph in the outputs."""
     switch_params: dict = dataclasses.field(default_factory=dict, hash=False)
+    """Parameters for the switching function. See `fennol.models.misc.misc.SwitchFunction`."""
     kmax: int = 30
+    """Maximum number of k-points to consider."""
     kthr: float = 1e-6
+    """Threshold for k-point filtering."""
     k_space: bool = False
+    """Whether to generate k-space information for the graph."""
     mult_size: float = 1.05
+    """Multiplicative factor for resizing the nblist."""
     # covalent_cutoff: bool = False
 
     def init(self):
@@ -562,19 +552,14 @@ class GraphProcessor(nn.Module):
 
     This module is automatically added to a FENNIX model when a GraphGenerator is used.
 
-    Parameters
-    ----------
-    cutoff : float
-        Cutoff distance for the graph.
-    graph_key : str
-        Key of the graph in the inputs.
-    switch_params : dict, default={}
-        Parameters for the switching function.
     """
 
     cutoff: float
+    """Cutoff distance for the graph."""
     graph_key: str = "graph"
+    """Key of the graph in the outputs."""
     switch_params: dict = dataclasses.field(default_factory=dict)
+    """Parameters for the switching function. See `fennol.models.misc.misc.SwitchFunction`."""
 
     @nn.compact
     def __call__(self, inputs: Union[dict, Tuple[jax.Array, dict]]):
@@ -612,39 +597,26 @@ class GraphProcessor(nn.Module):
 
 @dataclasses.dataclass(frozen=True)
 class GraphFilter:
-    """Filter a graph based on a cutoff distance
-
-    Parameters
-    ----------
-    cutoff : float
-        Cutoff distance for the filtering.
-    parent_graph : str
-        Key of the parent graph in the inputs.
-    graph_key : str
-        Key of the filtered graph in the outputs.
-    remove_hydrogens : bool, default=False
-        Remove hydrogen atoms from the graph.
-    switch_params : dict, default={}
-        Parameters for the switching function.
-    k_space : bool, default=False
-        Generate k-space information for the graph.
-    kmax : int, default=30
-        Maximum number of k-points to consider.
-    kthr : float, default=1e-6
-        Threshold for k-point filtering.
-    mult_size : float, default=1.05
-        Multiplicative factor for resizing the nblist.
-    """
+    """Filter a graph based on a cutoff distance"""
 
     cutoff: float
+    """Cutoff distance for the filtering."""
     parent_graph: str
+    """Key of the parent graph in the inputs."""
     graph_key: str
+    """Key of the filtered graph in the outputs."""
     remove_hydrogens: int = False
+    """Remove edges where the source is a hydrogen atom."""
     switch_params: FrozenDict = dataclasses.field(default_factory=FrozenDict)
+    """Parameters for the switching function. See `fennol.models.misc.misc.SwitchFunction`."""
     k_space: bool = False
+    """Generate k-space information for the graph."""
     kmax: int = 30
+    """Maximum number of k-points to consider."""
     kthr: float = 1e-6
+    """Threshold for k-point filtering."""
     mult_size: float = 1.05
+    """Multiplicative factor for resizing the nblist."""
 
     def init(self):
         return FrozenDict(
@@ -804,24 +776,16 @@ class GraphFilterProcessor(nn.Module):
     """Filter processing for a pre-generated graph
 
     This module is automatically added to a FENNIX model when a GraphFilter is used.
-
-    Parameters
-    ----------
-    cutoff : float
-        Cutoff distance for the filtering.
-    graph_key : str
-        Key of the filtered graph in the inputs.
-    parent_graph : str
-        Key of the parent graph in the inputs.
-    switch_params : dict, default={}
-        Parameters for the switching function.
-
     """
 
     cutoff: float
+    """Cutoff distance for the filtering."""
     graph_key: str
+    """Key of the filtered graph in the inputs."""
     parent_graph: str
+    """Key of the parent graph in the inputs."""
     switch_params: dict = dataclasses.field(default_factory=dict)
+    """Parameters for the switching function. See `fennol.models.misc.misc.SwitchFunction`."""
 
     @nn.compact
     def __call__(self, inputs: Union[dict, Tuple[jax.Array, dict]]):
@@ -863,21 +827,14 @@ class GraphFilterProcessor(nn.Module):
 
 @dataclasses.dataclass(frozen=True)
 class GraphAngularExtension:
-    """Add angles list to a graph
-
-    Parameters
-    ----------
-    mult_size : float, default=1.05
-        Multiplicative factor for resizing the nblist.
-    add_neigh : int, default=5
-        Additional neighbors to add to the nblist when resizing.
-    graph_key : str, default="graph"
-        Key of the graph in the inputs.
-    """
+    """Add angles list to a graph"""
 
     mult_size: float = 1.05
+    """Multiplicative factor for resizing the nblist."""
     add_neigh: int = 5
+    """Additional neighbors to add to the nblist when resizing."""
     graph_key: str = "graph"
+    """Key of the graph in the inputs."""
 
     def init(self):
         return FrozenDict(
@@ -1102,13 +1059,10 @@ class GraphAngleProcessor(nn.Module):
 
     This module is automatically added to a FENNIX model when a GraphAngularExtension is used.
 
-    Parameters
-    ----------
-    graph_key : str
-        Key of the graph in the inputs.
     """
 
     graph_key: str
+    """Key of the graph in the inputs."""
 
     @nn.compact
     def __call__(self, inputs: Union[dict, Tuple[jax.Array, dict]]):
@@ -1144,17 +1098,14 @@ class SpeciesIndexer:
     If `species_order` is specified, the output will be a dense array with size (len(species_order), max_size) that can directly index atomic arrays.
     If `species_order` is None, the output will be a dictionary with species as keys and an index to filter atomic arrays for that species as values.
 
-    Parameters
-    ----------
-    output_key : str, default="species_index"
-        Key for the output dictionary.
-    species_order : str, default=None
-        Comma separated list of species in the order they should be indexed.
     """
 
     output_key: str = "species_index"
+    """Key for the output dictionary."""
     species_order: Optional[str] = None
+    """Comma separated list of species in the order they should be indexed."""
     add_atoms: int = 0
+    """Additional atoms to add to the sizes."""
 
     def init(self):
         return FrozenDict(
@@ -1239,7 +1190,9 @@ class SpeciesIndexer:
 
 @dataclasses.dataclass(frozen=True)
 class AtomPadding:
+    """Pad atomic arrays to a fixed size."""
     mult_size: float = 1.2
+    """Multiplicative factor for resizing the atomic arrays."""
 
     def init(self):
         return {"prev_nat": 0}
@@ -1295,6 +1248,7 @@ class AtomPadding:
 
 
 def atom_unpadding(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove padding from atomic arrays."""
     if "true_atoms" not in inputs:
         return inputs
 
@@ -1324,6 +1278,7 @@ def atom_unpadding(inputs: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def check_input(inputs):
+    """Check the input dictionary for required keys and types."""
     assert "species" in inputs, "species must be provided"
     assert "coordinates" in inputs, "coordinates must be provided"
     species = inputs["species"].astype(np.int32)
@@ -1354,6 +1309,7 @@ def check_input(inputs):
 
 
 def convert_to_jax(data):
+    """Convert a numpy arrays to jax arrays in a pytree."""
     def convert(x):
         if isinstance(x, np.ndarray):
             # if x.dtype == np.float64:
@@ -1365,15 +1321,20 @@ def convert_to_jax(data):
 
 
 class JaxConverter(nn.Module):
+    """Convert numpy arrays to jax arrays in a pytree."""
     def __call__(self, data):
         return convert_to_jax(data)
 
 
 @dataclasses.dataclass(frozen=True)
 class PreprocessingChain:
+    """Chain of preprocessing layers."""
     layers: Tuple[Callable[..., Dict[str, Any]]]
+    """Preprocessing layers."""
     use_atom_padding: bool = False
+    """Add an AtomPadding layer at the beginning of the chain."""
     atom_padder: AtomPadding = AtomPadding()
+    """AtomPadding layer."""
 
     def __post_init__(self):
         if not isinstance(self.layers, Sequence):

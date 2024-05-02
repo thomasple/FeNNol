@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 import numpy as np
-from typing import Any, Dict, Union, Callable, Sequence, Optional
+from typing import Any, Dict, Union, Callable, Sequence, Optional, ClassVar
 from ...utils import AtomicUnits as au
 import dataclasses
 from ...utils.periodic_table import (
@@ -18,16 +18,24 @@ from ...utils.periodic_table import (
 
 
 class CND4(nn.Module):
+    """ Coordination number as defined in D4 dispersion correction
+    
+    FID : CN_D4
+    """
     graph_key: str = "graph"
+    """ The key for the graph input."""
     output_key: Optional[str] = None
+    """ The key for the output."""
     k0: float = 7.5
     k1: float = 4.1
     k2: float = 19.09
     k3: float = 254.56
     electronegativity_factor: bool = False
+    """ Whether to include electronegativity factor."""
     trainable: bool = False
+    """ Whether the parameters are trainable."""
 
-    FID: str  = "CN_D4"
+    FID: ClassVar[str]  = "CN_D4"
 
     @nn.compact
     def __call__(self, inputs):
@@ -74,12 +82,21 @@ class CND4(nn.Module):
 
 
 class SumSwitch(nn.Module):
-    graph_key: str = "graph"
-    output_key: Optional[str] = None
-    pow: float = 1.0
-    trainable: bool = False
+    """Sum (a power of) the switch values for each neighbor.
+    
+    FID : SUM_SWITCH
 
-    FID: str  = "SUM_SWITCH"
+    """
+    graph_key: str = "graph"
+    """ The key for the graph input."""
+    output_key: Optional[str] = None
+    """ The key for the output."""
+    pow: float = 1.0
+    """ The power to raise the switch values to."""
+    trainable: bool = False
+    """ Whether the pow parameter is trainable."""
+
+    FID: ClassVar[str]  = "SUM_SWITCH"
 
     @nn.compact
     def __call__(self, inputs):
@@ -102,6 +119,7 @@ class SumSwitch(nn.Module):
 
 
 class CNShift(nn.Module):
+    
     cn_key: str
     output_key: Optional[str] = None
     kappa_key: Optional[str] = None
@@ -110,7 +128,7 @@ class CNShift(nn.Module):
     enforce_positive: bool = False
     cn_pow: float = 0.5
 
-    FID: str  = "CN_SHIFT"
+    FID: ClassVar[str]  = "CN_SHIFT"
 
 
     @nn.compact
@@ -154,7 +172,7 @@ class CNStore(nn.Module):
     output_dim: int = 1
     squeeze: bool = True
 
-    FID: str  = "CN_STORE"
+    FID: ClassVar[str]  = "CN_STORE"
 
     @nn.compact
     def __call__(self, inputs):

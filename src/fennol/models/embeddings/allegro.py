@@ -5,7 +5,7 @@ from ...utils.spherical_harmonics import generate_spherical_harmonics
 from ..misc.encodings import SpeciesEncoding, RadialBasis
 import dataclasses
 import numpy as np
-from typing import Any, Dict, List, Union, Callable, Tuple, Sequence, Optional
+from typing import Any, Dict, List, Union, Callable, Tuple, Sequence, Optional, ClassVar
 from ..misc.nets import FullyConnectedNet
 from ..misc.e3 import (
     FilteredTensorProduct,
@@ -13,6 +13,7 @@ from ..misc.e3 import (
     ChannelMixing,
     E3NN_AVAILABLE,
     E3NN_EXCEPTION,
+    Irreps,
 )
 
 
@@ -21,65 +22,48 @@ class AllegroEmbedding(nn.Module):
 
     FID : ALLEGRO
 
-    Reference
-    ---------
+    ### Reference
     Musaelian, A., Batzner, S., Johansson, A. et al. Learning local equivariant representations for large-scale atomistic dynamics.
       Nat Commun 14, 579 (2023). https://doi.org/10.1038/s41467-023-36329-y
-
-    Parameters
-    ----------
-    dim : int, default=128
-        The dimension of the embedding.
-    nchannels : int, default=16
-        The number of equivariant channels.
-    nlayers : int, default=3
-        The number of interaction layers.
-    lmax : int, default=2
-        The maximum degree of tensorial embedding.
-    lmax_density : Optional[int], default=None
-        The maximum degree of spherical harmonics for density.
-            If None, it will be set to lmax. Must be greater or equal to lmax.
-    twobody_hidden : Sequence[int], default=[128]
-        The number of hidden neurons in the two-body network.
-    embedding_hidden : Sequence[int], default=[]
-        The number of hidden neurons in the embedding network.
-    latent_hidden : Sequence[int], default=[128]
-        The number of hidden neurons in the latent network.
-    activation : Union[Callable, str], default=nn.silu
-        The activation function to use.
-    graph_key : str, default="graph"
-        The key in the input dictionary that corresponds to the graph.
-    embedding_key : str, default="embedding"
-        The key to use for the output embedding in the returned dictionary.
-    tensor_embedding_key : str, default="tensor_embedding"
-        The key to use for the output tensor embedding in the returned dictionary.
-    species_encoding : dict, default={}
-        The species encoding parameters.
-    radial_basis : dict, default={}
-        The radial basis parameters.
 
     """
 
     _graphs_properties: Dict
     dim: int = 128
+    """ The dimension of the embedding."""
     nchannels: int = 16
+    """ The number of equivariant channels."""
     nlayers: int = 3
+    """ The number of interaction layers."""
     lmax: int = 2
+    """ The maximum degree of tensorial embedding."""
     lmax_density: Optional[int] = None
+    """ The maximum degree of spherical harmonics for density.
+        If None, it will be set to lmax. Must be greater or equal to lmax."""
     twobody_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
+    """ The number of hidden neurons in the two-body network."""
     embedding_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [])
+    """ The number of hidden neurons in the embedding network."""
     latent_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
-    activation: Union[Callable, str] = nn.silu
+    """ The number of hidden neurons in the latent network."""
+    activation: Callable | str = "silu"
+    """ The activation function to use."""
     graph_key: str = "graph"
+    """ The key in the input dictionary that corresponds to the graph."""
     embedding_key: str = "embedding"
+    """ The key to use for the output embedding in the returned dictionary."""
     tensor_embedding_key: str = "tensor_embedding"
+    """ The key to use for the output tensor embedding in the returned dictionary."""
     species_encoding: dict = dataclasses.field(default_factory=dict)
+    """ The species encoding parameters.  See `fennol.models.misc.encodings.SpeciesEncoding`"""
     radial_basis: dict = dataclasses.field(default_factory=dict)
+    """ The radial basis parameters. See `fennol.models.misc.encodings.RadialBasis`"""
 
-    FID: str = "ALLEGRO"
+    FID: ClassVar[str] = "ALLEGRO"
 
     @nn.compact
     def __call__(self, inputs):
+        """ Forward pass of the Allegro model. """
         species = inputs["species"]
 
         graph = inputs[self.graph_key]
@@ -164,58 +148,41 @@ if E3NN_AVAILABLE:
         Musaelian, A., Batzner, S., Johansson, A. et al. Learning local equivariant representations for large-scale atomistic dynamics.
         Nat Commun 14, 579 (2023). https://doi.org/10.1038/s41467-023-36329-y
 
-
-        Parameters
-        ----------
-        dim : int, default=128
-            The dimension of the embedding.
-        nchannels : int, default=16
-            The number of equivariant channels.
-        nlayers : int, default=3
-            The number of interaction layers.
-        irreps_Vij : Union[str, int, e3nn.Irreps], default=2
-            Irreps used for the tensor embedding.
-            If an integer is provided, the irreps will be the ones of spherical harmonics of this degree.
-        lmax_density : Optional[int], default=None
-            The maximum degree of spherical harmonics for density.
-            If None, it will be set to lmax. Must be greater or equal to lmax.
-        twobody_hidden : Sequence[int], default=[128]
-            The number of hidden neurons in the two-body network.
-        embedding_hidden : Sequence[int], default=[]
-            The number of hidden neurons in the embedding network.
-        latent_hidden : Sequence[int], default=[128]
-            The number of hidden neurons in the latent network.
-        activation : Union[Callable, str], default=nn.silu
-            The activation function to use.
-        graph_key : str, default="graph"
-            The key in the input dictionary that corresponds to the graph.
-        embedding_key : str, default="embedding"
-            The key to use for the output embedding in the returned dictionary.
-        tensor_embedding_key : str, default="tensor_embedding"
-            The key to use for the output tensor embedding in the returned dictionary.
-        species_encoding : dict, default={}
-            The species encoding parameters.
-        radial_basis : dict, default={}
-            The radial basis parameters.
         """
 
         _graphs_properties: Dict
         dim: int = 128
+        """ The dimension of the embedding."""
         nchannels: int = 16
+        """ The number of equivariant channels."""
         nlayers: int = 3
-        irreps_Vij: Union[str, int, e3nn.Irreps] = 2
+        """ The number of interaction layers."""
+        irreps_Vij: Union[str, int, 'Irreps'] = 2
+        """ Irreps used for the tensor embedding."""
         lmax_density: int = None
+        """ The maximum degree of spherical harmonics for density.
+            If None, it will be set to lmax. Must be greater or equal to lmax."""
         twobody_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
+        """ The number of hidden neurons in the two-body network."""
         embedding_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [])
+        """ The number of hidden neurons in the embedding network."""
         latent_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
-        activation: Union[Callable, str] = nn.silu
+        """ The number of hidden neurons in the latent network."""
+        activation: Callable | str = "silu"
+        """ The activation function to use."""
         graph_key: str = "graph"
+        """ The key in the input dictionary that corresponds to the graph."""
         embedding_key: str = "embedding"
+        """ The key to use for the output embedding in the returned dictionary."""
         tensor_embedding_key: str = "tensor_embedding"
+        """ The key to use for the output tensor embedding in the returned dictionary."""
         species_encoding: dict = dataclasses.field(default_factory=dict)
+        """ The species encoding parameters."""
         radial_basis: dict = dataclasses.field(default_factory=dict)
+        """ The radial basis parameters."""
 
-        FID: str = "ALLEGRO_E3NN"
+        FID: ClassVar[str] = "ALLEGRO_E3NN"
+        """ Identification of the module when building a model."""
 
         @nn.compact
         def __call__(self, inputs):
@@ -311,7 +278,7 @@ if E3NN_AVAILABLE:
 else:
 
     class AllegroE3NNEmbedding(nn.Module):
-        FID: str = "ALLEGRO_E3NN"
+        FID: ClassVar[str] = "ALLEGRO_E3NN"
 
         def __call__(self, *args, **kwargs) -> Any:
             raise E3NN_EXCEPTION

@@ -1,11 +1,10 @@
 import flax.linen as nn
-from typing import Sequence, Callable, Union
+from typing import Sequence, Callable, Union, Optional, ClassVar, Tuple
 from ...utils.periodic_table import PERIODIC_TABLE_REV_IDX, PERIODIC_TABLE
 import jax.numpy as jnp
 import jax
 import numpy as np
 from functools import partial
-from typing import Optional, Tuple
 from ...utils.activations import activation_from_str, TrainableSiLU
 from ...utils.initializers import initializer_from_str, scaled_orthogonal
 from flax.core import FrozenDict
@@ -31,9 +30,9 @@ class FullyConnectedNet(nn.Module):
     input_key: Optional[str] = None
     output_key: Optional[str] = None
     squeeze: bool = False
-    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+    kernel_init: Union[str, Callable] = "lecun_normal()"
 
-    FID: str = "NEURAL_NET"
+    FID: ClassVar[str] = "NEURAL_NET"
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -105,10 +104,10 @@ class ResMLP(nn.Module):
     use_bias: bool = True
     input_key: Optional[str] = None
     output_key: Optional[str] = None
-    kernel_init: Union[str, Callable] = scaled_orthogonal(mode="fan_avg")
+    kernel_init: Union[str, Callable] = "scaled_orthogonal(mode='fan_avg')"
     res_only: bool = False
 
-    FID: str = "RES_MLP"
+    FID: ClassVar[str] = "RES_MLP"
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -169,9 +168,9 @@ class FullyResidualNet(nn.Module):
     input_key: Optional[str] = None
     output_key: Optional[str] = None
     squeeze: bool = False
-    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+    kernel_init: Union[str, Callable] = "lecun_normal()"
 
-    FID: str = "SKIP_NET"
+    FID: ClassVar[str] = "SKIP_NET"
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -249,9 +248,9 @@ class HierarchicalNet(nn.Module):
     output_key: Optional[str] = None
     decay: float = 0.01
     squeeze: bool = False
-    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+    kernel_init: Union[str, Callable] = "lecun_normal()"
 
-    FID: str = "HIERARCHICAL_NET"
+    FID: ClassVar[str] = "HIERARCHICAL_NET"
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -322,9 +321,9 @@ class SpeciesIndexNet(nn.Module):
     species_index_key: str = "species_index"
     output_key: Optional[str] = None
     squeeze: bool = False
-    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+    kernel_init: Union[str, Callable] = "lecun_normal()"
 
-    FID: str = "SPECIES_INDEX_NET"
+    FID: ClassVar[str] = "SPECIES_INDEX_NET"
 
     def setup(self):
         if not (
@@ -438,9 +437,9 @@ class ChemicalNet(nn.Module):
     input_key: Optional[str] = None
     output_key: Optional[str] = None
     squeeze: bool = False
-    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+    kernel_init: Union[str, Callable] = "lecun_normal()"
 
-    FID: str = "CHEMICAL_NET"
+    FID: ClassVar[str] = "CHEMICAL_NET"
 
     @nn.compact
     def __call__(
@@ -524,10 +523,10 @@ class MOENet(nn.Module):
     input_key: Optional[str] = None
     output_key: Optional[str] = None
     squeeze: bool = False
-    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+    kernel_init: Union[str, Callable] = "lecun_normal()"
     router_key: Optional[str] = None
 
-    FID: str = "MOE_NET"
+    FID: ClassVar[str] = "MOE_NET"
 
     @nn.compact
     def __call__(
@@ -556,12 +555,72 @@ class MOENet(nn.Module):
             in_axes=0,
             out_axes=0,
         )(self.neurons, self.activation, self.use_bias, kernel_init=self.kernel_init)
-        # repeat input along a new axis to compute for all species at once
+        # repeat input along a new axis to compute for all networks at once
         x = jnp.repeat(embedding[None, :, :], self.num_networks, axis=0)
 
         w = nn.softmax(nn.Dense(self.num_networks, name="router")(router), axis=-1)
 
         out = (networks(x) * w.T[:, :, None]).sum(axis=0)
+
+        if self.squeeze and out.shape[-1] == 1:
+            out = jnp.squeeze(out, axis=-1)
+        ############################
+
+        if self.input_key is not None:
+            output_key = self.name if self.output_key is None else self.output_key
+            return {**inputs, output_key: out} if output_key is not None else out
+        return out
+
+class ChannelNet(nn.Module):
+    """Apply a neural network to each channel.
+
+    Parameters:
+        neurons (Sequence[int]): A sequence of integers representing the number of neurons in each shape-sharing network.
+        num_networks (int): The number of shape-sharing networks to create.
+        activation (Union[Callable, str], optional): The activation function to use in the shape-sharing networks. Defaults to nn.silu.
+        use_bias (bool, optional): Whether to include bias in the shape-sharing networks. Defaults to True.
+        input_key (Optional[str], optional): The key to access the input from the inputs dictionary. If None, the input is assumed to be the same as the router. Defaults to None.
+        output_key (Optional[str], optional): The key to store the output in the outputs dictionary. If None, the output is stored with the name of the MOENet instance. Defaults to None.
+        squeeze (bool, optional): Whether to squeeze the output if it has a shape of (batch_size, 1). Defaults to False.
+        kernel_init (Union[str, Callable], optional): The kernel initialization function to use in the shape-sharing networks. Defaults to nn.linear.default_kernel_init.
+        router_key (Optional[str], optional): The key to access the router from the inputs dictionary. If None, the router is assumed to be the same as the input. Defaults to None.
+
+    """
+
+    neurons: Sequence[int]
+    activation: Union[Callable, str] = nn.silu
+    use_bias: bool = True
+    input_key: Optional[str] = None
+    output_key: Optional[str] = None
+    squeeze: bool = False
+    kernel_init: Union[str, Callable] = "lecun_normal()"
+    channel_axis: int = -2
+
+    FID: ClassVar[str] = "CHANNEL_NET"
+
+    @nn.compact
+    def __call__(
+        self, inputs: Union[dict, Tuple[jax.Array, jax.Array]]
+    ) -> Union[dict, jax.Array]:
+        if self.input_key is None:
+            assert not isinstance(
+                inputs, dict
+            ), "input key must be provided if inputs is a dictionary"
+            x = inputs
+        else:
+            x = inputs[self.input_key]
+
+        ############################
+        # build shape-sharing networks using vmap
+        networks = nn.vmap(
+            FullyConnectedNet,
+            variable_axes={"params": 0},
+            split_rngs={"params": True},
+            in_axes=self.channel_axis,
+            out_axes=self.channel_axis,
+        )(self.neurons, self.activation, self.use_bias, kernel_init=self.kernel_init)
+
+        out = networks(x)
 
         if self.squeeze and out.shape[-1] == 1:
             out = jnp.squeeze(out, axis=-1)
@@ -598,13 +657,13 @@ class GatedPerceptron(nn.Module):
 
     dim: int
     use_bias: bool = True
-    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+    kernel_init: Union[str, Callable] = "lecun_normal()"
     activation: Union[Callable, str] = nn.silu
     input_key: Optional[str] = None
     output_key: Optional[str] = None
     squeeze: bool = False
 
-    FID: str = "GATED_PERCEPTRON"
+    FID: ClassVar[str] = "GATED_PERCEPTRON"
 
     @nn.compact
     def __call__(self, inputs):
@@ -666,9 +725,9 @@ class ZAcNet(nn.Module):
     input_key: Optional[str] = None
     output_key: Optional[str] = None
     squeeze: bool = False
-    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+    kernel_init: Union[str, Callable] = "lecun_normal()"
 
-    FID: str = "ZACNET"
+    FID: ClassVar[str] = "ZACNET"
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -763,9 +822,9 @@ class ZLoRANet(nn.Module):
     input_key: Optional[str] = None
     output_key: Optional[str] = None
     squeeze: bool = False
-    kernel_init: Union[str, Callable] = nn.linear.default_kernel_init
+    kernel_init: Union[str, Callable] = "lecun_normal()"
 
-    FID: str = "ZLORANET"
+    FID: ClassVar[str] = "ZLORANET"
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:

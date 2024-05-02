@@ -5,7 +5,7 @@ Done by Côme Cattin, 2024.
 """
 
 import dataclasses
-from typing import Callable, Dict, Sequence, Union
+from typing import Callable, Dict, Sequence, Union, ClassVar
 
 import flax.linen as nn
 import jax
@@ -21,8 +21,7 @@ class SchNetEmbedding(nn.Module):
     Continuous filter convolutional neural network for modeling quantum
     interactions.
 
-    References
-    ----------
+    ### References
     SCHÜTT, Kristof, KINDERMANS, Pieter-Jan, SAUCEDA FELIX, Huziel Enoc, et al.
     Schnet: A continuous-filter convolutional neural network for
     modeling quantum interactions.
@@ -49,17 +48,25 @@ class SchNetEmbedding(nn.Module):
 
     _graphs_properties: Dict
     dim: int = 64
+    """The dimension of the embedding."""
     nlayers: int = 3
+    """The number of interaction layers."""
     conv_hidden: Sequence[int] = dataclasses.field(
         default_factory=lambda: [64, 64]
     )
+    """The hidden layers for the edge network."""
     graph_key: str = "graph"
+    """The key for the graph input."""
     embedding_key: str = "embedding"
+    """The key for the embedding output."""
     radial_basis: dict = dataclasses.field(default_factory=dict)
+    """The radial basis function parameters. See `fennol.models.misc.encodings.RadialBasis`."""
     species_encoding: dict = dataclasses.field(default_factory=dict)
-    activation: Union[Callable, str] = ssp
+    """The species encoding parameters. See `fennol.models.misc.encodings.SpeciesEncoding`."""
+    activation: Union[Callable, str] = "ssp"
+    """The activation function."""
 
-    FID: str = "SCHNET"
+    FID: ClassVar[str] = "SCHNET"
 
     @nn.compact
     def __call__(self, inputs):
