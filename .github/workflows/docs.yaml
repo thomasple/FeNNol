@@ -27,7 +27,8 @@ jobs:
         with:
           python-version: '3.10'
 
-      - run: pip install pdoc
+      - run: pip install jax[cpu] pdoc torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e .
       - run: pdoc --docformat numpy -o ./docs -t ./pdoc_templates/ src/fennol/
 
       - uses: actions/upload-pages-artifact@v3
