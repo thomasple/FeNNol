@@ -81,8 +81,10 @@ def chain(*activations):
 def activation_from_str(activation: Union[str,Callable,None])->Callable:
     if activation is None:
         return lambda x: x
-    if not isinstance(activation, str):
+    if callable(activation):
         return activation
+    if not isinstance(activation, str):
+        raise ValueError(f"Invalid activation {activation}")
     if activation.lower() in ["none" ,"linear","identity"]:
         return lambda x: x
     try:
