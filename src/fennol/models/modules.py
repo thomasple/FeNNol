@@ -2,6 +2,10 @@ from typing import Sequence, Tuple, Dict, Optional, Any
 import flax.linen as nn
 from inspect import isclass, ismodule
 from pkgutil import iter_modules
+import importlib
+import importlib.util
+import os
+import glob
 
 ### python modules where FENNIX Modules are defined ###
 from . import misc,physics, embeddings
@@ -50,6 +54,14 @@ def register_fennix_modules(module, recurs=0, max_recurs=2):
 ### REGISTER DEFAULT MODULES #####################
 for mods in [misc, physics, embeddings]:
     register_fennix_modules(mods)
+module_path = os.environ["FENNOL_MODULES_PATH"].split(":")
+for path in module_path:
+    if os.path.exists(path):
+        for file in glob.glob(f"{path}/*.py"):
+            spec = importlib.util.spec_from_file_location("custom_modules", file)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            register_fennix_modules(module)
 
 ##################################################
 

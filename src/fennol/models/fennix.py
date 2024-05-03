@@ -137,6 +137,7 @@ class FENNIX:
         modules_names = []
         for name, params in modules.items():
             key = str(params.pop("module_name")) if "module_name" in params else name
+            key = str(params.pop("FID")) if "FID" in params else key
             if name in modules_names:
                 raise ValueError(f"Module {name} already exists")
             modules_names.append(name)
