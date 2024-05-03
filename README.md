@@ -5,7 +5,7 @@ FeNNol's documentation is available [here](https://thomasple.github.io/FeNNol/).
 
 ### Warning
 FeNNol is in early stages of development: some APIs are subject to change and documentation is still minimal (but should improve soon !). 
-This is also a temporary repository for the preprint https://arxiv.org/.... The library will soon be moved to a more permanent location.
+This is also a temporary repository for the preprint https://arxiv.org/abs/2405.01491 The library will soon be moved to a more permanent location.
 
 ## Installation
 You can start with a fresh environment using conda:
