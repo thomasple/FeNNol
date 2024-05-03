@@ -27,7 +27,7 @@ export LD_LIBRARY_PATH=$HOME/miniconda3/envs/fennol/lib:$LD_LIBRARY_PATH
 
 Then, you can clone and install FeNNol using pip:
 ```bash
-git clone ...
+git clone https://github.com/thomasple/FeNNol.git
 cd FeNNol
 pip install .
 ```
