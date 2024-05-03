@@ -54,7 +54,7 @@ def register_fennix_modules(module, recurs=0, max_recurs=2):
 ### REGISTER DEFAULT MODULES #####################
 for mods in [misc, physics, embeddings]:
     register_fennix_modules(mods)
-module_path = os.environ["FENNOL_MODULES_PATH"].split(":")
+module_path = os.environ.get("FENNOL_MODULES_PATH","").split(":")
 for path in module_path:
     if os.path.exists(path):
         for file in glob.glob(f"{path}/*.py"):
