@@ -10,17 +10,16 @@ from ...utils.periodic_table import PERIODIC_TABLE
 
 class EnsembleStatistics(nn.Module):
     """Computes the mean and variance of an ensemble.
-
-    Parameters:
-        key (str): The key to access the input data from the `inputs` dictionary.
-        axis (int, optional): The axis along which to compute the mean and variance. Defaults to -1.
-        shuffle_ensemble (bool, optional): Whether to shuffle the ensemble. Defaults to False.
-
+    
+    FID: ENSEMBLE_STAT
     """
 
     key: str
+    """The key to access the input data from the `inputs` dictionary."""
     axis: int = -1
+    """The axis along which to compute the mean and variance."""
     shuffle_ensemble: bool = False
+    """Whether to shuffle the ensemble."""
 
     FID: ClassVar[str] = "ENSEMBLE_STAT"
 
@@ -41,19 +40,19 @@ class EnsembleStatistics(nn.Module):
 
 class EnsembleShift(nn.Module):
     """Shifts the mean of an ensemble to match a reference tensor.
-
-    Parameters:
-        key (str): The key to access the input data from the `inputs` dictionary.
-        ref_key (str): The key to access the reference data from the `inputs` dictionary.
-        axis (int, optional): The axis along which to compute the mean and variance. Defaults to -1.
-        output_key (str, optional): The key to use for the output mean and variance in the `output` dictionary. 
-            If not provided, the keys will be constructed by appending "_mean" and "_var" to the `key` parameter.
+    
+    FID: ENSEMBLE_SHIFT
     """
 
     key: str
+    """The key to access the input data from the `inputs` dictionary."""
     ref_key: str
+    """The key to access the reference data from the `inputs` dictionary."""
     axis: int = -1
+    """The axis of the ensemble."""
     output_key: Optional[str] = None
+    """The key of the output ensemble. If None, the input key will be used."""
+
 
     FID: ClassVar[str] = "ENSEMBLE_SHIFT"
 
@@ -70,44 +69,44 @@ class EnsembleShift(nn.Module):
 class ConstrainEvidence(nn.Module):
     """ Constrain the parameters of an evidential model
 
-    References:
+    FID: CONSTRAIN_EVIDENCE
+
+    ### References
     - Amini et al, Deep Evidential Regression, NeurIPS 2020 (https://arxiv.org/abs/1910.02600)
     - Meinert et al, Multivariate Deep Evidential Regression, (https://arxiv.org/pdf/2104.06135.pdf)
 
-    
-    Parameters:
-        key (str): The key to access the input data from the `inputs` dictionary.
-        output_key (str, optional): The key to use for the constrained paramters in the `output` dictionary. 
-            If not provided, the self.key attribute will be used.
-        beta_scale (Union[str, float], optional): The scale of the beta parameter. Defaults to 1.0.
-        alpha_init (float, optional): The initial value of the alpha parameter. Defaults to 2.0.
-        nu_init (float, optional): The initial value of the nu parameter. Defaults to 1.0.
-        chemical_shift (Optional[float], optional): The chemical shift. Defaults to None.
-        trainable_beta (bool, optional): Whether the beta parameter is trainable. Defaults to False.
-        constant_beta (bool, optional): Whether the beta parameter is a constant. Defaults to False.
-        trainable_alpha (bool, optional): Whether the alpha parameter is trainable. Defaults to False.
-        constant_alpha (bool, optional): Whether the alpha parameter is a constant. Defaults to False.
-        trainable_nu (bool, optional): Whether the nu parameter is trainable. Defaults to False.
-        constant_nu (bool, optional): Whether the nu parameter is a constant. Defaults to False.
-        nualpha_coupling (Optional[float], optional): The coupling between nu and alpha. Defaults to None.
-        graph_key (Optional[str], optional): The key to access the graph data from the `inputs` dictionary. Defaults to None.
-        self_weight (float, optional): The weight of the self interaction in the switch convolution. Defaults to 10.0.
     """
     key: str
+    """The key to access the input data from the `inputs` dictionary."""
     output_key: Optional[str] = None
+    """The key to use for the constrained paramters in the `output` dictionary."""
     beta_scale: Union[str, float] = 1.0
+    """The scale of the beta parameter."""
     alpha_init: float = 2.0
+    """The initial value of the alpha parameter."""
     nu_init: float = 1.0
+    """The initial value of the nu parameter."""
     chemical_shift: Optional[float] = None
+    """The initial chemical shift of evidence."""
     trainable_beta: bool = False
+    """Whether the beta parameter is trainable."""
     constant_beta: bool = False
+    """Whether the beta parameter is a constant."""
     trainable_alpha: bool = False
+    """Whether the alpha parameter is trainable."""
     constant_alpha: bool = False
+    """Whether the alpha parameter is a constant."""
     trainable_nu: bool = False
+    """Whether the nu parameter is trainable."""
     constant_nu: bool = False
+    """Whether the nu parameter is a constant."""
     nualpha_coupling: Optional[float] = None
+    """The coupling constant between nu and alpha."""
     graph_key: Optional[str] = None
+    """The key to access the graph data from the `inputs` dictionary. 
+        Only used to obtain an environment-dependent chemical shift."""
     self_weight: float = 10.0
+    """The weight of the self interaction in environment-dependent chemical shift."""
     # target_dim: Optional[int] = None
 
     FID: ClassVar[str] = "CONSTRAIN_EVIDENCE"

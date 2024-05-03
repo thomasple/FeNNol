@@ -13,24 +13,23 @@ from flax.core import FrozenDict
 class FullyConnectedNet(nn.Module):
     """A fully connected neural network module.
 
-    Parameters:
-        neurons (Sequence[int]): A sequence of integers representing the dimensions of the network.
-        activation (Union[Callable, str], optional): The activation function to use. Defaults to nn.silu.
-        use_bias (bool, optional): Whether to use bias in the dense layers. Defaults to True.
-        input_key (Optional[str], optional): The key to use to access the input tensor. Defaults to None.
-        output_key (Optional[str], optional): The key to use to access the output tensor. Defaults to None.
-        squeeze (bool, optional): Whether to squeeze the output tensor if its shape is (..., 1). Defaults to False.
-        kernel_init (Union[str, Callable], optional): The kernel initialization method to use. Defaults to nn.linear.default_kernel_init.
-
+    FID: NEURAL_NET
     """
 
     neurons: Sequence[int]
-    activation: Union[Callable, str] = nn.silu
+    """A sequence of integers representing the dimensions of the network."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function to use."""
     use_bias: bool = True
+    """Whether to use bias in the dense layers."""
     input_key: Optional[str] = None
+    """The key of the input tensor."""
     output_key: Optional[str] = None
+    """The key of the output tensor."""
     squeeze: bool = False
+    """Whether to remove the last axis of the output tensor if it is of dimension 1."""
     kernel_init: Union[str, Callable] = "lecun_normal()"
+    """The kernel initialization method to use."""
 
     FID: ClassVar[str] = "NEURAL_NET"
 
@@ -90,22 +89,22 @@ class FullyConnectedNet(nn.Module):
 
 
 class ResMLP(nn.Module):
-    """Residual neural network as defined in SpookyNet paper
-
-    Parameters:
-        use_bias (bool): Whether to include bias in the linear layers. Default is True.
-        input_key (Optional[str]): Key to access the input data from a dictionary. If None, assumes inputs are not a dictionary. Default is None.
-        output_key (Optional[str]): Key to store the output data in the dictionary. If None, uses the name of the module. Default is None.
-        kernel_init (Union[str, Callable]): Initialization method for the kernel weights. Can be a string representing a built-in initializer or a custom initialization function. Default is scaled_orthogonal(mode="fan_avg").
-        res_only (bool): Whether to only apply the residual connection without additional linear layers. Default is False.
-
+    """Residual neural network as defined in the SpookyNet paper.
+    
+    FID: RES_MLP
     """
 
     use_bias: bool = True
+    """Whether to include bias in the linear layers."""
     input_key: Optional[str] = None
+    """The key of the input tensor."""
     output_key: Optional[str] = None
+    """The key of the output tensor."""
+
     kernel_init: Union[str, Callable] = "scaled_orthogonal(mode='fan_avg')"
+    """The kernel initialization method to use."""
     res_only: bool = False
+    """Whether to only apply the residual connection without additional activation and linear layer."""
 
     FID: ClassVar[str] = "RES_MLP"
 
@@ -146,29 +145,28 @@ class ResMLP(nn.Module):
 
 class FullyResidualNet(nn.Module):
     """A neural network with skip connections at each layer.
-
-    Parameters:
-        dim (int): The dimension of the hidden layers.
-        output_dim (int): The dimension of the output layer.
-        nlayers (int): The number of layers in the network.
-        activation (Union[Callable, str]): The activation function to use. Can be a callable or a string representing the name of the activation function.
-        use_bias (bool): Whether to include bias terms in the linear layers.
-        input_key (Optional[str]): The key to access the input data from a dictionary, if the input is a dictionary.
-        output_key (Optional[str]): The key to store the output data in a dictionary, if the output is a dictionary.
-        squeeze (bool): Whether to squeeze the output if it has shape (..., 1).
-        kernel_init (Union[str, Callable]): The initializer for the linear layer weights. Can be a callable or a string representing the name of the initializer.
-
+    
+    FID: SKIP_NET
     """
 
     dim: int
+    """The dimension of the hidden layers."""
     output_dim: int
+    """The dimension of the output layer."""
     nlayers: int
-    activation: Union[Callable, str] = nn.silu
+    """The number of layers in the network."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function to use."""
     use_bias: bool = True
+    """Whether to include bias terms in the linear layers."""
     input_key: Optional[str] = None
+    """The key of the input tensor."""
     output_key: Optional[str] = None
+    """The key of the output tensor."""
     squeeze: bool = False
+    """Whether to remove the last axis of the output tensor if it is of dimension 1."""
     kernel_init: Union[str, Callable] = "lecun_normal()"
+    """The kernel initialization method to use."""
 
     FID: ClassVar[str] = "SKIP_NET"
 
@@ -228,27 +226,26 @@ class FullyResidualNet(nn.Module):
 
 class HierarchicalNet(nn.Module):
     """Neural network for a sequence of inputs (in axis=-2) with a decay factor
-
-    Parameters:
-        neurons (Sequence[int]): A sequence of integers representing the number of neurons in each layer.
-        activation (Union[Callable, str], optional): Activation function to use. Defaults to nn.silu.
-        use_bias (bool, optional): Whether to include bias terms in the linear layers. Defaults to True.
-        input_key (Optional[str], optional): Key to access the input data if it is a dictionary. Defaults to None.
-        output_key (Optional[str], optional): Key to store the output data if it is a dictionary. Defaults to None.
-        decay (float, optional): Decay factor to scale each layer. Defaults to 0.01.
-        squeeze (bool, optional): Whether to squeeze the output if it has shape (..., 1). Defaults to False.
-        kernel_init (Union[str, Callable], optional): Initialization method for the linear layers. Defaults to nn.linear.default_kernel_init.
-
+    
+    FID: HIERARCHICAL_NET
     """
 
     neurons: Sequence[int]
-    activation: Union[Callable, str] = nn.silu
+    """A sequence of integers representing the number of neurons in each layer."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function to use."""
     use_bias: bool = True
+    """Whether to include bias terms in the linear layers."""
     input_key: Optional[str] = None
+    """The key of the input tensor."""
     output_key: Optional[str] = None
+    """The key of the output tensor."""
     decay: float = 0.01
+    """The decay factor to scale each element of the sequence."""
     squeeze: bool = False
+    """Whether to remove the last axis of the output tensor if it is of dimension 1."""
     kernel_init: Union[str, Callable] = "lecun_normal()"
+    """The kernel initialization method to use."""
 
     FID: ClassVar[str] = "HIERARCHICAL_NET"
 
@@ -290,38 +287,37 @@ class HierarchicalNet(nn.Module):
 class SpeciesIndexNet(nn.Module):
     """Chemical-species-specific neural network using precomputed species index.
 
+    FID: SPECIES_INDEX_NET
+
     A neural network that applies a species-specific fully connected network to each atom embedding.
     A species index must be provided to filter the embeddings for each species and apply the corresponding network.
-    This index can be obtained using the SPECIES_INDEXER preprocessing module.
+    This index can be obtained using the SPECIES_INDEXER preprocessing module from `fennol.models.preprocessing.SpeciesIndexer`
 
-    Parameters:
-        output_dim (int): The dimension of the output of the fully connected networks. It is the same for all species.
-        hidden_neurons (Union[dict, Sequence[int]]): The hidden dimensions of the fully connected networks for each species.
-            If a dictionary is provided, it should map species names to dimensions.
-            If a sequence is provided, the same dimensions will be used for all species.
-        species_order (Sequence[str]): The species for which to build a network. Only required if neurons is not a dictionary.
-        activation (Callable, optional): The activation function to use in the fully connected networks. Defaults to nn.silu.
-        use_bias (bool, optional): Whether to include bias terms in the fully connected networks. Defaults to True.
-        input_key (str, optional): The key in the input dictionary that corresponds to the embeddings of the atoms.
-            If None, the input is assumed to be a tuple (species,embeddings). Defaults to None.
-        species_index_key str: The key in the input dictionary that corresponds to the species index of the atoms.
-            This index can be obtained via the SPECIES_INDEXER preprocessing module. Defaults to "species_index".
-        output_key (str, optional): The key in the output dictionary that corresponds to the network's output.
-            If None, the output is returned directly. Defaults to None.
-        squeeze (bool, optional): Whether to squeeze the output if it has shape (batch_size, 1). Defaults to False.
-        kernel_init (Union[str, Callable], optional): The kernel initialization method for the fully connected networks. Defaults to nn.linear.default_kernel_init.
     """
 
     output_dim: int
+    """The dimension of the output of the fully connected networks."""
     hidden_neurons: Union[dict, FrozenDict, Sequence[int]]
+    """The hidden dimensions of the fully connected networks.
+        If a dictionary is provided, it should map species names to dimensions.
+        If a sequence is provided, the same dimensions will be used for all species."""
     species_order: None | str | Sequence[str] = None
-    activation: Union[Callable, str] = nn.silu
+    """The species for which to build a network. Only required if neurons is not a dictionary."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function to use in the fully connected networks."""
     use_bias: bool = True
+    """Whether to include bias terms in the fully connected networks."""
     input_key: Optional[str] = None
+    """The key in the input dictionary that corresponds to the embeddings of the atoms."""
     species_index_key: str = "species_index"
+    """The key in the input dictionary that corresponds to the species index of the atoms. See `fennol.models.preprocessing.SpeciesIndexer`"""
     output_key: Optional[str] = None
+    """The key in the output dictionary that corresponds to the network's output."""
+
     squeeze: bool = False
+    """Whether to remove the last axis of the output tensor if it is of dimension 1."""
     kernel_init: Union[str, Callable] = "lecun_normal()"
+    """The kernel initialization method for the fully connected networks."""
 
     FID: ClassVar[str] = "SPECIES_INDEX_NET"
 
@@ -413,31 +409,30 @@ class SpeciesIndexNet(nn.Module):
 class ChemicalNet(nn.Module):
     """optimized Chemical-species-specific neural network.
 
+    FID: CHEMICAL_NET
+
     A neural network that applies a fully connected network to each atom embedding in a chemical system and selects the output corresponding to the atom's species.
     This is an optimized version of ChemicalNetHet that uses vmap to apply the networks to all atoms at once.
     The optimization is allowed because all networks have the same shape.
 
-    Parameters:
-        species_order (Sequence[str]): The species for which to build a network.
-        neurons (Sequence[int]): The dimensions of the fully connected networks.
-        activation (Callable, optional): The activation function to use in the fully connected networks. Defaults to nn.silu.
-        use_bias (bool, optional): Whether to include bias terms in the fully connected networks. Defaults to True.
-        input_key (str, optional): The key in the input dictionary that corresponds to the embeddings of the atoms.
-            If None, the input is assumed to be a tuple (species,embeddings). Defaults to None.
-        output_key (str, optional): The key in the output dictionary that corresponds to the network's output.
-            If None, the output is returned directly. Defaults to None.
-        squeeze (bool, optional): Whether to squeeze the output if it has shape (batch_size, 1). Defaults to False.
-        kernel_init (Union[str, Callable], optional): The kernel initialization method for the fully connected networks. Defaults to nn.linear.default_kernel_init.
     """
 
     species_order: str | Sequence[str]
+    """The species for which to build a network."""
     neurons: Sequence[int]
-    activation: Union[Callable, str] = nn.silu
+    """The dimensions of the fully connected networks."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function to use in the fully connected networks."""
     use_bias: bool = True
+    """Whether to include bias terms in the fully connected networks."""
     input_key: Optional[str] = None
+    """The key in the input dictionary that corresponds to the embeddings of the atoms."""
     output_key: Optional[str] = None
+    """The key in the output dictionary that corresponds to the network's output."""
     squeeze: bool = False
+    """Whether to remove the last axis of the output tensor if it is of dimension 1."""
     kernel_init: Union[str, Callable] = "lecun_normal()"
+    """The kernel initialization method for the fully connected networks."""
 
     FID: ClassVar[str] = "CHEMICAL_NET"
 
@@ -500,31 +495,32 @@ class ChemicalNet(nn.Module):
 class MOENet(nn.Module):
     """Mixture of Experts neural network.
 
+    FID: MOE_NET
+
     This class represents a Mixture of Experts neural network. It takes in an input and applies a set of shape-sharing networks
     to the input based on a router. The outputs of the shape-sharing networks are then combined using weights computed by the router.
-
-    Parameters:
-        neurons (Sequence[int]): A sequence of integers representing the number of neurons in each shape-sharing network.
-        num_networks (int): The number of shape-sharing networks to create.
-        activation (Union[Callable, str], optional): The activation function to use in the shape-sharing networks. Defaults to nn.silu.
-        use_bias (bool, optional): Whether to include bias in the shape-sharing networks. Defaults to True.
-        input_key (Optional[str], optional): The key to access the input from the inputs dictionary. If None, the input is assumed to be the same as the router. Defaults to None.
-        output_key (Optional[str], optional): The key to store the output in the outputs dictionary. If None, the output is stored with the name of the MOENet instance. Defaults to None.
-        squeeze (bool, optional): Whether to squeeze the output if it has a shape of (batch_size, 1). Defaults to False.
-        kernel_init (Union[str, Callable], optional): The kernel initialization function to use in the shape-sharing networks. Defaults to nn.linear.default_kernel_init.
-        router_key (Optional[str], optional): The key to access the router from the inputs dictionary. If None, the router is assumed to be the same as the input. Defaults to None.
 
     """
 
     neurons: Sequence[int]
+    """A sequence of integers representing the number of neurons in each shape-sharing network."""
     num_networks: int
-    activation: Union[Callable, str] = nn.silu
+    """The number of shape-sharing networks to create."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function to use in the shape-sharing networks."""
     use_bias: bool = True
+    """Whether to include bias in the shape-sharing networks."""
     input_key: Optional[str] = None
+    """The key of the input tensor."""
     output_key: Optional[str] = None
+    """The key of the output tensor."""
     squeeze: bool = False
+    """Whether to remove the last axis of the output tensor if it is of dimension 1."""
+    
     kernel_init: Union[str, Callable] = "lecun_normal()"
+    """The kernel initialization method to use in the shape-sharing networks."""
     router_key: Optional[str] = None
+    """The key of the router tensor. If None, the router is assumed to be the same as the input tensor."""
 
     FID: ClassVar[str] = "MOE_NET"
 
@@ -572,29 +568,27 @@ class MOENet(nn.Module):
         return out
 
 class ChannelNet(nn.Module):
-    """Apply a neural network to each channel.
-
-    Parameters:
-        neurons (Sequence[int]): A sequence of integers representing the number of neurons in each shape-sharing network.
-        num_networks (int): The number of shape-sharing networks to create.
-        activation (Union[Callable, str], optional): The activation function to use in the shape-sharing networks. Defaults to nn.silu.
-        use_bias (bool, optional): Whether to include bias in the shape-sharing networks. Defaults to True.
-        input_key (Optional[str], optional): The key to access the input from the inputs dictionary. If None, the input is assumed to be the same as the router. Defaults to None.
-        output_key (Optional[str], optional): The key to store the output in the outputs dictionary. If None, the output is stored with the name of the MOENet instance. Defaults to None.
-        squeeze (bool, optional): Whether to squeeze the output if it has a shape of (batch_size, 1). Defaults to False.
-        kernel_init (Union[str, Callable], optional): The kernel initialization function to use in the shape-sharing networks. Defaults to nn.linear.default_kernel_init.
-        router_key (Optional[str], optional): The key to access the router from the inputs dictionary. If None, the router is assumed to be the same as the input. Defaults to None.
-
+    """Apply a different neural network to each channel.
+    
+    FID: CHANNEL_NET
     """
 
     neurons: Sequence[int]
-    activation: Union[Callable, str] = nn.silu
+    """A sequence of integers representing the number of neurons in each shape-sharing network."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function to use in the shape-sharing networks."""
     use_bias: bool = True
+    """Whether to include bias in the shape-sharing networks."""
     input_key: Optional[str] = None
+    """The key of the input tensor."""
     output_key: Optional[str] = None
+    """The key of the output tensor."""
     squeeze: bool = False
+    """Whether to remove the last axis of the output tensor if it is of dimension 1."""
     kernel_init: Union[str, Callable] = "lecun_normal()"
+    """The kernel initialization method to use in the shape-sharing networks."""
     channel_axis: int = -2
+    """The axis to use as channel. Its length will be the number of shape-sharing networks."""
 
     FID: ClassVar[str] = "CHANNEL_NET"
 
@@ -635,33 +629,27 @@ class ChannelNet(nn.Module):
 class GatedPerceptron(nn.Module):
     """Gated Perceptron neural network.
 
+    FID: GATED_PERCEPTRON
+
     This class represents a Gated Perceptron neural network model. It applies a gating mechanism
     to the input data and performs linear transformation using a dense layer followed by an activation function.
-
-    Parameters:
-        dim (int): The dimensionality of the output space.
-        use_bias (bool, optional): Whether to include a bias term in the dense layer. Defaults to True.
-        kernel_init (Union[str, Callable], optional): The initializer for the kernel weights of the dense layer.
-            It can be a string representing a predefined initializer or a custom initializer function.
-            Defaults to nn.linear.default_kernel_init.
-        activation (Union[Callable, str], optional): The activation function to be applied after the dense layer.
-            It can be a string representing a predefined activation function or a custom activation function.
-            Defaults to nn.silu.
-        input_key (Optional[str], optional): The key to access the input data if it is a dictionary.
-            If None, assumes the input data is not a dictionary. Defaults to None.
-        output_key (Optional[str], optional): The key to store the output data in the dictionary if input_key is not None.
-            If None, uses the name of the module as the output key. Defaults to None.
-        squeeze (bool, optional): Whether to squeeze the output tensor if its last dimension is 1. Defaults to False.
-
     """
 
     dim: int
+    """The dimensionality of the output space."""
     use_bias: bool = True
+    """Whether to include a bias term in the dense layer."""
     kernel_init: Union[str, Callable] = "lecun_normal()"
-    activation: Union[Callable, str] = nn.silu
+    """The kernel initialization method to use."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function to use."""
+
     input_key: Optional[str] = None
+    """The key of the input tensor."""
     output_key: Optional[str] = None
+    """The key of the output tensor."""
     squeeze: bool = False
+    """Whether to remove the last axis of the output tensor if it is of dimension 1."""
 
     FID: ClassVar[str] = "GATED_PERCEPTRON"
 
@@ -704,28 +692,27 @@ class GatedPerceptron(nn.Module):
 
 
 class ZAcNet(nn.Module):
-    """
-    A fully connected neural network module with affine Z-dependent adjustments of activations.
-
-    Parameters:
-        neurons (Sequence[int]): A sequence of integers representing the dimensions of the network.
-        zmax (int): The maximum atomic number to consider.
-        activation (Union[Callable, str], optional): The activation function to use. Defaults to nn.silu.
-        use_bias (bool, optional): Whether to use bias in the dense layers. Defaults to True.
-        input_key (Optional[str], optional): The key to use to access the input tensor. Defaults to None.
-        output_key (Optional[str], optional): The key to use to access the output tensor. Defaults to None.
-        squeeze (bool, optional): Whether to squeeze the output tensor if its shape is (..., 1). Defaults to False.
-        kernel_init (Union[str, Callable], optional): The kernel initialization method to use. Defaults to nn.linear.default_kernel_init.
+    """ A fully connected neural network module with affine Z-dependent adjustments of activations.
+    
+    FID: ZACNET
     """
 
     neurons: Sequence[int]
+    """A sequence of integers representing the dimensions of the network."""
     zmax: int = 86
-    activation: Union[Callable, str] = nn.silu
+    """The maximum atomic number to consider."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function to use."""
     use_bias: bool = True
+    """Whether to use bias in the dense layers."""
     input_key: Optional[str] = None
+    """The key of the input tensor."""
     output_key: Optional[str] = None
+    """The key of the output tensor."""
     squeeze: bool = False
+    """Whether to remove the last axis of the output tensor if it is of dimension 1."""
     kernel_init: Union[str, Callable] = "lecun_normal()"
+    """The kernel initialization method to use."""
 
     FID: ClassVar[str] = "ZACNET"
 
@@ -799,30 +786,29 @@ class ZAcNet(nn.Module):
 
 
 class ZLoRANet(nn.Module):
-    """
-    A fully connected neural network module with Z-dependent low-rank adaptation.
-
-    Parameters:
-        neurons (Sequence[int]): A sequence of integers representing the dimensions of the network.
-        ranks (Sequence[int]): A sequence of integers representing the ranks of the low-rank adaptation matrices.
-        zmax (int): The maximum atomic number to consider.
-        activation (Union[Callable, str], optional): The activation function to use. Defaults to nn.silu.
-        use_bias (bool, optional): Whether to use bias in the dense layers. Defaults to True.
-        input_key (Optional[str], optional): The key to use to access the input tensor. Defaults to None.
-        output_key (Optional[str], optional): The key to use to access the output tensor. Defaults to None.
-        squeeze (bool, optional): Whether to squeeze the output tensor if its shape is (..., 1). Defaults to False.
-        kernel_init (Union[str, Callable], optional): The kernel initialization method to use. Defaults to nn.linear.default_kernel_init.
+    """A fully connected neural network module with Z-dependent low-rank adaptation.
+    
+    FID: ZLORANET
     """
 
     neurons: Sequence[int]
+    """A sequence of integers representing the dimensions of the network."""
     ranks: Sequence[int]
+    """A sequence of integers representing the ranks of the low-rank adaptation at each layer."""
     zmax: int = 86
-    activation: Union[Callable, str] = nn.silu
+    """The maximum atomic number to consider."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function to use."""
     use_bias: bool = True
+    """Whether to use bias in the dense layers."""
     input_key: Optional[str] = None
+    """The key of the input tensor."""
     output_key: Optional[str] = None
+    """The key of the output tensor."""
     squeeze: bool = False
+    """Whether to remove the last axis of the output tensor if it is of dimension 1."""
     kernel_init: Union[str, Callable] = "lecun_normal()"
+    """The kernel initialization method to use."""
 
     FID: ClassVar[str] = "ZLORANET"
 
