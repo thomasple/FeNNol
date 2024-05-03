@@ -23,6 +23,8 @@ from ..utils.periodic_table import PERIODIC_TABLE, PERIODIC_TABLE_REV_IDX
 class GraphGenerator:
     """Generate a graph from a set of coordinates
 
+    FID: GRAPH
+
     For now, we generate all pairs of atoms and filter based on cutoff.
     If a `nblist_skin` is present in the state, we generate a second graph with a larger cutoff that includes all pairs within the cutoff+skin. This graph is then reused by the `update_skin` method to update the original graph without recomputing the full nblist.
     """
@@ -597,7 +599,10 @@ class GraphProcessor(nn.Module):
 
 @dataclasses.dataclass(frozen=True)
 class GraphFilter:
-    """Filter a graph based on a cutoff distance"""
+    """Filter a graph based on a cutoff distance
+    
+    FID: GRAPH_FILTER
+    """
 
     cutoff: float
     """Cutoff distance for the filtering."""
@@ -827,7 +832,10 @@ class GraphFilterProcessor(nn.Module):
 
 @dataclasses.dataclass(frozen=True)
 class GraphAngularExtension:
-    """Add angles list to a graph"""
+    """Add angles list to a graph
+    
+    FID: GRAPH_ANGULAR_EXTENSION
+    """
 
     mult_size: float = 1.05
     """Multiplicative factor for resizing the nblist."""
@@ -1094,6 +1102,8 @@ class GraphAngleProcessor(nn.Module):
 @dataclasses.dataclass(frozen=True)
 class SpeciesIndexer:
     """Build an index that splits atomic arrays by species.
+
+    FID: SPECIES_INDEXER
 
     If `species_order` is specified, the output will be a dense array with size (len(species_order), max_size) that can directly index atomic arrays.
     If `species_order` is None, the output will be a dictionary with species as keys and an index to filter atomic arrays for that species as values.

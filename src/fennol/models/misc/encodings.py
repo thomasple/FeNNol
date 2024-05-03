@@ -18,7 +18,10 @@ from ...utils.periodic_table import (
 
 
 class SpeciesEncoding(nn.Module):
-    """ A module that encodes chemical species information."""
+    """ A module that encodes chemical species information.
+    
+    FID: SPECIES_ENCODING
+    """
 
     encoding: str = "random"
     """ The encoding to use. Can be one of "one_hot", "occupation", "electronic_structure", "properties", "sjs_coordinates", "random". 
@@ -158,7 +161,10 @@ class SpeciesEncoding(nn.Module):
 
 
 class RadialBasis(nn.Module):
-    """Computes a radial encoding of distances."""
+    """Computes a radial encoding of distances.
+    
+    FID: RADIAL_BASIS
+    """
 
     end: float
     """ The maximum distance to consider."""

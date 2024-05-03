@@ -13,7 +13,10 @@ from fennol.utils import AtomicUnits as Au
 
 
 class Polarisation(nn.Module):
-    """Polarisation model with Thole damping scheme."""
+    """Polarisation model with Thole damping scheme.
+    
+    FID: POLARISATION
+    """
 
     energy_key: Optional[str] = None
     """Key of the energy in the outputs."""

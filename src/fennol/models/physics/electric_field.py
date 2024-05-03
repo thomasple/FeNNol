@@ -15,6 +15,8 @@ from fennol.utils import AtomicUnits as Au
 class ElectricField(nn.Module):
     """Electric field from distributed point charges with short-range damping.
 
+    FID: ELECTRIC_FIELD
+
     The short-range damping is defined as in AMOEBA+
 
     """

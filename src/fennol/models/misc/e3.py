@@ -19,7 +19,7 @@ except Exception as e:
 
 
 class FullTensorProduct(nn.Module):
-    """Tensor product of two spherical harmonics"""
+    """Tensor product of two spherical harmonics."""
 
     lmax1: int
     """The maximum order of the first spherical tensor."""
@@ -161,7 +161,11 @@ class FilteredTensorProduct(nn.Module):
 
 
 class ChannelMixing(nn.Module):
-    """Linear mixing of input channels."""
+    """Linear mixing of input channels.
+    
+    FID: CHANNEL_MIXING
+    """
+
     lmax: int
     """The maximum order of the spherical tensor."""
     nchannels: int
@@ -206,7 +210,11 @@ class ChannelMixing(nn.Module):
 
 
 class ChannelMixingE3(nn.Module):
-    """Linear mixing of input channels with different weight for each angular momentum."""
+    """Linear mixing of input channels with different weight for each angular momentum.
+    
+    FID: CHANNEL_MIXING_E3
+    """
+
     lmax: int
     """The maximum order of the spherical tensor."""
     nchannels: int
@@ -256,7 +264,10 @@ class ChannelMixingE3(nn.Module):
 
 
 class SphericalToCartesian(nn.Module):
-    """Convert spherical tensors to cartesian tensors."""
+    """Convert spherical tensors to cartesian tensors.
+    
+    FID: SPHERICAL_TO_CARTESIAN
+    """
     
     lmax: int
     """The maximum order of the spherical tensor. Only implemented for lmax up to 2."""

@@ -104,7 +104,7 @@ def ewald_reciprocal(q, batch_index, k_points, phiscale, selfscale, expfac, ks):
 class Coulomb(nn.Module):
     """Coulomb interaction between distributed point charges
 
-    FID : COULOMB   
+    FID: COULOMB   
     
     """
     _graphs_properties: Dict
@@ -408,7 +408,7 @@ class Coulomb(nn.Module):
 class QeqD4(nn.Module):
     """ QEq-D4 charge equilibration scheme
 
-    FID : QEQ_D4
+    FID: QEQ_D4
     
     ### Reference
     E. Caldeweyher et al.,A generally applicable atomic-charge dependent London dispersion correction,

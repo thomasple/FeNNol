@@ -9,7 +9,7 @@ from ...utils import AtomicUnits as au
 class RepulsionZBL(nn.Module):
     """Repulsion energy based on the Ziegler-Biersack-Littmark potential
 
-    FID : REPULSION_ZBL
+    FID: REPULSION_ZBL
 
     ### Reference
     J. F. Ziegler & J. P. Biersack , The Stopping and Range of Ions in Matter
