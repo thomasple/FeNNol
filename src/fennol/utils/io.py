@@ -99,14 +99,17 @@ def last_xyz_frame(filename, box_info=False, indexed=False):
     return last_frame
 
 
-def write_arc_frame(f, symbols, coordinates, **kwargs):
+def write_arc_frame(f, symbols, coordinates, types=None, nbonds=None,connectivity=None,**kwargs):
     nat = len(symbols)
     f.write(f"{nat}\n")
     # f.write(f'{axis} {axis} {axis} 90.0 90.0 90.0 \n')
     for i in range(nat):
-        f.write(
-            f"{i+1} {symbols[i]:3} {coordinates[i,0]: 15.5e} {coordinates[i,1]: 15.5e} {coordinates[i,2]: 15.5e}\n"
-        )
+        line=f"{i+1} {symbols[i]:3} {coordinates[i,0]: 15.3f} {coordinates[i,1]: 15.3f} {coordinates[i,2]: 15.3f}"
+        if types is not None:
+            line+=f"   {types[i]}"
+        if connectivity is not None and nbonds is not None:
+            line+="  "+ " ".join([str(x+1) for x in connectivity[i,:nbonds[i]]])
+        f.write(line+"\n")
     f.flush()
 
 
