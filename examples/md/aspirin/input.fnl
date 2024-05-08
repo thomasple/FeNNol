@@ -1,12 +1,16 @@
 device cuda:0
-model_file model_aspirin.fnx
+model_file ../ani2x.fnx
+
+traj_format arc
+per_atom_energy no
+energy_unit Ha
 
 xyz_input{
   file aspirin.xyz 
   # whether the first column is the atom index (Tinker format)
   indexed no 
   # whether a comment line is present
-  box_info yes
+  has_comment_line yes
 }
 
 # number of steps to perform
@@ -15,9 +19,10 @@ nsteps = 1000000
 dt[fs] = 0.5 
 
 #time between each saved frame
-tdump[ps] = 1
+tdump[ps] = 1.
 # number of steps between each printing of the energy
 nprint = 100
+nsummary = 1000
 
 ## set the thermostat
 #thermostat NVE
