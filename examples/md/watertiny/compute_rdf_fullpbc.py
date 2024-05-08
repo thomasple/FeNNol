@@ -245,12 +245,16 @@ def radial_from_file(
 
 def main(xyzfile: str, thermalize: int = 0, watch: bool = False, minimum_image=False):
 
+    # box length
     a = 9.3215
     cell = np.array([a, 0, 0, 0, a, 0, 0, 0, a]).reshape((3, 3), order="F")
 
+    # maximum distance to compute the rdf
     rmax = 9.
+    # bin width
     dr = 0.05
 
+    # pairs of atoms to compute the rdf
     pairs = ["O O", "O H", "H H"]
 
     radial_from_file(

@@ -45,3 +45,8 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```bash
 conda install cffi pydlpack pycuda
 ```
+
+## Examples
+To learn how to train a FeNNol model, you can check the examples in the [`examples/training`](https://github.com/thomasple/FeNNol/tree/main/examples/training) directory. The `README.md` file in that directory contains instructions on how to train a model on the aspirin revMD17 dataset.
+
+To learn how to run molecular dynamics simulations with FeNNol models, you can check the examples in the [`examples/md`](https://github.com/thomasple/FeNNol/tree/main/examples/md) directory. The `README.md` file in that directory contains instructions on how to run simulations with the provided ANI-2x model.

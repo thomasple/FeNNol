@@ -171,12 +171,16 @@ def radial_from_file(xyzfile,pairs,outfile="gr.dat",rmax=10,dr=0.02,thermalize=0
 
 def main(xyzfile:str,thermalize:int=0,watch:bool=False):
 
+  # box length
   a=18.643
   cell=np.array([a,0,0,0,a,0,0,0,a]).reshape((3,3),order="F")
 
+  # maximum distance to compute the rdf
   rmax=9.
+  # bin width
   dr=0.05
 
+  # pairs of atoms to compute the rdf
   pairs=["O O","O H","H H"]
 
   radial_from_file(xyzfile,pairs,cell=cell,rmax=rmax,dr=dr,indexed=True,box_info=False

@@ -20,3 +20,5 @@ python compute_rdf.py watersmall.arc -w -t 10
 ```
 This will produce a `gr.dat` file with the partial radial distribution functions.
 The `-w` flag says that we are watching changes in the file (so it will update the rdf as the simulation progresses) and the `-t` flag specifies the number of frames to skip (thermalization). For `watersmall` the `gr.dat` file can be visually compared to the provided `gr.dat.ref` that was obtain from a 1 ns ANI-2x classical Langevin simulation (with timestep 0.5 fs).
+
+This script can be easily adapted for other examples by changing the `cell`, `rmax`, `dr` and `pairs` variables in the `main` function.
