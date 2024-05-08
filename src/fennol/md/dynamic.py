@@ -202,6 +202,7 @@ def dynamic(simulation_parameters, device, fprec):
     else:
         cell = None
         reciprocal_cell = None
+        do_wrap_box = False
 
     ### Energy units and print initial energy
     per_atom_energy = simulation_parameters.get("per_atom_energy", True)
@@ -225,7 +226,7 @@ def dynamic(simulation_parameters, device, fprec):
     nprint = int(simulation_parameters.get("nprint", 10))
     assert nprint > 0, "nprint must be > 0"
     nsummary = simulation_parameters.get("nsummary", 100 * nprint)
-    assert nsummary > 0, "nsummary must be > 0"
+    assert nsummary > nprint, "nsummary must be > nprint"
 
     ### Print header
     include_thermostat_energy = "thermostat_energy" in system["thermostat"]

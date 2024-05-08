@@ -47,7 +47,8 @@ def load_system_data(simulation_parameters, fprec):
     ## LOAD SYSTEM CONFORMATION FROM FILES
     system_name = str(simulation_parameters.get("system", "system")).strip()
     indexed = simulation_parameters.get("xyz_input/indexed", True)
-    box_info = simulation_parameters.get("xyz_input/box_info", False)
+    box_info = simulation_parameters.get("xyz_input/box_info", False) # to be removed
+    box_info = simulation_parameters.get("xyz_input/has_comment_line", box_info)
     xyzfile = Path(simulation_parameters.get("xyz_input/file", system_name + ".xyz"))
     if not xyzfile.exists():
         raise FileNotFoundError(f"xyz file {xyzfile} not found")
