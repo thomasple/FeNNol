@@ -184,12 +184,12 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
                 model.variables, model_ref.variables, ref_parameters
             )
 
-    rename_refs = training_parameters.get("rename_refs", [])
-    loss_definition, rename_refs, used_keys = get_loss_definition(
-        training_parameters, rename_refs
+    # rename_refs = training_parameters.get("rename_refs", [])
+    loss_definition, used_keys = get_loss_definition(
+        training_parameters
     )
-    training_iterator, validation_iterator = load_dataset(
-        training_parameters, rename_refs
+    training_iterator, validation_iterator, extract_inputs = load_dataset(
+        training_parameters, infinite_iterator=True,atom_padding=True
     )
     batch_size = training_parameters.get("batch_size", 16)
 
@@ -385,15 +385,16 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
 
             # preprocess data
             s = time.time()
-            inputs = model.preprocess(**data)
+            inputs = model.preprocess(**extract_inputs(data))
 
             rng_key, subkey = jax.random.split(rng_key)
             inputs["rng_key"] = subkey
             if compute_ref_coords:
                 data_ref = {**data, "coordinates": data[coordinates_ref_key]}
-                inputs_ref = model.preprocessing(**data_ref)
+                inputs_ref = model.preprocessing(**extract_inputs(data_ref))
             else:
                 inputs_ref = None
+                data_ref = None
             # if print_timings:
             #     jax.block_until_ready(inputs["coordinates"])
             e = time.time()
@@ -409,12 +410,14 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
                 "step_size"
             ] = current_lr
             loss, variables, opt_st, model.variables, ema_st = train_step(
-                data=inputs,
+                data=data,
+                inputs=inputs,
                 variables=variables,
                 variables_ema=model.variables,
                 opt_st=opt_st,
                 ema_st=ema_st,
-                data_ref=inputs_ref,
+                data_ref=data_ref,
+                inputs_ref=inputs_ref,
             )
             count += 1
             # if print_timings:
@@ -427,15 +430,16 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         for _ in range(nbatch_per_validation):
             data = next(validation_iterator)
 
-            inputs = model.preprocess(**data)
+            inputs = model.preprocess(**extract_inputs(data))
             
             if compute_ref_coords:
                 data_ref = {**data, "coordinates": data[coordinates_ref_key]}
-                inputs_ref = model.preprocess(**data_ref)
+                inputs_ref = model.preprocess(**extract_inputs(data_ref))
             else:
                 inputs_ref = None
+                data_ref = None
             rmses, maes, output = validation(
-                data=inputs, variables=model.variables, data_ref=inputs_ref
+                data=data,inputs=inputs, variables=model.variables, data_ref=data_ref,inputs_ref=inputs_ref
             )
             for k, v in rmses.items():
                 rmses_avg[k] += v

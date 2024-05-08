@@ -36,7 +36,7 @@ def get_training_parameters(
 
 
 def get_loss_definition(
-    training_parameters: Dict[str, any], manual_renames: List[str] = []
+    training_parameters: Dict[str, any] #, manual_renames: List[str] = []
 ) -> Tuple[Dict[str, any], List[str]]:
     """
     Returns the loss definition and a list of renamed references.
@@ -69,17 +69,17 @@ def get_loss_definition(
             assert loss_prms["threshold"] > 1.0, "Threshold must be greater than 1.0"
         used_keys.append(loss_prms["key"])
 
-    rename_refs = list(
-        set(["forces", "total_energy", "atomic_energies"] + manual_renames + used_keys)
-    )
+    # rename_refs = list(
+    #     set(["forces", "total_energy", "atomic_energies"] + manual_renames + used_keys)
+    # )
 
-    for k in loss_definition.keys():
-        loss_prms = loss_definition[k]
-        if "ref" in loss_prms:
-            if loss_prms["ref"] in rename_refs:
-                loss_prms["ref"] = "true_" + loss_prms["ref"]
+    # for k in loss_definition.keys():
+    #     loss_prms = loss_definition[k]
+    #     if "ref" in loss_prms:
+    #         if loss_prms["ref"] in rename_refs:
+    #             loss_prms["ref"] = "true_" + loss_prms["ref"]
 
-    return loss_definition, rename_refs, used_keys
+    return loss_definition, used_keys
 
 
 def get_optimizer(
@@ -190,24 +190,24 @@ def get_train_step_function(
     compute_ref_coords = model_ref is not None
 
     def train_step(
-        data, variables, opt_st, variables_ema=None, ema_st=None, data_ref=None
+        data,inputs, variables, opt_st, variables_ema=None, ema_st=None, data_ref=None, inputs_ref=None
     ):
 
         def loss_fn(variables):
             if model_ref is not None:
-                output_ref = evaluate(model_ref, model_ref.variables, data)
+                output_ref = evaluate(model_ref, model_ref.variables, inputs)
                 # _, _, output_ref = model_ref._energy_and_forces(model_ref.variables, data)
-            output = evaluate(model, variables, data)
+            output = evaluate(model, variables, inputs)
             # _, _, output = model._energy_and_forces(variables, data)
             if compute_ref_coords:
-                if data_ref is None:
+                if data_ref is None or inputs_ref is None:
                     raise ValueError(
                         "train_step was setup with compute_ref_coords=True but data_ref was not provided"
                     )
-                output_data_ref = evaluate(model, variables, data_ref)
+                output_data_ref = evaluate(model, variables, inputs_ref)
                 # _,_,output_data_ref = model._energy_and_forces(variables, data_ref)
-            nsys = jnp.sum(data["true_sys"])
-            nat = jnp.sum(data["true_atoms"])
+            nsys = jnp.sum(inputs["true_sys"])
+            nat = jnp.sum(inputs["true_atoms"])
             loss_tot = 0.0
             for loss_prms in loss_definition.values():
                 predicted = output[loss_prms["key"]]
@@ -217,11 +217,26 @@ def get_train_step_function(
                 if "ref" in loss_prms:
                     if loss_prms["ref"].startswith("model_ref/"):
                         assert model_ref is not None, "model_ref must be provided"
-                        ref = output_ref[loss_prms["ref"][10:]] * loss_prms["mult"]
+                        try:
+                            ref = output_ref[loss_prms["ref"][10:]] * loss_prms["mult"]
+                        except KeyError:
+                            raise KeyError(
+                                f"Reference key '{loss_prms['ref'][10:]}' not found in model_ref output. Keys available: {output_ref.keys()}"
+                            )
                     elif loss_prms["ref"].startswith("model/"):
-                        ref = output[loss_prms["ref"][6:]] * loss_prms["mult"]
+                        try:
+                            ref = output[loss_prms["ref"][6:]] * loss_prms["mult"]
+                        except KeyError:
+                            raise KeyError(
+                                f"Reference key '{loss_prms['ref'][6:]}' not found in model output. Keys available: {output.keys()}"
+                            )
                     else:
-                        ref = output[loss_prms["ref"]] * loss_prms["mult"]
+                        try:
+                            ref = data[loss_prms["ref"]] * loss_prms["mult"]
+                        except KeyError:
+                            raise KeyError(
+                                f"Reference key '{loss_prms['ref']}' not found in data. Keys available: {data.keys()}"
+                            )
                 else:
                     ref = jnp.zeros_like(predicted)
 
@@ -259,7 +274,7 @@ def get_train_step_function(
                 if ref.shape[0] == output["batch_index"].shape[0]:
                     ## shape is number of atoms
                     nel = nel * nat / ref.shape[0]
-                    true_atoms = data["true_atoms"].reshape(*shape_mask)
+                    true_atoms = inputs["true_atoms"].reshape(*shape_mask)
                     ref = ref * true_atoms
                     predicted = predicted * true_atoms
                     truth_mask = true_atoms
@@ -271,7 +286,7 @@ def get_train_step_function(
                 elif ref.shape[0] == output["natoms"].shape[0]:
                     ## shape is number of systems
                     nel = nel * nsys / ref.shape[0]
-                    true_sys = data["true_sys"].reshape(*shape_mask)
+                    true_sys = inputs["true_sys"].reshape(*shape_mask)
                     ref = ref * true_sys
                     predicted = predicted * true_sys
                     truth_mask = true_sys
@@ -398,21 +413,21 @@ def get_validation_function(
 ):
     compute_ref_coords = model_ref is not None
 
-    def validation(data, variables, data_ref=None):
+    def validation(data,inputs, variables, data_ref=None, inputs_ref=None):
         if model_ref is not None:
-            if data_ref is None:
-                raise ValueError(
-                    "validation was setup with model_ref but data_ref was not provided"
-                )
-            output_ref = evaluate(model_ref, model_ref.variables, data)
+            output_ref = evaluate(model_ref, model_ref.variables, inputs)
             # _, _, output_ref = model_ref._energy_and_forces(model_ref.variables, data)
-        output = evaluate(model, variables, data)
+        output = evaluate(model, variables, inputs)
         # _, _, output = model._energy_and_forces(variables, data)
         if compute_ref_coords:
-            output_data_ref = evaluate(model, variables, data_ref)
+            if data_ref is None or inputs_ref is None:
+                raise ValueError(
+                    "validation was setup with compute_ref_coords but data_ref was not provided"
+                )
+            output_data_ref = evaluate(model, variables, inputs_ref)
             # _,_,output_data_ref = model._energy_and_forces(variables, data_ref)
-        nsys = jnp.sum(data["true_sys"])
-        nat = jnp.sum(data["true_atoms"])
+        nsys = jnp.sum(inputs["true_sys"])
+        nat = jnp.sum(inputs["true_atoms"])
         rmses = {}
         maes = {}
         if return_targets:
@@ -430,8 +445,10 @@ def get_validation_function(
                 if loss_prms["ref"].startswith("model_ref/"):
                     assert model_ref is not None, "model_ref must be provided"
                     ref = output_ref[loss_prms["ref"][10:]] * loss_prms["mult"]
+                if loss_prms["ref"].startswith("model/"):
+                    ref = output[loss_prms["ref"][6:]] * loss_prms["mult"]
                 else:
-                    ref = output[loss_prms["ref"]] * loss_prms["mult"]
+                    ref = data[loss_prms["ref"]] * loss_prms["mult"]
             else:
                 ref = jnp.zeros_like(predicted)
 
@@ -456,15 +473,15 @@ def get_validation_function(
             if ref.shape[0] == output["batch_index"].shape[0]:
                 ## shape is number of atoms
                 nel = nel * nat / ref.shape[0]
-                truth_mask = data["true_atoms"].reshape(*shape_mask)
-                ref = ref * data["true_atoms"].reshape(*shape_mask)
-                predicted = predicted * data["true_atoms"].reshape(*shape_mask)
+                truth_mask = inputs["true_atoms"].reshape(*shape_mask)
+                ref = ref * inputs["true_atoms"].reshape(*shape_mask)
+                predicted = predicted * inputs["true_atoms"].reshape(*shape_mask)
             elif ref.shape[0] == output["natoms"].shape[0]:
                 ## shape is number of systems
                 nel = nel * nsys / ref.shape[0]
-                truth_mask = data["true_sys"].reshape(*shape_mask)
-                ref = ref * data["true_sys"].reshape(*shape_mask)
-                predicted = predicted * data["true_sys"].reshape(*shape_mask)
+                truth_mask = inputs["true_sys"].reshape(*shape_mask)
+                ref = ref * inputs["true_sys"].reshape(*shape_mask)
+                predicted = predicted * inputs["true_sys"].reshape(*shape_mask)
                 if loss_prms.get("per_atom_validation", False):
                     ref = ref / output["natoms"].reshape(*shape_mask)
                     predicted = predicted / output["natoms"].reshape(*shape_mask)

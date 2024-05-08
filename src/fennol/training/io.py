@@ -5,9 +5,11 @@ import pickle
 from flax import traverse_util
 from typing import Dict, List, Tuple, Union, Optional, Callable
 from .databases import DBDataset, H5Dataset
+from ..models.preprocessing import AtomPadding
 
 import json
 import yaml
+
 try:
     import tomlkit
 except ImportError:
@@ -39,7 +41,7 @@ def load_configuration(config_file: str) -> Dict[str, any]:
     return parameters
 
 
-def load_dataset(training_parameters, rename_refs=[],infinite_iterator=True):
+def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, atom_padding=False):
     """
     Load a dataset from a pickle file and return two iterators for training and validation batches.
 
@@ -57,29 +59,37 @@ def load_dataset(training_parameters, rename_refs=[],infinite_iterator=True):
             - 'batch_index': np.ndarray. Array with the index of the system to which each atom
             if the keys "forces", "total_energy", "atomic_energies" or any of the elements in rename_refs are present, the keys are renamed by prepending "true_" to the key name.
     """
-    rename_refs = set(["forces", "total_energy", "atomic_energies"] + list(rename_refs))
+    # rename_refs = set(["forces", "total_energy", "atomic_energies"] + list(rename_refs))
     pbc_training = training_parameters.get("pbc_training", False)
-
 
     if pbc_training:
         print("Periodic boundary conditions are active.")
         length_nopbc = training_parameters.get("length_nopbc", 1000.0)
         minimum_image = training_parameters.get("minimum_image", False)
         ase_nblist = training_parameters.get("ase_nblist", False)
-        def collate_fn(batch):
+
+        def collate_fn_(batch):
             output = defaultdict(list)
             for i, d in enumerate(batch):
                 nat = d["species"].shape[0]
                 output["natoms"].append(np.asarray([nat]))
                 output["batch_index"].append(np.asarray([i] * nat))
+                if "total_charge" not in d:
+                    output["total_charge"].append(np.asarray(0.0, dtype=np.float32))
                 if "cell" not in d:
-                    cell = np.asarray([[length_nopbc, 0.0, 0.0], [0.0, length_nopbc, 0.0], [0.0, 0.0, length_nopbc]])
+                    cell = np.asarray(
+                        [
+                            [length_nopbc, 0.0, 0.0],
+                            [0.0, length_nopbc, 0.0],
+                            [0.0, 0.0, length_nopbc],
+                        ]
+                    )
                 else:
                     cell = d["cell"]
                 output["cells"].append(cell.reshape(1, 3, 3))
 
                 for k, v in d.items():
-                    if k=="cell":
+                    if k == "cell":
                         continue
                     output[k].append(np.asarray(v))
             for k, v in output.items():
@@ -87,23 +97,29 @@ def load_dataset(training_parameters, rename_refs=[],infinite_iterator=True):
                     output[k] = np.stack(v)
                 else:
                     output[k] = np.concatenate(v, axis=0)
-            for key in rename_refs:
-                if key in output:
-                    output["true_" + key] = output.pop(key)
-            
-            output["minimum_image"]=minimum_image
-            output["ase_nblist"]=ase_nblist
-            output["training_flag"]=True
+            # for key in rename_refs:
+            #    if key in output:
+            #        output["true_" + key] = output.pop(key)
+
+            output["minimum_image"] = minimum_image
+            output["ase_nblist"] = ase_nblist
+            output["training_flag"] = True
             return output
+
     else:
-        def collate_fn(batch):
+
+        def collate_fn_(batch):
             output = defaultdict(list)
             for i, d in enumerate(batch):
                 if "cell" in d:
-                    raise ValueError("Activate pbc_training to use periodic boundary conditions.")
+                    raise ValueError(
+                        "Activate pbc_training to use periodic boundary conditions."
+                    )
                 nat = d["species"].shape[0]
                 output["natoms"].append(np.asarray([nat]))
                 output["batch_index"].append(np.asarray([i] * nat))
+                if "total_charge" not in d:
+                    output["total_charge"].append(np.asarray([0.0], dtype=np.float32))
                 for k, v in d.items():
                     output[k].append(np.asarray(v))
             for k, v in output.items():
@@ -111,19 +127,32 @@ def load_dataset(training_parameters, rename_refs=[],infinite_iterator=True):
                     output[k] = np.stack(v)
                 else:
                     output[k] = np.concatenate(v, axis=0)
-            for key in rename_refs:
-                if key in output:
-                    output["true_" + key] = output.pop(key)
-            
-            output["training_flag"]=True
+            # for key in rename_refs:
+            #    if key in output:
+            #        output["true_" + key] = output.pop(key)
+
+            output["training_flag"] = True
             return output
+    
+    if atom_padding:
+        padder = AtomPadding()
+        padder_state = padder.init()
+        def collate_with_padding(batch):
+            output = collate_fn_(batch)
+            padder_state_up,output = padder(padder_state,output)
+            padder_state.update(padder_state_up)
+            return output
+        
+        collate_fn = collate_with_padding
+    else:
+        collate_fn = collate_fn_
 
     # dspath = "dataset_ani1ccx.pkl"
     dspath = training_parameters.get("dspath", None)
     if dspath is None:
         raise ValueError("Dataset path 'training/dspath' should be specified.")
     print(f"Loading dataset from {dspath}...")
-    print(f"   the following keys will be renamed if present : {rename_refs}")
+    # print(f"   the following keys will be renamed if present : {rename_refs}")
     if dspath.endswith(".db"):
         dataset = {}
         dataset["training"] = DBDataset(dspath, table="training")
@@ -145,13 +174,34 @@ def load_dataset(training_parameters, rename_refs=[],infinite_iterator=True):
         collate_fn=collate_fn,
     )
     dataloader_training = DataLoader(
-        dataset["training"], batch_size=batch_size, shuffle=shuffle, collate_fn=collate_fn
+        dataset["training"],
+        batch_size=batch_size,
+        shuffle=shuffle,
+        collate_fn=collate_fn,
     )
 
     print("Dataset loaded.")
 
+    input_keys = [
+        "species",
+        "coordinates",
+        "natoms",
+        "batch_index",
+        "training_flag",
+        "total_charge",
+    ]
+    if pbc_training:
+        input_keys += ["cells", "minimum_image"]
+    if atom_padding:
+        input_keys += ["true_atoms","true_sys"]
+    additional_input_keys = training_parameters.get("additional_input_keys", [])
+    input_keys += additional_input_keys
+
+    def extract_inputs(batch):
+        return {k: batch[k] for k in input_keys}
+
     if not infinite_iterator:
-        return dataloader_training, dataloader_validation
+        return dataloader_training, dataloader_validation,extract_inputs
 
     def next_batch_factory(dataloader):
         while True:
@@ -161,7 +211,7 @@ def load_dataset(training_parameters, rename_refs=[],infinite_iterator=True):
     validation_iterator = next_batch_factory(dataloader_validation)
     training_iterator = next_batch_factory(dataloader_training)
 
-    return training_iterator, validation_iterator
+    return training_iterator, validation_iterator, extract_inputs
 
 
 def load_model(
@@ -183,7 +233,7 @@ def load_model(
     if model_file is None:
         model_file = parameters.get("model_file", None)
     if model_file is not None and os.path.exists(model_file):
-        model = FENNIX.load(model_file, use_atom_padding=True)
+        model = FENNIX.load(model_file, use_atom_padding=False)
         if print_model:
             print(model.summarize())
         print(f"Restored model from '{model_file}'.")
@@ -192,7 +242,7 @@ def load_model(
             rng_key is not None
         ), "rng_key must be specified if model_file is not provided."
         model_params = parameters["model"]
-        model = FENNIX(**model_params, rng_key=rng_key, use_atom_padding=True)
+        model = FENNIX(**model_params, rng_key=rng_key, use_atom_padding=False)
         if print_model:
             print(model.summarize())
     return model
@@ -215,7 +265,6 @@ def copy_parameters(variables, variables_ref, params):
             for k, v in flat.items()
         }
     )
-
 
 
 class TeeLogger(object):
