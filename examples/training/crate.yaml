@@ -1,0 +1,103 @@
+device: cuda:0
+output_directory: run_dir_aspirin_crate
+log_file: train.log
+print_timings: True
+
+training:
+  dspath: rmd17_aspirin_01.pkl
+  batch_size: 100
+  max_epochs: 1000
+  nbatch_per_epoch: 10
+  nbatch_per_validation: 1
+  ema_decay: 0.99
+  default_loss_type: mse
+
+  energy_terms: [energy]
+  # energy_terms: [energy, repulsion]
+  # print_model: True
+  # frozen: [repulsion]
+
+
+  init_lr: 1.e-3
+  lr: 2.e-3
+  final_lr: 1.e-6
+  #peak_epoch: 100
+  # end_event: [rmse_f, 5.]
+  loss:
+    e:
+      key: total_energy
+      ref: formation_energy
+      weight: 1.e-3
+      unit: kcalpermol
+      threshold: 10.
+    f:
+      key: forces
+      ref: forces
+      weight: 1.
+      unit: kcalpermol
+      threshold: 3.
+
+model:
+  cutoff: 5.1
+  preprocessing:
+    graph:
+      switch_params:
+        switch_type: polynomial
+        p: 3.
+        trainable: True
+    graph_filter_angle:
+      module_name: GRAPH_FILTER
+      cutoff: 3.5
+      graph_key: graph_angle
+      parent_graph: graph
+      remove_hydrogens: True
+      switch_params:
+        switch_type: polynomial
+        p: 20.
+        trainable: True
+    angle_extension:
+      module_name: GRAPH_ANGULAR_EXTENSION
+      graph_key: graph_angle
+
+  modules:
+    embedding:
+      module_name: CRATE
+      dim: 512
+      dim_src: 32
+      dim_dst: 16
+      dim_angle: 32
+      nmax_angle: 4
+      nlayers: 3
+      radial_basis:
+        dim: 10
+        basis: spooky
+        trainable: True
+      radial_basis_angle:
+        dim: 8
+        basis: gaussian
+        start: 0.8
+        trainable: True
+      species_encoding:
+        # dim: 64
+        encoding: electronic_structure
+        trainable: False
+        zmax: 86
+      embedding_key: embedding
+      graph_angle_key: graph_angle
+      message_passing: True
+      mixing_hidden: []
+      activation_mixing: swish
+      activation: swish
+      species_init: True
+
+    energy:
+      module_name: NEURAL_NET
+      neurons: [256,192,160, 1]
+      activation: swish
+      input_key: embedding
+      use_bias: True
+
+#    repulsion:
+#      module_name: repulsion_zbl
+#      trainable: True
+
