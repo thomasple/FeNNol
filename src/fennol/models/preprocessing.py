@@ -75,11 +75,11 @@ class GraphGenerator:
         if self.graph_key in inputs:
             graph = inputs[self.graph_key]
             if "keep_graph" in graph:
-                return state,inputs
-            
-        coords = np.array(inputs["coordinates"],dtype=np.float32)
-        natoms = np.array(inputs["natoms"],dtype=np.int32)
-        batch_index = np.array(inputs["batch_index"],dtype=np.int32)
+                return state, inputs
+
+        coords = np.array(inputs["coordinates"], dtype=np.float32)
+        natoms = np.array(inputs["natoms"], dtype=np.int32)
+        batch_index = np.array(inputs["batch_index"], dtype=np.int32)
 
         new_state = {**state}
         state_up = {}
@@ -102,7 +102,7 @@ class GraphGenerator:
                 (p1[None, :] < natoms[:, None]) * (p2[None, :] < natoms[:, None])
             ).flatten()
             shift = np.concatenate(
-                (np.array([0], dtype=np.int32), np.cumsum(natoms[:-1],dtype=np.int32))
+                (np.array([0], dtype=np.int32), np.cumsum(natoms[:-1], dtype=np.int32))
             )
             p1 = np.where(mask_p12, (p1[None, :] + shift[:, None]).flatten(), -1)
             p2 = np.where(mask_p12, (p2[None, :] + shift[:, None]).flatten(), -1)
@@ -112,8 +112,8 @@ class GraphGenerator:
             ### NO PBC
             vec = coords[p2] - coords[p1]
         else:
-            cells = np.array(inputs["cells"],dtype=np.float32)
-            reciprocal_cells = np.array(inputs["reciprocal_cells"],dtype=np.float32)
+            cells = np.array(inputs["cells"], dtype=np.float32)
+            reciprocal_cells = np.array(inputs["reciprocal_cells"], dtype=np.float32)
             minimage = state.get("minimum_image", True)
             if minimage:
                 ## MINIMUM IMAGE CONVENTION
@@ -123,9 +123,13 @@ class GraphGenerator:
                     pbc_shifts = -np.round(vecpbc)
                     vec = vec + np.dot(pbc_shifts, cells[0])
                 else:
-                    vecpbc = np.einsum("aj,aji->ai", vec, reciprocal_cells[batch_index_vec])
+                    vecpbc = np.einsum(
+                        "aj,aji->ai", vec, reciprocal_cells[batch_index_vec]
+                    )
                     pbc_shifts = -np.round(vecpbc)
-                    vec = vec + np.einsum("aj,aji->ai", pbc_shifts, cells[batch_index_vec])
+                    vec = vec + np.einsum(
+                        "aj,aji->ai", pbc_shifts, cells[batch_index_vec]
+                    )
             else:
                 ### GENERAL PBC
                 ## put all atoms in central box
@@ -134,9 +138,13 @@ class GraphGenerator:
                     at_shifts = -np.floor(coords_pbc)
                     coords_pbc = coords + np.dot(at_shifts, cells[0])
                 else:
-                    coords_pbc = np.einsum("aj,aji->ai", coords, reciprocal_cells[batch_index])
+                    coords_pbc = np.einsum(
+                        "aj,aji->ai", coords, reciprocal_cells[batch_index]
+                    )
                     at_shifts = -np.floor(coords_pbc)
-                    coords_pbc = coords + np.einsum("aj,aji->ai", at_shifts, cells[batch_index])
+                    coords_pbc = coords + np.einsum(
+                        "aj,aji->ai", at_shifts, cells[batch_index]
+                    )
 
                 ## compute maximum number of repeats
                 inv_distances = (np.sum(reciprocal_cells**2, axis=1)) ** 0.5
@@ -159,7 +167,7 @@ class GraphGenerator:
                     dvec = np.dot(cell_shift_pbc, cells[0])[None, :, :]
                 else:
                     batch_index_vec = batch_index[p1]
-                    dvec = np.einsum("bj,sji->sbi", cell_shift_pbc,cells)[
+                    dvec = np.einsum("bj,sji->sbi", cell_shift_pbc, cells)[
                         batch_index_vec
                     ]
                 ## compute vectors
@@ -578,7 +586,9 @@ class GraphProcessor(nn.Module):
                 vec = vec + jnp.dot(graph["pbc_shifts"], cells[0])
             else:
                 batch_index_vec = inputs["batch_index"][edge_src]
-                vec = vec + jax.vmap(jnp.dot)(graph["pbc_shifts"], cells[batch_index_vec])
+                vec = vec + jax.vmap(jnp.dot)(
+                    graph["pbc_shifts"], cells[batch_index_vec]
+                )
 
         distances = jnp.linalg.norm(vec, axis=-1)
         edge_mask = distances < self.cutoff
@@ -600,7 +610,7 @@ class GraphProcessor(nn.Module):
 @dataclasses.dataclass(frozen=True)
 class GraphFilter:
     """Filter a graph based on a cutoff distance
-    
+
     FID: GRAPH_FILTER
     """
 
@@ -833,7 +843,7 @@ class GraphFilterProcessor(nn.Module):
 @dataclasses.dataclass(frozen=True)
 class GraphAngularExtension:
     """Add angles list to a graph
-    
+
     FID: GRAPH_ANGULAR_EXTENSION
     """
 
@@ -1006,7 +1016,9 @@ class GraphAngularExtension:
         ### map sparse to dense nblist
         if max_neigh * nat < nedge:
             raise ValueError("Found max_neigh*nat < nedge. This should not happen.")
-        offset = jnp.asarray(np.tile(np.arange(max_neigh), nat)[:nedge], dtype=jnp.int32)
+        offset = jnp.asarray(
+            np.tile(np.arange(max_neigh), nat)[:nedge], dtype=jnp.int32
+        )
         # offset = jnp.where(edge_src_sorted < nat, offset, 0)
         indices = edge_src_sorted * max_neigh + offset
         edge_idx = (
@@ -1080,12 +1092,12 @@ class GraphAngleProcessor(nn.Module):
         angle_src = graph["angle_src"]
         angle_dst = graph["angle_dst"]
 
-        d1 = distances.at[angle_src].get(mode="fill", fill_value=1.0)
-        d2 = distances.at[angle_dst].get(mode="fill", fill_value=1.0)
-        vec1 = vec.at[angle_src].get(mode="fill", fill_value=1.0)
-        vec2 = vec.at[angle_dst].get(mode="fill", fill_value=0.0)
+        dir = vec / jnp.clip(distances[:, None], a_min=1.0e-5)
+        cos_angles = (
+            dir.at[angle_src].get(mode="fill", fill_value=0.5)
+            * dir.at[angle_dst].get(mode="fill", fill_value=0.5)
+        ).sum(axis=-1)
 
-        cos_angles = (vec1 * vec2).sum(axis=-1) / jnp.clip(d1 * d2, a_min=1e-10)
         angles = jnp.arccos(0.95 * cos_angles)
 
         return {
@@ -1187,11 +1199,41 @@ class SpeciesIndexer:
 
     @partial(jax.jit, static_argnums=(0, 1))
     def process(self, state, inputs):
-        assert (
-            self.output_key in inputs
-        ), f"Species Index {self.output_key} must be provided on accelerator. Call the numpy routine (self.__call__) first."
+        # assert (
+        #     self.output_key in inputs
+        # ), f"Species Index {self.output_key} must be provided on accelerator. Call the numpy routine (self.__call__) first."
 
-        return inputs
+        if self.output_key in inputs and "recompute_species_index" not in inputs:
+            return inputs
+
+        species = inputs["species"]
+        nat = species.shape[0]
+
+        sizes = state["sizes"]
+
+        if self.species_order is not None:
+            species_order = [el.strip() for el in self.species_order.split(",")]
+            max_size = state["max_size"]
+
+            species_index = jnp.full(
+                (len(species_order), max_size), nat, dtype=jnp.int32
+            )
+            for i, el in enumerate(species_order):
+                s = PERIODIC_TABLE_REV_IDX[el]
+                if s in sizes.keys():
+                    c = sizes[s]
+                    species_index = species_index.at[i, :].set(
+                        jnp.nonzero(species == s, size=max_size, fill_value=nat)[0]
+                    )
+                # if s in counts_dict.keys():
+                #     species_index[i, : counts_dict[s]] = np.nonzero(species == s)[0]
+        else:
+            species_index = {
+                PERIODIC_TABLE[s]: jnp.nonzero(species == s, size=c, fill_value=nat)[0]
+                for s, c in sizes.items()
+            }
+
+        return {**inputs, self.output_key: species_index}
 
     @partial(jax.jit, static_argnums=(0,))
     def update_skin(self, inputs):
@@ -1201,6 +1243,7 @@ class SpeciesIndexer:
 @dataclasses.dataclass(frozen=True)
 class AtomPadding:
     """Pad atomic arrays to a fixed size."""
+
     mult_size: float = 1.2
     """Multiplicative factor for resizing the atomic arrays."""
 
@@ -1320,6 +1363,7 @@ def check_input(inputs):
 
 def convert_to_jax(data):
     """Convert a numpy arrays to jax arrays in a pytree."""
+
     def convert(x):
         if isinstance(x, np.ndarray):
             # if x.dtype == np.float64:
@@ -1332,6 +1376,7 @@ def convert_to_jax(data):
 
 class JaxConverter(nn.Module):
     """Convert numpy arrays to jax arrays in a pytree."""
+
     def __call__(self, data):
         return convert_to_jax(data)
 
@@ -1339,6 +1384,7 @@ class JaxConverter(nn.Module):
 @dataclasses.dataclass(frozen=True)
 class PreprocessingChain:
     """Chain of preprocessing layers."""
+
     layers: Tuple[Callable[..., Dict[str, Any]]]
     """Preprocessing layers."""
     use_atom_padding: bool = False

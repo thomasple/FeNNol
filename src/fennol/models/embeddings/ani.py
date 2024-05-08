@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
-from typing import Sequence, Dict, Union,ClassVar
+from typing import Sequence, Dict, Union, ClassVar
 import numpy as np
 from ...utils.periodic_table import PERIODIC_TABLE
 
@@ -16,7 +16,7 @@ class ANIAEV(nn.Module):
     """
 
     _graphs_properties: Dict
-    species_order: Union[str,Sequence[str]]
+    species_order: Union[str, Sequence[str]]
     """ The chemical species which are considered by the model."""
     graph_angle_key: str
     """ The key in the input dictionary that corresponds to the angular graph."""
@@ -52,9 +52,9 @@ class ANIAEV(nn.Module):
         # convert species to internal indices
         conv_tensor = [0] * (maxidx + 2)
         if isinstance(self.species_order, str):
-            species_order =  [el.strip() for el in self.species_order.split(",")]
+            species_order = [el.strip() for el in self.species_order.split(",")]
         else:
-            species_order = [ el for el in self.species_order]
+            species_order = [el for el in self.species_order]
         for i, s in enumerate(species_order):
             conv_tensor[rev_idx[s]] = i
         indices = jnp.asarray(conv_tensor, dtype=jnp.int32)[species]
@@ -71,13 +71,13 @@ class ANIAEV(nn.Module):
         # Radial AEV
         cutoff = self._graphs_properties[self.graph_key]["cutoff"]
         shiftR = jnp.asarray(
-            np.linspace(self.radial_start, cutoff, self.radial_dist_divisions + 1)[
+            - np.linspace(self.radial_start, cutoff, self.radial_dist_divisions + 1)[
                 None, :-1
             ],
             dtype=distances.dtype,
         )
-        x2 = self.radial_eta * (distances[:, None] - shiftR) ** 2
-        radial_terms = 0.25 * jnp.exp(-x2) * switch[:, None]
+        x2 = self.radial_eta * (distances[:, None] + shiftR) ** 2
+        radial_terms = jnp.exp(-x2) * (0.25*switch)[:, None]
         # aggregate radial AEV
         radial_index = edge_src * num_species + indices[edge_dst]
 
@@ -86,37 +86,37 @@ class ANIAEV(nn.Module):
         ).reshape(species.shape[0], num_species * radial_terms.shape[-1])
 
         # Angular graph
+        # eta2 = self.angular_eta ** 0.5
         graph = inputs[self.graph_angle_key]
         angles = graph["angles"]
-        distances = graph["distances"]
+        distances = (0.5*self.angular_eta**0.5)*graph["distances"]
         central_atom = graph["central_atom"]
         angle_src, angle_dst = graph["angle_src"], graph["angle_dst"]
-        switch = graph["switch"]
-        d12 = 0.5 * (distances[angle_src] + distances[angle_dst])[:, None]
+        d12 = (distances[angle_src] + distances[angle_dst])[:, None]
 
         # Angular AEV parameters
         angular_cutoff = self._graphs_properties[self.graph_angle_key]["cutoff"]
         angle_start = np.pi / (2 * self.angle_sections)
         shiftZ = jnp.asarray(
-            (np.linspace(0, np.pi, self.angle_sections + 1) + angle_start)[None, :-1],
+            -(np.linspace(0, np.pi, self.angle_sections + 1) + angle_start)[None, :-1],
             dtype=distances.dtype,
         )
         shiftA = jnp.asarray(
-            np.linspace(
+            (-self.angular_eta**0.5)*np.linspace(
                 self.angular_start, angular_cutoff, self.angular_dist_divisions + 1
             )[None, :-1],
             dtype=distances.dtype,
         )
 
         # Angular AEV
-        factor1 = (0.5 + 0.5 * jnp.cos(angles[:, None] - shiftZ)) ** self.zeta
-        factor2 = jnp.exp(-self.angular_eta * (d12 - shiftA) ** 2)
-        angular_terms = (
-            (factor1[:, None, :] * factor2[:, :, None]).reshape(
-                -1, self.angle_sections * self.angular_dist_divisions
-            )
-            * 2
-            * (switch[angle_src] * switch[angle_dst])[:, None]
+        switch = graph["switch"] *(2.0 *(0.5**self.zeta))**0.5
+        factor1 = switch[angle_src] * switch[angle_dst]
+        factor1 = (
+            factor1[:, None] * (1 + jnp.cos(angles[:, None] + shiftZ)) ** self.zeta
+        )
+        factor2 = jnp.exp(-(d12 + shiftA) ** 2)
+        angular_terms = (factor1[:, None, :] * factor2[:, :, None]).reshape(
+            -1, self.angle_sections * self.angular_dist_divisions
         )
 
         # aggregate angular AEV

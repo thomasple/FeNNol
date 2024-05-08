@@ -64,6 +64,8 @@ class CRATEmbedding(nn.Module):
     ignore_irreps_parity: bool = False
     """Whether to ignore the parity of the irreps in the tensor product."""
 
+    species_init: bool = False
+    """Whether to initialize the embedding using the species encoding."""
     mixing_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [])
     """The hidden layer sizes for the mixing network."""
     pair_mixing_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [])
@@ -175,6 +177,8 @@ class CRATEmbedding(nn.Module):
             Ni = ai * (Ntot / A)[batch_index]
             charge_embedding = positional_encoding(Ni, self.dim)
             xi = xi + charge_embedding
+        elif self.species_init:
+            xi = nn.Dense(self.dim, use_bias=False, name="SpeciesInit")(zi)
         else:
             xi = zi
 
@@ -629,7 +633,7 @@ class CRATEmbedding(nn.Module):
 
             ##################################################
             ### UPDATE EMBEDDING ###
-            if layer == 0:
+            if layer == 0 and not self.species_init:
                 xi = dxi
             else:
                 ### FORGET GATE ###
