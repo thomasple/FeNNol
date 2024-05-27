@@ -503,7 +503,7 @@ class QeqD4(nn.Module):
             c4 = jnp.zeros_like(species, dtype=jnp.float32)
             ENi = jnp.asarray(D3_ELECTRONEGATIVITIES)[species]
             # Jii = jnp.asarray(D3_HARDNESSES)[species]
-            eta = jnp.asarray(eta)[species]
+            eta = jnp.asarray(ETA)[species]
             ai = jnp.asarray(D3_VDW_RADII)[species]
             rci = jnp.asarray(D3_COV_RADII)[species]
             kappai = jnp.asarray(D3_KAPPA)[species]
@@ -725,7 +725,7 @@ class DistributeElectrons(nn.Module):
         Nel = jnp.asarray(VALENCE_ELECTRONS)[species]
 
         ei = nn.Dense(1, use_bias=True, name="wi")(inputs[self.embedding_key]).squeeze(-1)
-        wi = jnp.log1p(jnp.exp(ei))
+        wi = jax.nn.softplus(ei)
 
         batch_index = inputs["batch_index"]
         nsys = inputs["natoms"].shape[0]
