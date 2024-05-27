@@ -2,6 +2,7 @@ import os, io, sys
 import numpy as np
 from collections import defaultdict
 import pickle
+import glob
 from flax import traverse_util
 from typing import Dict, List, Tuple, Union, Optional, Callable
 from .databases import DBDataset, H5Dataset
@@ -41,7 +42,7 @@ def load_configuration(config_file: str) -> Dict[str, any]:
     return parameters
 
 
-def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, atom_padding=False):
+def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, atom_padding=False,ref_keys=None,split_data_inputs=False):
     """
     Load a dataset from a pickle file and return two iterators for training and validation batches.
 
@@ -60,18 +61,23 @@ def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, a
             if the keys "forces", "total_energy", "atomic_energies" or any of the elements in rename_refs are present, the keys are renamed by prepending "true_" to the key name.
     """
     # rename_refs = set(["forces", "total_energy", "atomic_energies"] + list(rename_refs))
+    rename_refs = set(list(rename_refs))
     pbc_training = training_parameters.get("pbc_training", False)
+
+    additional_input_keys = set(training_parameters.get("additional_input_keys", []))
+    extract_all_keys = ref_keys is None
+    if ref_keys is not None:
+        ref_keys = set(ref_keys)
 
     if pbc_training:
         print("Periodic boundary conditions are active.")
         length_nopbc = training_parameters.get("length_nopbc", 1000.0)
-        minimum_image = training_parameters.get("minimum_image", False)
-        ase_nblist = training_parameters.get("ase_nblist", False)
 
         def collate_fn_(batch):
             output = defaultdict(list)
             for i, d in enumerate(batch):
                 nat = d["species"].shape[0]
+                
                 output["natoms"].append(np.asarray([nat]))
                 output["batch_index"].append(np.asarray([i] * nat))
                 if "total_charge" not in d:
@@ -85,24 +91,32 @@ def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, a
                         ]
                     )
                 else:
-                    cell = d["cell"]
+                    cell = np.asarray(d["cell"])
                 output["cells"].append(cell.reshape(1, 3, 3))
 
-                for k, v in d.items():
-                    if k == "cell":
-                        continue
-                    output[k].append(np.asarray(v))
+                if extract_all_keys:
+                    for k, v in d.items():
+                        if k == "cell":
+                            continue
+                        output[k].append(np.asarray(v))
+                else:
+                    output["species"].append(np.asarray(d["species"]))
+                    output["coordinates"].append(np.asarray(d["coordinates"]))
+                    for k in additional_input_keys:
+                        output[k].append(np.asarray(d[k]))
+                    for k in ref_keys:
+                        output[k].append(np.asarray(d[k]))
+                        if k+"_mask" in d:
+                            output[k+"_mask"].append(np.asarray(d[k+"_mask"]))
             for k, v in output.items():
                 if v[0].ndim == 0:
                     output[k] = np.stack(v)
                 else:
                     output[k] = np.concatenate(v, axis=0)
-            # for key in rename_refs:
-            #    if key in output:
-            #        output["true_" + key] = output.pop(key)
+            for key in rename_refs:
+               if key in output:
+                   output["true_" + key] = output.pop(key)
 
-            output["minimum_image"] = minimum_image
-            output["ase_nblist"] = ase_nblist
             output["training_flag"] = True
             return output
 
@@ -120,39 +134,91 @@ def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, a
                 output["batch_index"].append(np.asarray([i] * nat))
                 if "total_charge" not in d:
                     output["total_charge"].append(np.asarray([0.0], dtype=np.float32))
-                for k, v in d.items():
-                    output[k].append(np.asarray(v))
-            for k, v in output.items():
-                if v[0].ndim == 0:
-                    output[k] = np.stack(v)
+                if extract_all_keys:
+                    for k, v in d.items():
+                        output[k].append(np.asarray(v))
                 else:
-                    output[k] = np.concatenate(v, axis=0)
-            # for key in rename_refs:
-            #    if key in output:
-            #        output["true_" + key] = output.pop(key)
+                    output["species"].append(np.asarray(d["species"]))
+                    output["coordinates"].append(np.asarray(d["coordinates"]))
+                    for k in additional_input_keys:
+                        output[k].append(np.asarray(d[k]))
+                    for k in ref_keys:
+                        output[k].append(np.asarray(d[k]))
+                        if k+"_mask" in d:
+                            output[k+"_mask"].append(np.asarray(d[k+"_mask"]))
+            for k, v in output.items():
+                try:
+                    if v[0].ndim == 0:
+                        output[k] = np.stack(v)
+                    else:
+                        output[k] = np.concatenate(v, axis=0)
+                except Exception as e:
+                    raise Exception(f"Error in key {k}: {e}")
+            for key in rename_refs:
+               if key in output:
+                   output["true_" + key] = output.pop(key)
 
             output["training_flag"] = True
             return output
     
+    collate_layers = [collate_fn_]
+    
+    ### collate preprocessing
     if atom_padding:
         padder = AtomPadding()
         padder_state = padder.init()
         def collate_with_padding(batch):
-            output = collate_fn_(batch)
-            padder_state_up,output = padder(padder_state,output)
+            padder_state_up,output = padder(padder_state,batch)
             padder_state.update(padder_state_up)
             return output
         
-        collate_fn = collate_with_padding
+        collate_layers.append(collate_with_padding)
+
+    if split_data_inputs:
+        input_keys = [
+            "species",
+            "coordinates",
+            "natoms",
+            "batch_index",
+            "training_flag",
+            "total_charge",
+        ]
+        if pbc_training:
+            input_keys += ["cells"]
+        if atom_padding:
+            input_keys += ["true_atoms","true_sys"]
+        input_keys += additional_input_keys
+        input_keys = set(input_keys)
+
+        def collate_split(batch):
+            inputs = {}
+            refs = {}
+            for k,v in batch.items():
+                if k in input_keys:
+                    inputs[k] = v
+                else:
+                    refs[k] = v
+            return inputs,refs
+        collate_layers.append(collate_split)
+    
+
+    ### apply all collate preprocessing
+    if len(collate_layers)==1:
+        collate_fn = collate_layers[0]
     else:
-        collate_fn = collate_fn_
+        def collate_fn(batch):
+            for layer in collate_layers:
+                batch = layer(batch)
+            return batch
+
 
     # dspath = "dataset_ani1ccx.pkl"
     dspath = training_parameters.get("dspath", None)
     if dspath is None:
         raise ValueError("Dataset path 'training/dspath' should be specified.")
-    print(f"Loading dataset from {dspath}...")
+    print(f"Loading dataset from {dspath}...", end="")
     # print(f"   the following keys will be renamed if present : {rename_refs}")
+    sharded_training = False
     if dspath.endswith(".db"):
         dataset = {}
         dataset["training"] = DBDataset(dspath, table="training")
@@ -161,10 +227,22 @@ def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, a
         dataset = {}
         dataset["training"] = H5Dataset(dspath, table="training")
         dataset["validation"] = H5Dataset(dspath, table="validation")
-    else:
+    elif dspath.endswith(".pkl") or dspath.endswith(".pickle"):
         with open(dspath, "rb") as f:
             dataset = pickle.load(f)
+    elif os.path.isdir(dspath):
+        dataset = {}
+        with open(dspath+"/validation.pkl", "rb") as f:
+            dataset["validation"] = pickle.load(f)
+        sharded_training = True
+    else:
+        raise ValueError(
+            f"Unknown dataset format. Supported formats: '.db', '.h5', '.pkl', '.pickle'"
+        )
+    print(" done.")
+    
 
+    ### BUILD DATALOADERS
     batch_size = training_parameters.get("batch_size", 16)
     shuffle = training_parameters.get("shuffle_dataset", True)
     dataloader_validation = DataLoader(
@@ -173,35 +251,43 @@ def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, a
         shuffle=shuffle,
         collate_fn=collate_fn,
     )
-    dataloader_training = DataLoader(
-        dataset["training"],
-        batch_size=batch_size,
-        shuffle=shuffle,
-        collate_fn=collate_fn,
-    )
-
-    print("Dataset loaded.")
-
-    input_keys = [
-        "species",
-        "coordinates",
-        "natoms",
-        "batch_index",
-        "training_flag",
-        "total_charge",
-    ]
-    if pbc_training:
-        input_keys += ["cells", "minimum_image"]
-    if atom_padding:
-        input_keys += ["true_atoms","true_sys"]
-    additional_input_keys = training_parameters.get("additional_input_keys", [])
-    input_keys += additional_input_keys
-
-    def extract_inputs(batch):
-        return {k: batch[k] for k in input_keys}
+    if sharded_training:
+        files = sorted(glob.glob(dspath+"/training_*.pkl"))
+        nshards = len(files)
+        print(f"Found {nshards} dataset shards.")
+        def iterate_sharded_dataset():
+            indices = np.arange(nshards)
+            if shuffle:
+                np.random.shuffle(indices)
+            for i in indices:
+                filename = files[i]
+                print(f"# Loading dataset shard from {filename}...", end="")
+                with open(filename, "rb") as f:
+                    dataset = pickle.load(f)
+                print(" done.")
+                dataloader = DataLoader(
+                    dataset,
+                    batch_size=batch_size,
+                    shuffle=shuffle,
+                    collate_fn=collate_fn,
+                )
+                for batch in dataloader:
+                    yield batch
+    
+        class DataLoaderSharded:
+            def __iter__(self):
+                return iterate_sharded_dataset()
+        dataloader_training = DataLoaderSharded()
+    else:
+        dataloader_training = DataLoader(
+            dataset["training"],
+            batch_size=batch_size,
+            shuffle=shuffle,
+            collate_fn=collate_fn,
+        )
 
     if not infinite_iterator:
-        return dataloader_training, dataloader_validation,extract_inputs
+        return dataloader_training, dataloader_validation
 
     def next_batch_factory(dataloader):
         while True:
@@ -211,7 +297,7 @@ def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, a
     validation_iterator = next_batch_factory(dataloader_validation)
     training_iterator = next_batch_factory(dataloader_training)
 
-    return training_iterator, validation_iterator, extract_inputs
+    return training_iterator, validation_iterator
 
 
 def load_model(
@@ -242,7 +328,12 @@ def load_model(
             rng_key is not None
         ), "rng_key must be specified if model_file is not provided."
         model_params = parameters["model"]
-        model = FENNIX(**model_params, rng_key=rng_key, use_atom_padding=False)
+        if isinstance(model_params, str):
+            assert os.path.exists(model_params), f"Model file '{model_params}' not found."
+            model = FENNIX.load(model_params, use_atom_padding=False)
+            print(f"Restored model from '{model_params}'.")
+        else:
+            model = FENNIX(**model_params, rng_key=rng_key, use_atom_padding=False)
         if print_model:
             print(model.summarize())
     return model

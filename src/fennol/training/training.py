@@ -185,11 +185,21 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
             )
 
     # rename_refs = training_parameters.get("rename_refs", [])
-    loss_definition, used_keys = get_loss_definition(
+    loss_definition, used_keys, ref_keys = get_loss_definition(
         training_parameters
     )
-    training_iterator, validation_iterator, extract_inputs = load_dataset(
-        training_parameters, infinite_iterator=True,atom_padding=True
+
+    coordinates_ref_key = training_parameters.get("coordinates_ref_key", None)
+    if coordinates_ref_key is not None:
+        compute_ref_coords = True
+        print("Reference coordinates:", coordinates_ref_key)
+        ref_keys.append(coordinates_ref_key)
+    else:
+        compute_ref_coords = False
+    
+    training_iterator, validation_iterator = load_dataset(
+        training_parameters, infinite_iterator=True, atom_padding=True, ref_keys=ref_keys
+        ,split_data_inputs=True
     )
     batch_size = training_parameters.get("batch_size", 16)
 
@@ -282,13 +292,6 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         assert len(end_event) == 2, "end_event must be a list of two elements"
         is_end = lambda metrics: metrics[end_event[0]] < end_event[1]
 
-    coordinates_ref_key = training_parameters.get("coordinates_ref_key", None)
-    if coordinates_ref_key is not None:
-        compute_ref_coords = True
-        print("Reference coordinates:", coordinates_ref_key)
-    else:
-        compute_ref_coords = False
-
     print_timings = parameters.get("print_timings", False)
 
     if "energy_terms" in training_parameters:
@@ -333,6 +336,8 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
     rmse_tot_best = np.inf
 
     ## configure preprocessing ##
+    pbc_training = training_parameters.get("pbc_training", False)
+    minimum_image = training_parameters.get("minimum_image", False)
     preproc_state = unfreeze(model.preproc_state)
     layer_state = []
     for st in preproc_state["layers_state"]:
@@ -341,6 +346,8 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         #     if nblist_stride > 1:
         #         st["skin_stride"] = nblist_stride
         #         st["skin_count"] = nblist_stride
+        if pbc_training:
+            stnew["minimum_image"] = minimum_image
         if "nblist_mult_size" in training_parameters:
             stnew["nblist_mult_size"] = training_parameters["nblist_mult_size"]
         if "nblist_add_neigh" in training_parameters:
@@ -352,8 +359,8 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
     preproc_state["layers_state"] = layer_state
     model.preproc_state = freeze(preproc_state)
 
-    data = next(training_iterator)
-    inputs = model.preprocess(**data)
+    # inputs,data = next(training_iterator)
+    # inputs = model.preprocess(**inputs)
     # print("preproc_state:",model.preproc_state)
 
 
@@ -364,7 +371,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
     preprocess_time = 0.0
     step_time = 0.0
 
-    rmses_prev = defaultdict(lambda: np.inf)
+    maes_prev = defaultdict(lambda: np.inf)
     count = 0
     restore_count = 0
     max_restore_count = training_parameters.get("max_restore_count", 5)
@@ -379,22 +386,21 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         for _ in range(nbatch_per_epoch):
             # fetch data
             s = time.time()
-            data = next(training_iterator)
+            inputs,data = next(training_iterator)
             e = time.time()
             fetch_time += e - s
 
             # preprocess data
             s = time.time()
-            inputs = model.preprocess(**extract_inputs(data))
+            inputs = model.preprocess(**inputs)
 
             rng_key, subkey = jax.random.split(rng_key)
             inputs["rng_key"] = subkey
             if compute_ref_coords:
-                data_ref = {**data, "coordinates": data[coordinates_ref_key]}
-                inputs_ref = model.preprocessing(**extract_inputs(data_ref))
+                inputs_ref = {**inputs, "coordinates": data[coordinates_ref_key]}
+                inputs_ref = model.preprocessing(**inputs_ref)
             else:
                 inputs_ref = None
-                data_ref = None
             # if print_timings:
             #     jax.block_until_ready(inputs["coordinates"])
             e = time.time()
@@ -416,7 +422,6 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
                 variables_ema=model.variables,
                 opt_st=opt_st,
                 ema_st=ema_st,
-                data_ref=data_ref,
                 inputs_ref=inputs_ref,
             )
             count += 1
@@ -428,18 +433,17 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         rmses_avg = defaultdict(lambda: 0.0)
         maes_avg = defaultdict(lambda: 0.0)
         for _ in range(nbatch_per_validation):
-            data = next(validation_iterator)
+            inputs,data = next(validation_iterator)
 
-            inputs = model.preprocess(**extract_inputs(data))
+            inputs = model.preprocess(**inputs)
             
             if compute_ref_coords:
-                data_ref = {**data, "coordinates": data[coordinates_ref_key]}
-                inputs_ref = model.preprocess(**extract_inputs(data_ref))
+                inputs_ref = {**inputs, "coordinates": data[coordinates_ref_key]}
+                inputs_ref = model.preprocess(**inputs_ref)
             else:
                 inputs_ref = None
-                data_ref = None
             rmses, maes, output = validation(
-                data=data,inputs=inputs, variables=model.variables, data_ref=data_ref,inputs_ref=inputs_ref
+                data=data,inputs=inputs, variables=model.variables,inputs_ref=inputs_ref
             )
             for k, v in rmses.items():
                 rmses_avg[k] += v
@@ -485,14 +489,14 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         preprocess_time = 0.0
         restore = False
         reinit = False
-        for k, rmse in rmses_avg.items():
-            if np.isnan(rmse):
+        for k, mae in maes_avg.items():
+            if np.isnan(mae):
                 restore = True
                 reinit = True
                 break
             if "threshold" in loss_definition[k]:
                 thr = loss_definition[k]["threshold"]
-                if rmse > thr * rmses_prev[k]:
+                if mae > thr * maes_prev[k]:
                     restore = True
                     break
 
@@ -520,7 +524,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         restore_count = 0
         variables_save = deepcopy(variables)
         variables_ema_save = deepcopy(model.variables)
-        rmses_prev = rmses_avg
+        maes_prev = maes_avg
 
         model.save(output_directory + "latest_model.fnx")
 

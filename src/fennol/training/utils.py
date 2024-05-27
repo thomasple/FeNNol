@@ -36,8 +36,8 @@ def get_training_parameters(
 
 
 def get_loss_definition(
-    training_parameters: Dict[str, any] #, manual_renames: List[str] = []
-) -> Tuple[Dict[str, any], List[str]]:
+    training_parameters: Dict[str, any]  # , manual_renames: List[str] = []
+) -> Tuple[Dict[str, any], List[str], List[str]]:
     """
     Returns the loss definition and a list of renamed references.
 
@@ -52,6 +52,7 @@ def get_loss_definition(
     default_loss_type = training_parameters.get("default_loss_type", "log_cosh")
     loss_definition = deepcopy(training_parameters["loss"])
     used_keys = []
+    ref_keys = []
     for k in loss_definition.keys():
         loss_prms = loss_definition[k]
         if "unit" in loss_prms:
@@ -67,6 +68,13 @@ def get_loss_definition(
         assert loss_prms["weight"] >= 0.0, "Loss weight must be positive"
         if "threshold" in loss_prms:
             assert loss_prms["threshold"] > 1.0, "Threshold must be greater than 1.0"
+        if "ref" in loss_prms:
+            ref = loss_prms["ref"]
+            if not (ref.startswith("model_ref/") or ref.startswith("model/")):
+                ref_keys.append(ref)
+        if "ds_weight" in loss_prms:
+            ref_keys.append(loss_prms["ds_weight"])
+
         used_keys.append(loss_prms["key"])
 
     # rename_refs = list(
@@ -79,7 +87,7 @@ def get_loss_definition(
     #         if loss_prms["ref"] in rename_refs:
     #             loss_prms["ref"] = "true_" + loss_prms["ref"]
 
-    return loss_definition, used_keys
+    return loss_definition, list(set(used_keys)), list(set(ref_keys))
 
 
 def get_optimizer(
@@ -141,7 +149,7 @@ def get_optimizer(
     )
     print("Optimizer:", optimizer_name)
     optimizer_configuration = training_parameters.get("optimizer_config", {})
-    optimizer_configuration["learning_rate"] = 1.
+    optimizer_configuration["learning_rate"] = 1.0
     grad_processing.append(optimizer(**optimizer_configuration))
 
     # weight decay
@@ -190,7 +198,13 @@ def get_train_step_function(
     compute_ref_coords = model_ref is not None
 
     def train_step(
-        data,inputs, variables, opt_st, variables_ema=None, ema_st=None, data_ref=None, inputs_ref=None
+        data,
+        inputs,
+        variables,
+        opt_st,
+        variables_ema=None,
+        ema_st=None,
+        inputs_ref=None,
     ):
 
         def loss_fn(variables):
@@ -200,16 +214,14 @@ def get_train_step_function(
             output = evaluate(model, variables, inputs)
             # _, _, output = model._energy_and_forces(variables, data)
             if compute_ref_coords:
-                if data_ref is None or inputs_ref is None:
+                if inputs_ref is None:
                     raise ValueError(
-                        "train_step was setup with compute_ref_coords=True but data_ref was not provided"
+                        "train_step was setup with compute_ref_coords=True but inputs_ref was not provided"
                     )
                 output_data_ref = evaluate(model, variables, inputs_ref)
-                # _,_,output_data_ref = model._energy_and_forces(variables, data_ref)
-            nsys = jnp.sum(inputs["true_sys"])
-            nat = jnp.sum(inputs["true_atoms"])
             loss_tot = 0.0
             for loss_prms in loss_definition.values():
+                use_ref_mask = False
                 predicted = output[loss_prms["key"]]
                 if "remove_ref_sys" in loss_prms and loss_prms["remove_ref_sys"]:
                     assert compute_ref_coords, "compute_ref_coords must be True"
@@ -237,6 +249,9 @@ def get_train_step_function(
                             raise KeyError(
                                 f"Reference key '{loss_prms['ref']}' not found in data. Keys available: {data.keys()}"
                             )
+                        if loss_prms["ref"] + "_mask" in data:
+                            use_ref_mask = True
+                            ref_mask = data[loss_prms["ref"] + "_mask"]
                 else:
                     ref = jnp.zeros_like(predicted)
 
@@ -266,43 +281,48 @@ def get_train_step_function(
                 if ref.ndim > 1 and ref.shape[-1] == 1:
                     ref = jnp.squeeze(ref, axis=-1)
 
+                natoms = jnp.where(inputs["true_sys"], inputs["natoms"], 1)
                 per_atom = False
-                nel = np.prod(ref.shape)
                 shape_mask = [ref.shape[0]] + [1] * (len(ref.shape) - 1)
                 # print(loss_prms["key"],predicted.shape,loss_prms["ref"],ref.shape)
                 natscale = 1.0
                 if ref.shape[0] == output["batch_index"].shape[0]:
                     ## shape is number of atoms
-                    nel = nel * nat / ref.shape[0]
-                    true_atoms = inputs["true_atoms"].reshape(*shape_mask)
-                    ref = ref * true_atoms
-                    predicted = predicted * true_atoms
-                    truth_mask = true_atoms
+                    truth_mask = inputs["true_atoms"]
                     if "ds_weight" in loss_prms:
                         weight_key = loss_prms["ds_weight"]
                         natscale = data[weight_key][output["batch_index"]].reshape(
                             *shape_mask
                         )
-                elif ref.shape[0] == output["natoms"].shape[0]:
+                elif ref.shape[0] == natoms.shape[0]:
                     ## shape is number of systems
-                    nel = nel * nsys / ref.shape[0]
-                    true_sys = inputs["true_sys"].reshape(*shape_mask)
-                    ref = ref * true_sys
-                    predicted = predicted * true_sys
-                    truth_mask = true_sys
+                    truth_mask = inputs["true_sys"]
                     if loss_prms.get("per_atom", False):
                         per_atom = True
-                        ref = ref / output["natoms"].reshape(*shape_mask)
-                        predicted = predicted / output["natoms"].reshape(*shape_mask)
+                        ref = ref / natoms.reshape(*shape_mask)
+                        predicted = predicted / natoms.reshape(*shape_mask)
                     if "nat_pow" in loss_prms:
                         natscale = (
-                            1.0
-                            / output["natoms"].reshape(*shape_mask)
-                            ** loss_prms["nat_pow"]
+                            1.0 / natoms.reshape(*shape_mask) ** loss_prms["nat_pow"]
                         )
                     if "ds_weight" in loss_prms:
                         weight_key = loss_prms["ds_weight"]
                         natscale = natscale * data[weight_key].reshape(*shape_mask)
+                else:
+                    truth_mask = jnp.ones(ref.shape[0], dtype=bool)
+
+                if use_ref_mask:
+                    truth_mask = truth_mask * ref_mask.astype(bool)
+
+                nel = jnp.maximum(
+                    (float(np.prod(ref.shape)) / float(truth_mask.shape[0]))
+                    * jnp.sum(truth_mask).astype(jnp.float32),
+                    1.0,
+                )
+                truth_mask = truth_mask.reshape(*shape_mask)
+
+                ref = ref * truth_mask
+                predicted = predicted * truth_mask
 
                 loss_type = loss_prms["type"]
                 if loss_type == "mse":
@@ -325,9 +345,7 @@ def get_train_step_function(
                     )
                 elif loss_type == "ensemble_crps":
                     if per_atom:
-                        predicted_var = predicted_var / output["natoms"].reshape(
-                            *shape_mask
-                        )
+                        predicted_var = predicted_var / natoms.reshape(*shape_mask)
                     predicted_var = predicted_var * truth_mask + (1.0 - truth_mask)
                     sigma = predicted_var**0.5
                     dy = (ref - predicted) / sigma
@@ -370,12 +388,8 @@ def get_train_step_function(
                     )
                     lb = loss_prms.get("lambda_evidence_beta", 0.0) * beta
                     loss = lg + ls + lt + lr + le + lb
-                    if ref.shape[0] == output["batch_index"].shape[0]:
-                        loss = loss * true_atoms
-                    elif ref.shape[0] == output["natoms"].shape[0]:
-                        loss = loss * true_sys
 
-                    loss = jnp.sum(natscale * loss)
+                    loss = jnp.sum(natscale * loss * truth_mask)
                 elif loss_type == "raw":
                     loss = jnp.sum(natscale * predicted)
                 else:
@@ -413,31 +427,31 @@ def get_validation_function(
 ):
     compute_ref_coords = model_ref is not None
 
-    def validation(data,inputs, variables, data_ref=None, inputs_ref=None):
+    def validation(data, inputs, variables, inputs_ref=None):
         if model_ref is not None:
             output_ref = evaluate(model_ref, model_ref.variables, inputs)
             # _, _, output_ref = model_ref._energy_and_forces(model_ref.variables, data)
         output = evaluate(model, variables, inputs)
         # _, _, output = model._energy_and_forces(variables, data)
         if compute_ref_coords:
-            if data_ref is None or inputs_ref is None:
+            if inputs_ref is None:
                 raise ValueError(
-                    "validation was setup with compute_ref_coords but data_ref was not provided"
+                    "validation was setup with compute_ref_coords but inputs_ref was not provided"
                 )
             output_data_ref = evaluate(model, variables, inputs_ref)
-            # _,_,output_data_ref = model._energy_and_forces(variables, data_ref)
-        nsys = jnp.sum(inputs["true_sys"])
-        nat = jnp.sum(inputs["true_atoms"])
         rmses = {}
         maes = {}
         if return_targets:
             targets = {}
+
+        natoms = jnp.where(inputs["true_sys"], inputs["natoms"], 1)
 
         for name, loss_prms in loss_definition.items():
             do_validation = loss_prms.get("validate", True)
             if not do_validation:
                 continue
             predicted = output[loss_prms["key"]]
+            use_ref_mask = False
             if "remove_ref_sys" in loss_prms and loss_prms["remove_ref_sys"]:
                 assert compute_ref_coords, "compute_ref_coords must be True"
                 predicted = predicted - output_data_ref[loss_prms["key"]]
@@ -445,10 +459,13 @@ def get_validation_function(
                 if loss_prms["ref"].startswith("model_ref/"):
                     assert model_ref is not None, "model_ref must be provided"
                     ref = output_ref[loss_prms["ref"][10:]] * loss_prms["mult"]
-                if loss_prms["ref"].startswith("model/"):
+                elif loss_prms["ref"].startswith("model/"):
                     ref = output[loss_prms["ref"][6:]] * loss_prms["mult"]
                 else:
                     ref = data[loss_prms["ref"]] * loss_prms["mult"]
+                    if loss_prms["ref"] + "_mask" in data:
+                        use_ref_mask = True
+                        ref_mask = data[loss_prms["ref"] + "_mask"]
             else:
                 ref = jnp.zeros_like(predicted)
 
@@ -461,32 +478,33 @@ def get_validation_function(
 
             if ref.ndim > 1 and ref.shape[-1] == 1:
                 ref = jnp.squeeze(ref, axis=-1)
-            # nel = ref.shape[0]
-            # nel = np.prod(ref.shape)
-            # if ref.shape[0] == data["batch_index"].shape[0]:
-            #     nel = nel * nat / ref.shape[0]
-            # elif ref.shape[0] == data["natoms"].shape[0]:
-            #     nel = nel * nsys / ref.shape[0]
 
-            nel = np.prod(ref.shape)
             shape_mask = [ref.shape[0]] + [1] * (len(predicted.shape) - 1)
             if ref.shape[0] == output["batch_index"].shape[0]:
                 ## shape is number of atoms
-                nel = nel * nat / ref.shape[0]
-                truth_mask = inputs["true_atoms"].reshape(*shape_mask)
-                ref = ref * inputs["true_atoms"].reshape(*shape_mask)
-                predicted = predicted * inputs["true_atoms"].reshape(*shape_mask)
-            elif ref.shape[0] == output["natoms"].shape[0]:
+                truth_mask = inputs["true_atoms"]
+            elif ref.shape[0] == natoms.shape[0]:
                 ## shape is number of systems
-                nel = nel * nsys / ref.shape[0]
-                truth_mask = inputs["true_sys"].reshape(*shape_mask)
-                ref = ref * inputs["true_sys"].reshape(*shape_mask)
-                predicted = predicted * inputs["true_sys"].reshape(*shape_mask)
+                truth_mask = inputs["true_sys"]
                 if loss_prms.get("per_atom_validation", False):
-                    ref = ref / output["natoms"].reshape(*shape_mask)
-                    predicted = predicted / output["natoms"].reshape(*shape_mask)
+                    ref = ref / natoms.reshape(*shape_mask)
+                    predicted = predicted / natoms.reshape(*shape_mask)
             else:
-                truth_mask = jnp.ones_like(ref, dtype=jnp.bool_)
+                truth_mask = jnp.ones(ref.shape[0], dtype=bool)
+
+            if use_ref_mask:
+                truth_mask = truth_mask * ref_mask.astype(bool)
+
+            nel = jnp.maximum(
+                (float(np.prod(ref.shape)) / float(truth_mask.shape[0]))
+                * jnp.sum(truth_mask).astype(jnp.float32),
+                1.0,
+            )
+
+            truth_mask = truth_mask.reshape(*shape_mask)
+
+            ref = ref * truth_mask
+            predicted = predicted * truth_mask
 
             rmse = (jnp.sum((predicted - ref) ** 2) / nel) ** 0.5
             mae = jnp.sum(jnp.abs(predicted - ref)) / nel
