@@ -123,6 +123,7 @@ class GraphGenerator:
                     pbc_shifts = -np.round(vecpbc)
                     vec = vec + np.dot(pbc_shifts, cells[0])
                 else:
+                    batch_index_vec = batch_index[p1]
                     vecpbc = np.einsum(
                         "aj,aji->ai", vec, reciprocal_cells[batch_index_vec]
                     )
@@ -148,7 +149,9 @@ class GraphGenerator:
 
                 ## compute maximum number of repeats
                 inv_distances = (np.sum(reciprocal_cells**2, axis=1)) ** 0.5
-                num_repeats_all = np.ceil(cutoff_skin * inv_distances).astype(np.int32)
+                cdinv = cutoff_skin * inv_distances
+                num_repeats_all = np.ceil(cdinv).astype(np.int32)
+                # num_repeats_all = np.where(cdinv < 0.5, 0, num_repeats_all)
                 num_repeats = np.max(num_repeats_all, axis=0)
                 num_repeats_prev = np.array(state.get("num_repeats_pbc", (0, 0, 0)))
                 if np.any(num_repeats > num_repeats_prev):
@@ -161,15 +164,13 @@ class GraphGenerator:
                 ## build all possible shifts
                 cell_shift_pbc = np.array(
                     np.meshgrid(*[np.arange(-n, n + 1) for n in num_repeats])
-                ).T.reshape(-1, 3)
+                ,dtype=cells.dtype).T.reshape(-1, 3)
                 ## shift applied to vectors
                 if cells.shape[0] == 1:
                     dvec = np.dot(cell_shift_pbc, cells[0])[None, :, :]
                 else:
                     batch_index_vec = batch_index[p1]
-                    dvec = np.einsum("bj,sji->sbi", cell_shift_pbc, cells)[
-                        batch_index_vec
-                    ]
+                    dvec = np.einsum("bj,sji->sbi", cell_shift_pbc, cells)[batch_index_vec]
                 ## compute vectors
                 vec = (
                     coords_pbc[p2, None, :] - coords_pbc[p1, None, :] + dvec
@@ -1266,7 +1267,7 @@ class AtomPadding:
         if add_atoms > 0:
             batch_index = inputs["batch_index"]
             for k, v in inputs.items():
-                if isinstance(v, np.ndarray):
+                if isinstance(v, np.ndarray) or isinstance(v, jax.Array):
                     if v.shape[0] == nat:
                         output[k] = np.append(
                             v,
@@ -1277,7 +1278,7 @@ class AtomPadding:
                         if k == "cells":
                             output[k] = np.append(
                                 v,
-                                np.eye(3, dtype=v.dtype)[None, :, :],
+                                1000*np.eye(3, dtype=v.dtype)[None, :, :],
                                 axis=0,
                             )
                         else:
@@ -1287,7 +1288,7 @@ class AtomPadding:
             output["natoms"] = np.append(inputs["natoms"], 0)
             output["species"] = np.append(
                 species, -1 * np.ones(add_atoms, dtype=species.dtype)
-            )
+            ) 
             output["batch_index"] = np.append(
                 batch_index, np.array([nsys] * add_atoms, dtype=batch_index.dtype)
             )
