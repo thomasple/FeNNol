@@ -172,7 +172,7 @@ def get_optimizer(
         print("weight decay:", weight_decay)
         print(json.dumps(decay_mask, indent=2, sort_keys=False))
         grad_processing.append(
-            optax.add_decayed_weights(weight_decay=weight_decay, mask=decay_mask)
+            optax.add_decayed_weights(weight_decay=-weight_decay, mask=decay_mask)
         )
 
     # learning rate

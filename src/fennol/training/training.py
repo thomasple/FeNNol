@@ -216,6 +216,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
     peak_epoch = training_parameters.get("peak_epoch", 0.3 * max_epochs)
 
     schedule_type = training_parameters.get("schedule_type", "cosine_onecycle").lower()
+    schedule_type = training_parameters.get("scheduler", schedule_type).lower()
     schedule_metrics = training_parameters.get("schedule_metrics", "rmse_tot")
     print("Schedule type:", schedule_type)
     if schedule_type == "cosine_onecycle":
