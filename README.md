@@ -50,3 +50,24 @@ conda install cffi pydlpack pycuda
 To learn how to train a FeNNol model, you can check the examples in the [`examples/training`](https://github.com/thomasple/FeNNol/tree/main/examples/training) directory. The `README.md` file in that directory contains instructions on how to train a model on the aspirin revMD17 dataset.
 
 To learn how to run molecular dynamics simulations with FeNNol models, you can check the examples in the [`examples/md`](https://github.com/thomasple/FeNNol/tree/main/examples/md) directory. The `README.md` file in that directory contains instructions on how to run simulations with the provided ANI-2x model.
+
+
+## Citation
+
+Please cite this paper if you use the library.
+```
+T. Plé, O. Adjoua, L. Lagardère and J-P. Piquemal. FeNNol: an Efficient and Flexible Library for Building Force-field-enhanced Neural Network Potentials. arXiv preprint arXiv:2405.01491 (2024)
+```
+
+```
+@article{ple2024fennol,
+  title={FeNNol: an Efficient and Flexible Library for Building Force-field-enhanced Neural Network Potentials},
+  author={Pl{\'e}, Thomas and Adjoua, Olivier and Lagard{\`e}re, Louis and Piquemal, Jean-Philip},
+  journal={arXiv preprint arXiv:2405.01491},
+  year={2024}
+}
+```
+
+## License
+
+This project is licensed under the terms of the GNU LGPLv3 license. See [LICENSE](https://github.com/thomasple/FeNNol/blob/main/LICENSE) for additional details.
