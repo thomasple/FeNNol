@@ -206,6 +206,28 @@ class ScatterSystem(nn.Module):
         output_key = self.key if self.output_key is None else self.output_key
         return {**inputs, output_key: output}
 
+class SystemToAtoms(nn.Module):
+    """Broadcast a system-wise array to an atom-wise array.
+    
+    FID: SYSTEM_TO_ATOMS
+    """
+
+    key: str
+    """The key of the input system-wise array."""
+    output_key: Optional[str] = None
+    """The key of the output atom-wise array. If None, the input key is used."""
+
+    FID: ClassVar[str] = "SYSTEM_TO_ATOMS"
+
+    @nn.compact
+    def __call__(self, inputs) -> Any:
+        batch_index = inputs["batch_index"]
+        x = inputs[self.key]
+        output = x[batch_index]
+
+        output_key = self.key if self.output_key is None else self.output_key
+        return {**inputs, output_key: output}
+
 
 class SumAxis(nn.Module):
     """Sum an array along an axis.
@@ -512,7 +534,7 @@ class SwitchFunction(nn.Module):
     cutoff: Optional[float] = None
     """The cutoff distance. If None, the cutoff is taken from the graph."""
     switch_start: float = 0.0
-    """The distance at which the switch function starts."""
+    """The proportion of the cutoff distance at which the switch function starts."""
     graph_key: Optional[str] = "graph"
     """The key of the graph containing the distances and edge mask."""
     output_key: Optional[str] = None
