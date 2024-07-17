@@ -14,6 +14,8 @@ from pathlib import Path
 import argparse
 import torch
 import random
+from flax import traverse_util
+import json
 
 from flax.core import freeze, unfreeze
 from .io import (
@@ -318,6 +320,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         loss_definition=loss_definition,
         model=model,
         model_ref=model_ref,
+        compute_ref_coords=compute_ref_coords,
         evaluate=evaluate,
         optimizer=optimizer,
         ema=ema,
@@ -327,6 +330,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         loss_definition=loss_definition,
         model=model,
         model_ref=model_ref,
+        compute_ref_coords=compute_ref_coords,
         evaluate=evaluate,
         return_targets=False,
     )
@@ -335,7 +339,9 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
 
     keep_all_bests = training_parameters.get("keep_all_bests", False)
     previous_best_name = None
-    rmse_tot_best = np.inf
+    best_metric = np.inf
+    metric_use_best = training_parameters.get("metric_best", "rmse").lower()
+    assert metric_use_best in ["mae", "rmse"], "metric_best must be 'mae' or 'rmse'"
 
     ## configure preprocessing ##
     pbc_training = training_parameters.get("pbc_training", False)
@@ -388,19 +394,19 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         for _ in range(nbatch_per_epoch):
             # fetch data
             s = time.time()
-            inputs,data = next(training_iterator)
+            inputs0,data = next(training_iterator)
             e = time.time()
             fetch_time += e - s
 
             # preprocess data
             s = time.time()
-            inputs = model.preprocess(**inputs)
+            inputs = model.preprocess(**inputs0)
 
             rng_key, subkey = jax.random.split(rng_key)
             inputs["rng_key"] = subkey
             if compute_ref_coords:
-                inputs_ref = {**inputs, "coordinates": data[coordinates_ref_key]}
-                inputs_ref = model.preprocessing(**inputs_ref)
+                inputs_ref = {**inputs0, "coordinates": data[coordinates_ref_key]}
+                inputs_ref = model.preprocess(**inputs_ref)
             else:
                 inputs_ref = None
             # if print_timings:
@@ -417,7 +423,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
             opt_st.inner_states["trainable"].inner_state[-1].hyperparams[
                 "step_size"
             ] = current_lr
-            loss, variables, opt_st, model.variables, ema_st = train_step(
+            loss, variables, opt_st, model.variables, ema_st, output = train_step(
                 data=data,
                 inputs=inputs,
                 variables=variables,
@@ -435,16 +441,16 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         rmses_avg = defaultdict(lambda: 0.0)
         maes_avg = defaultdict(lambda: 0.0)
         for _ in range(nbatch_per_validation):
-            inputs,data = next(validation_iterator)
+            inputs0,data = next(validation_iterator)
 
-            inputs = model.preprocess(**inputs)
+            inputs = model.preprocess(**inputs0)
             
             if compute_ref_coords:
-                inputs_ref = {**inputs, "coordinates": data[coordinates_ref_key]}
+                inputs_ref = {**inputs0, "coordinates": data[coordinates_ref_key]}
                 inputs_ref = model.preprocess(**inputs_ref)
             else:
                 inputs_ref = None
-            rmses, maes, output = validation(
+            rmses, maes, output_val = validation(
                 data=data,inputs=inputs, variables=model.variables,inputs_ref=inputs_ref
             )
             for k, v in rmses.items():
@@ -463,11 +469,13 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         print("")
         print(f"Epoch {epoch+1}, lr={current_lr:.3e}, loss = {loss:.3e}")
         rmse_tot = 0.0
+        mae_tot = 0.0
         for k in rmses_avg.keys():
             mult = loss_definition[k]["mult"]
             rmse_tot = (
-                rmse_tot + rmses_avg[k] / mult * loss_definition[k]["weight"] ** 0.5
+                rmse_tot + rmses_avg[k] * loss_definition[k]["weight"] ** 0.5
             )
+            mae_tot = mae_tot + maes_avg[k] * loss_definition[k]["weight"]
             unit = (
                 "(" + loss_definition[k]["unit"] + ")"
                 if "unit" in loss_definition[k]
@@ -495,7 +503,12 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
             if np.isnan(mae):
                 restore = True
                 reinit = True
-                break
+                print("NaN detected in mae")
+                # for k, v in inputs.items():
+                #     if hasattr(v,"shape"):
+                #         if np.isnan(v).any():
+                #             print(k,v)
+                #sys.exit(1)
             if "threshold" in loss_definition[k]:
                 thr = loss_definition[k]["threshold"]
                 if mae > thr * maes_prev[k]:
@@ -545,9 +558,11 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
             metrics[f"mae_{k}"] = maes_avg[k] / mult
 
         metrics["rmse_tot"] = rmse_tot
-        if rmse_tot < rmse_tot_best:
-            rmse_tot_best = rmse_tot
-            metrics["rmse_tot_best"] = rmse_tot_best
+        metrics["mae_tot"] = mae_tot
+        metric_for_best = metrics[metric_use_best+"_tot"]
+        if metric_for_best < best_metric:
+            best_metric = metric_for_best
+            metrics["best_metric"] = best_metric
             if keep_all_bests:
                 best_name = (
                     output_directory

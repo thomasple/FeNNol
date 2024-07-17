@@ -6,6 +6,7 @@ import optax
 from copy import deepcopy
 from flax import traverse_util
 import json
+import re
 
 from ..utils import deep_update, AtomicUnits as au
 from ..models import FENNIX
@@ -134,6 +135,11 @@ def get_optimizer(
     ## Gradient preprocessing
     grad_processing = []
 
+    # zero nans
+    zero_nans = training_parameters.get("zero_nans", False)
+    if zero_nans:
+        grad_processing.append(optax.zero_nans())
+
     # gradient clipping
     clip_threshold = training_parameters.get("gradient_clipping", -1.0)
     if clip_threshold > 0.0:
@@ -157,14 +163,17 @@ def get_optimizer(
     assert weight_decay >= 0.0, "Weight decay must be positive"
     decay_targets = training_parameters.get(
         "decay_targets", [""]
-    )  # by default, decay all parameters with [""]
+    ) 
 
     def decay_status(full_path, v):
         full_path = "/".join(full_path).lower()
         status = False
+        # print(full_path,re.match(r'^params\/', full_path))
         for path in decay_targets:
-            if full_path.startswith("params/" + path.lower()):
+            if re.match(r'^params/'+path.lower(), full_path):
                 status = True
+            # if full_path.startswith("params/" + path.lower()):
+            #     status = True
         return status
 
     decay_mask = traverse_util.path_aware_map(decay_status, variables)
@@ -174,6 +183,9 @@ def get_optimizer(
         grad_processing.append(
             optax.add_decayed_weights(weight_decay=-weight_decay, mask=decay_mask)
         )
+    
+    if zero_nans:
+        grad_processing.append(optax.zero_nans())
 
     # learning rate
     grad_processing.append(optax.inject_hyperparams(optax.scale)(step_size=initial_lr))
@@ -193,10 +205,9 @@ def get_train_step_function(
     optimizer: optax.GradientTransformation,
     ema: Optional[optax.GradientTransformation] = None,
     model_ref: Optional[FENNIX] = None,
+    compute_ref_coords: bool = False,
     jit: bool = True,
 ):
-    compute_ref_coords = model_ref is not None
-
     def train_step(
         data,
         inputs,
@@ -396,10 +407,15 @@ def get_train_step_function(
                     raise ValueError(f"Unknown loss type: {loss_type}")
 
                 loss_tot = loss_tot + loss_prms["weight"] * loss / nel
+            
+            if compute_ref_coords:
+                o = (output, output_data_ref)
+            else:
+                o = output
 
-            return loss_tot
+            return loss_tot, o
 
-        loss, grad = jax.value_and_grad(loss_fn)(variables)
+        (loss,o), grad = jax.value_and_grad(loss_fn,has_aux=True)(variables)
         updates, opt_st = optimizer.update(grad, opt_st, params=variables)
         variables = optax.apply_updates(variables, updates)
         if ema is not None:
@@ -408,9 +424,9 @@ def get_train_step_function(
                     "train_step was setup with ema but either variables_ema or ema_st was not provided"
                 )
             variables_ema, ema_st = ema.update(variables, ema_st)
-            return loss, variables, opt_st, variables_ema, ema_st
+            return loss, variables, opt_st, variables_ema, ema_st,o
         else:
-            return loss, variables, opt_st
+            return loss, variables, opt_st,o
 
     if jit:
         return jax.jit(train_step)
@@ -422,10 +438,10 @@ def get_validation_function(
     model: FENNIX,
     evaluate: Callable,
     model_ref: Optional[FENNIX] = None,
+    compute_ref_coords: bool = False,
     return_targets: bool = False,
     jit: bool = True,
 ):
-    compute_ref_coords = model_ref is not None
 
     def validation(data, inputs, variables, inputs_ref=None):
         if model_ref is not None:

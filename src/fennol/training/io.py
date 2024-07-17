@@ -75,6 +75,7 @@ def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, a
 
         def collate_fn_(batch):
             output = defaultdict(list)
+            atom_shift = 0
             for i, d in enumerate(batch):
                 nat = d["species"].shape[0]
                 
@@ -98,16 +99,30 @@ def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, a
                     for k, v in d.items():
                         if k == "cell":
                             continue
-                        output[k].append(np.asarray(v))
+                        v_array = np.array(v)
+                        # Shift atom number if necessary
+                        if k.endswith("_atidx"):
+                            v_array = v_array + atom_shift
+                        output[k].append(v_array)
                 else:
                     output["species"].append(np.asarray(d["species"]))
                     output["coordinates"].append(np.asarray(d["coordinates"]))
                     for k in additional_input_keys:
-                        output[k].append(np.asarray(d[k]))
+                        v_array = np.array(d[k])
+                        # Shift atom number if necessary
+                        if k.endswith("_atidx"):
+                            v_array = v_array + atom_shift
+                        output[k].append(v_array)
                     for k in ref_keys:
-                        output[k].append(np.asarray(d[k]))
+                        v_array = np.array(d[k])
+                        # Shift atom number if necessary
+                        if k.endswith("_atidx"):
+                            v_array = v_array + atom_shift
+                        output[k].append(v_array)
                         if k+"_mask" in d:
                             output[k+"_mask"].append(np.asarray(d[k+"_mask"]))
+                atom_shift += nat
+
             for k, v in output.items():
                 if v[0].ndim == 0:
                     output[k] = np.stack(v)
@@ -124,6 +139,7 @@ def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, a
 
         def collate_fn_(batch):
             output = defaultdict(list)
+            atom_shift = 0
             for i, d in enumerate(batch):
                 if "cell" in d:
                     raise ValueError(
@@ -136,16 +152,30 @@ def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, a
                     output["total_charge"].append(np.asarray([0.0], dtype=np.float32))
                 if extract_all_keys:
                     for k, v in d.items():
-                        output[k].append(np.asarray(v))
+                        v_array = np.array(v)
+                        # Shift atom number if necessary
+                        if k.endswith("_atidx"):
+                            v_array = v_array + atom_shift
+                        output[k].append(v_array)
                 else:
                     output["species"].append(np.asarray(d["species"]))
                     output["coordinates"].append(np.asarray(d["coordinates"]))
                     for k in additional_input_keys:
-                        output[k].append(np.asarray(d[k]))
+                        v_array = np.array(d[k])
+                        # Shift atom number if necessary
+                        if k.endswith("_atidx"):
+                            v_array = v_array + atom_shift
+                        output[k].append(v_array)
                     for k in ref_keys:
-                        output[k].append(np.asarray(d[k]))
+                        v_array = np.array(d[k])
+                        # Shift atom number if necessary
+                        if k.endswith("_atidx"):
+                            v_array = v_array + atom_shift
+                        output[k].append(v_array)
                         if k+"_mask" in d:
                             output[k+"_mask"].append(np.asarray(d[k+"_mask"]))
+                atom_shift += nat
+
             for k, v in output.items():
                 try:
                     if v[0].ndim == 0:
