@@ -8,14 +8,18 @@ import os
 import glob
 
 ### python modules where FENNIX Modules are defined ###
-from . import misc,physics, embeddings
+from . import misc,physics, embeddings,preprocessing
 
 
 MODULES: Dict[str, nn.Module] = {}
+PREPROCESSING: Dict = {}
 
 
 def available_fennix_modules():
     return list(MODULES.keys())
+
+def available_fennix_preprocessing():
+    return list(PREPROCESSING.keys())
 
 
 def register_fennix_module(module: nn.Module, FID: Optional[str] = None):
@@ -39,6 +43,27 @@ def register_fennix_module(module: nn.Module, FID: Optional[str] = None):
             )
         MODULES[name] = module
 
+def register_fennix_preprocessing(module, FPID: Optional[str] = None):
+    if FPID is not None:
+        names = [FPID.upper()]
+    else:
+        if not hasattr(module, "FPID"):
+            print(f"Warning: module {module.__name__} does not have a FPID field and no explicit FPID was provided. Module was NOT registered.")
+        if not (isinstance(
+            module.FPID, str
+        ) or isinstance(module.FPID,tuple)):
+            print(f"Warning: module {module.__name__} has an invalid FPID field. Module was NOT registered.")
+        if isinstance(module.FPID, str):
+            names = [module.FPID.upper()]
+        else:
+            names = [fid.upper() for fid in module.FPID]
+    for name in names:
+        if name in PREPROCESSING and PREPROCESSING[name] != module:
+            raise ValueError(
+                f"A different module identified as '{name}' is already registered !"
+            )
+        PREPROCESSING[name] = module
+
 
 def register_fennix_modules(module, recurs=0, max_recurs=2):
     if ismodule(module) and hasattr(module,"__path__"):
@@ -49,10 +74,12 @@ def register_fennix_modules(module, recurs=0, max_recurs=2):
         if isclass(m) and issubclass(m, nn.Module) and m != nn.Module:
             if hasattr(m, "FID"):
                 register_fennix_module(m)
+        elif isclass(m) and hasattr(m, "FPID"):
+            register_fennix_preprocessing(m)
 
 
 ### REGISTER DEFAULT MODULES #####################
-for mods in [misc, physics, embeddings]:
+for mods in [misc, physics, embeddings,preprocessing]:
     register_fennix_modules(mods)
 module_path = os.environ.get("FENNOL_MODULES_PATH","").split(":")
 for path in module_path:

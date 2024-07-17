@@ -1,5 +1,5 @@
 import flax.linen as nn
-from typing import Sequence, Callable, Union, Dict, Any
+from typing import Sequence, Callable, Union, Dict, Any,ClassVar
 import jax.numpy as jnp
 import jax
 import numpy as np
@@ -14,7 +14,6 @@ from flax.core.frozen_dict import FrozenDict
 from ..utils.activations import chain
 from ..utils import deep_update, mask_filter_1d
 from ..utils.kspace import get_reciprocal_space_parameters
-from .modules import FENNIXModules
 from .misc.misc import SwitchFunction
 from ..utils.periodic_table import PERIODIC_TABLE, PERIODIC_TABLE_REV_IDX
 
@@ -23,7 +22,7 @@ from ..utils.periodic_table import PERIODIC_TABLE, PERIODIC_TABLE_REV_IDX
 class GraphGenerator:
     """Generate a graph from a set of coordinates
 
-    FID: GRAPH
+    FPID: GRAPH
 
     For now, we generate all pairs of atoms and filter based on cutoff.
     If a `nblist_skin` is present in the state, we generate a second graph with a larger cutoff that includes all pairs within the cutoff+skin. This graph is then reused by the `update_skin` method to update the original graph without recomputing the full nblist.
@@ -44,6 +43,8 @@ class GraphGenerator:
     mult_size: float = 1.05
     """Multiplicative factor for resizing the nblist."""
     # covalent_cutoff: bool = False
+
+    FPID: ClassVar[str] = "GRAPH"
 
     def init(self):
         return FrozenDict(
@@ -612,7 +613,7 @@ class GraphProcessor(nn.Module):
 class GraphFilter:
     """Filter a graph based on a cutoff distance
 
-    FID: GRAPH_FILTER
+    FPID: GRAPH_FILTER
     """
 
     cutoff: float
@@ -633,6 +634,9 @@ class GraphFilter:
     """Threshold for k-point filtering."""
     mult_size: float = 1.05
     """Multiplicative factor for resizing the nblist."""
+
+    FPID: ClassVar[str] = "GRAPH_FILTER"
+
 
     def init(self):
         return FrozenDict(
@@ -845,7 +849,7 @@ class GraphFilterProcessor(nn.Module):
 class GraphAngularExtension:
     """Add angles list to a graph
 
-    FID: GRAPH_ANGULAR_EXTENSION
+    FPID: GRAPH_ANGULAR_EXTENSION
     """
 
     mult_size: float = 1.05
@@ -854,6 +858,9 @@ class GraphAngularExtension:
     """Additional neighbors to add to the nblist when resizing."""
     graph_key: str = "graph"
     """Key of the graph in the inputs."""
+
+    FPID: ClassVar[str] = "GRAPH_ANGULAR_EXTENSION"
+
 
     def init(self):
         return FrozenDict(
@@ -1116,7 +1123,7 @@ class GraphAngleProcessor(nn.Module):
 class SpeciesIndexer:
     """Build an index that splits atomic arrays by species.
 
-    FID: SPECIES_INDEXER
+    FPID: SPECIES_INDEXER
 
     If `species_order` is specified, the output will be a dense array with size (len(species_order), max_size) that can directly index atomic arrays.
     If `species_order` is None, the output will be a dictionary with species as keys and an index to filter atomic arrays for that species as values.
@@ -1129,6 +1136,9 @@ class SpeciesIndexer:
     """Comma separated list of species in the order they should be indexed."""
     add_atoms: int = 0
     """Additional atoms to add to the sizes."""
+
+    FPID: ClassVar[str] = "SPECIES_INDEXER"
+
 
     def init(self):
         return FrozenDict(
@@ -1473,14 +1483,12 @@ class PreprocessingChain:
         state = self.init()
         return self(state, inputs)
 
-    def get_processors(self, return_list=False):
+    def get_processors(self):
         processors = []
         for layer in self.layers:
             if hasattr(layer, "get_processor"):
                 processors.append(layer.get_processor())
-        if return_list:
-            return processors
-        return FENNIXModules(processors)
+        return processors
 
     def get_graphs_properties(self):
         properties = {}
@@ -1490,11 +1498,11 @@ class PreprocessingChain:
         return properties
 
 
-PREPROCESSING = {
-    "GRAPH": GraphGenerator,
-    # "GRAPH_FIXED": GraphGeneratorFixed,
-    "GRAPH_FILTER": GraphFilter,
-    "GRAPH_ANGULAR_EXTENSION": GraphAngularExtension,
-    # "GRAPH_DENSE_EXTENSION": GraphDenseExtension,
-    "SPECIES_INDEXER": SpeciesIndexer,
-}
+# PREPROCESSING = {
+#     "GRAPH": GraphGenerator,
+#     # "GRAPH_FIXED": GraphGeneratorFixed,
+#     "GRAPH_FILTER": GraphFilter,
+#     "GRAPH_ANGULAR_EXTENSION": GraphAngularExtension,
+#     # "GRAPH_DENSE_EXTENSION": GraphDenseExtension,
+#     "SPECIES_INDEXER": SpeciesIndexer,
+# }

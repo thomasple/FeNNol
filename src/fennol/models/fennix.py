@@ -13,11 +13,10 @@ from flax.core.frozen_dict import freeze, unfreeze, FrozenDict
 from .preprocessing import (
     GraphGenerator,
     PreprocessingChain,
-    PREPROCESSING,
     JaxConverter,
     atom_unpadding,
 )
-from .modules import MODULES, FENNIXModules
+from .modules import MODULES, PREPROCESSING, FENNIXModules
 
 
 @dataclasses.dataclass
@@ -127,9 +126,7 @@ class FENNIX:
         graphs_properties = self.preprocessing.get_graphs_properties()
         self._graphs_properties = freeze(graphs_properties)
         # add preprocessing modules that should be differentiated/jitted
-        mods = [(JaxConverter, {})] + self.preprocessing.get_processors(
-            return_list=True
-        )
+        mods = [(JaxConverter, {})] + self.preprocessing.get_processors()
         # mods = self.preprocessing.get_processors(return_list=True)
 
         # build the model
@@ -438,7 +435,9 @@ class FENNIX:
         if box_size is None:
             box_size = 2 * self.cutoff
             for g in self._graphs_properties.values():
-                box_size = min(box_size, 2 * g["cutoff"])
+                cutoff = g["cutoff"]
+                if cutoff is not None:
+                    box_size = min(box_size, 2 * g["cutoff"])
         coordinates = np.array(
             jax.random.uniform(rng_key, (n_atoms, 3), maxval=box_size)
         )
