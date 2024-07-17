@@ -9,11 +9,10 @@ from ..misc.encodings import SpeciesEncoding, RadialBasis, positional_encoding
 from ...utils.spherical_harmonics import generate_spherical_harmonics, CG_SO3
 from ...utils.activations import activation_from_str, tssr3
 from ...utils.initializers import initializer_from_str
-from ..misc.nets import FullyConnectedNet, ZAcNet
+from ..misc.nets import FullyConnectedNet
 from ..misc.e3 import ChannelMixing, ChannelMixingE3, FilteredTensorProduct
 from ...utils.periodic_table import D3_COV_RADII, D3_VDW_RADII, VALENCE_ELECTRONS
 from ...utils import AtomicUnits as au
-
 
 class CRATEmbedding(nn.Module):
     """Configurable Resources ATomic Environment
@@ -63,6 +62,10 @@ class CRATEmbedding(nn.Module):
     """The number of tensor products performed at each layer."""
     ignore_irreps_parity: bool = False
     """Whether to ignore the parity of the irreps in the tensor product."""
+    edge_tp: bool = False
+    """Whether to perform a tensor product on edges before sending messages."""
+    resolve_wij_l: bool = False
+    """Equivariant message weights are l-dependent."""
 
     species_init: bool = False
     """Whether to initialize the embedding using the species encoding."""
@@ -76,8 +79,8 @@ class CRATEmbedding(nn.Module):
     """The kernel initialization function for Dense operations."""
     activation_mixing: Union[Callable, str] = "tssr3"
     """The activation function applied after mixing."""
-    use_zacnet: bool = False
-    """Whether to use ZacNet. See `fennol.models.misc.nets.ZAcNet`."""
+    layer_normalization: bool = False
+    """Whether to apply layer normalization after each layer."""
 
     graph_key: str = "graph"
     """The key for the graph data in the inputs dictionary."""
@@ -88,8 +91,8 @@ class CRATEmbedding(nn.Module):
     pair_embedding_key: Optional[str] = None
     """The key for the pair embedding data in the output dictionary."""
 
-    species_encoding: dict = dataclasses.field(default_factory=dict)
-    """The dictionary of parameters for species encoding. See `fennol.models.misc.encodings.SpeciesEncoding`."""
+    species_encoding: dict | str = dataclasses.field(default_factory=dict)
+    """If `str`, it is the key in the inputs dictionary that contains species encodings. Else, it is the dictionary of parameters for species encoding. See `fennol.models.misc.encodings.SpeciesEncoding`."""
     radial_basis: dict = dataclasses.field(default_factory=dict)
     """The dictionary of parameters for radial basis functions. See `fennol.models.misc.encodings.RadialBasis`."""
     radial_basis_angle: Optional[dict] = None
@@ -154,10 +157,24 @@ class CRATEmbedding(nn.Module):
 
         ##################################################
         ### SPECIES ENCODING ###
-        species_encoder = SpeciesEncoding(
-            **self.species_encoding, name="SpeciesEncoding"
-        )
-        zi = species_encoder(species)
+        if isinstance(self.species_encoding, str):
+            zi = inputs[self.species_encoding]
+        else:
+            zi = SpeciesEncoding(
+                **self.species_encoding, name="SpeciesEncoding"
+            )(species)
+
+        
+        if self.layer_normalization:
+            def layer_norm(x):
+                mu = jnp.mean(x,axis=-1,keepdims=True)
+                dx = x-mu
+                var = jnp.mean(dx**2,axis=-1,keepdims=True)
+                sig = (1.e-6 + var)**(-0.5)
+                return dx*sig
+        else:
+            layer_norm = lambda x:x
+                
 
         if self.charge_embedding:
             xi, qi = jnp.split(
@@ -176,9 +193,9 @@ class CRATEmbedding(nn.Module):
             A = jax.ops.segment_sum(ai, batch_index, nsys)
             Ni = ai * (Ntot / A)[batch_index]
             charge_embedding = positional_encoding(Ni, self.dim)
-            xi = xi + charge_embedding
+            xi = layer_norm(xi + charge_embedding)
         elif self.species_init:
-            xi = nn.Dense(self.dim, use_bias=False, name="SpeciesInit")(zi)
+            xi = layer_norm(nn.Dense(self.dim, use_bias=False, name="SpeciesInit")(zi))
         else:
             xi = zi
 
@@ -294,8 +311,10 @@ class CRATEmbedding(nn.Module):
             Yij = generate_spherical_harmonics(lmax=self.lmax, normalize=False)(
                 graph["vec"] / graph["distances"][:, None]
             )[:, None, :]
-            #ls = [0]
-            #for l in range(1, self.lmax + 1):
+            Yij = jnp.broadcast_to(Yij, (Yij.shape[0], self.nchannels_l, Yij.shape[2]))
+            nrep_l = np.array([2 * l + 1 for l in range(self.lmax + 1)], dtype=np.int32)
+            # ls = [0]
+            # for l in range(1, self.lmax + 1):
             #    ls = ls + [l] * (2 * l + 1)
             #ls = jnp.asarray(np.array(ls)[None, :], dtype=distances.dtype)
             #lcut = (0.5 + 0.5 * jnp.cos((np.pi / cutoff) * distances[:, #None])) ** (
@@ -401,6 +420,18 @@ class CRATEmbedding(nn.Module):
             ), f"dim_angle must be an integer or a list of length {self.nlayers}"
             # nmax_angle = [self.nmax_angle]*self.nlayers if isinstance(self.nmax_angle, int) else self.nmax_angle
             # assert len(nmax_angle) == self.nlayers, f"nmax_angle must be an integer or a list of length {self.nlayers}"
+        
+        initialize_e3 = True
+        if self.lmax > 0:
+            n_tp = (
+                [self.n_tp] * self.nlayers
+                if isinstance(self.n_tp, int)
+                else self.n_tp
+            )
+            assert (
+                len(n_tp) == self.nlayers
+            ), f"n_tp must be an integer or a list of length {self.nlayers}"
+
 
         message_passing = (
             [self.message_passing] * self.nlayers
@@ -415,12 +446,12 @@ class CRATEmbedding(nn.Module):
         ### INITIALIZE PAIR EMBEDDING ###
         if self.pair_embedding_key is not None:
             xij_s,xij_d = jnp.split(nn.Dense(2*dim_dst, name="pair_init_linear")(zi), [dim_dst], axis=-1)
-            xij = xij_s[edge_src]*xij_d[edge_dst]
+            xij = layer_norm(xij_s[edge_src]*xij_d[edge_dst])
 
         ##################################################
         if self.keep_all_layers:
             xis = []
-
+        
         ### LOOP OVER LAYERS ###
         for layer in range(self.nlayers):
             ##################################################
@@ -476,56 +507,15 @@ class CRATEmbedding(nn.Module):
             ### AGGREGATE PAIR EMBEDDING ###
             Li = jax.ops.segment_sum(Lij, edge_src, species.shape[0])
 
-            ##################################################
-            ### EQUIVARIANT EMBEDDING ###
-            if self.lmax > 0:
-                if layer == 0 or not message_passing[layer]:
-                    Vij = Yij
-                else:
-                    Vij = Vi[edge_dst]
-                drhoi = jax.ops.segment_sum(
-                    nn.Dense(
-                        self.nchannels_l, name=f"e3_channel_{layer}", use_bias=False
-                    )(Lij)[:, :, None]
-                    * Vij,
-                    edge_src,
-                    species.shape[0],
-                )
-
-                if layer == 0:
-                    rhoi = drhoi
-                    Vi = ChannelMixingE3(
-                        self.lmax,
-                        self.nchannels_l,
-                        self.nchannels_l,
-                        name=f"e3_initial_mixing_{layer}",
-                    )(rhoi)
-                else:
-                    rhoi = rhoi + drhoi
-                Vi0 = []
-                for itp in range(self.n_tp):
-                    dVi = FilteredTensorProduct(
-                        self.lmax, self.lmax, name=f"tensor_product_{layer}_{itp}",ignore_parity=self.ignore_irreps_parity,weights_by_channel=False
-                    )(rhoi, Vi)
-                    Vi = ChannelMixing(
-                            self.lmax,
-                            self.nchannels_l,
-                            self.nchannels_l,
-                            name=f"tp_mixing_{layer}_{itp}",
-                        )(Vi + dVi)
-                    Vi0.append(dVi[:, :, 0])
-                Vi0 = jnp.concatenate(Vi0, axis=-1)
-                if self.pair_embedding_key is not None:
-                    Vij = Vi[edge_src]*Yij
-                    Vij0 = [Vij[...,0]]
-                    for l in range(1,self.lmax+1):
-                        Vij0.append(Vij[...,l**2:(l+1)**2].sum(axis=-1))
-                    Vij0 = jnp.concatenate(Vij0,axis=-1)
+            ### CONCATENATE EMBEDDING COMPONENTS ###
+            components = [si, Li]
+            if self.pair_embedding_key is not None:
+                components_pair = [si[edge_src], xij, Lij]
 
 
             ##################################################
             ### ANGLE EMBEDDING ###
-            if use_angles:
+            if use_angles and dim_angle[layer]>0:
                 si_mp_ang = si_mp[filter_indices] if filtered else si_mp
                 if self.angle_combine_pairs:
                     Wa = self.param(
@@ -563,6 +553,7 @@ class CRATEmbedding(nn.Module):
                 ang_embedding = jax.ops.segment_sum(
                     radang, central_atom, species.shape[0]
                 )
+                components.append(ang_embedding)
 
                 if self.pair_embedding_key is not None:
                     ang_ij = jax.ops.segment_sum(
@@ -570,14 +561,79 @@ class CRATEmbedding(nn.Module):
                         ang_pairs,
                         edge_src.shape[0],
                     )
+                    components_pair.append(ang_ij)
+            
+            ##################################################
+            ### EQUIVARIANT EMBEDDING ###
+            if self.lmax > 0 and n_tp[layer] >= 0:
+                if initialize_e3 or not message_passing[layer]:
+                    Vij = Yij
+                elif self.edge_tp:
+                    Vij = FilteredTensorProduct(
+                            self.lmax, self.lmax, name=f"edge_tp_{layer}",ignore_parity=self.ignore_irreps_parity,weights_by_channel=False
+                        )(Vi[edge_dst], Yij)
+                else:
+                    Vij = Vi[edge_dst]
+
+                ### compute channel weights
+                dim_wij = self.nchannels_l
+                if self.resolve_wij_l:
+                    dim_wij=self.nchannels_l*(self.lmax+1)
+
+                eij = Lij if self.pair_embedding_key is None else jnp.concatenate([Lij,xij*switch],axis=-1)
+                wij = nn.Dense(
+                        dim_wij, name=f"e3_channel_{layer}", use_bias=False
+                    )(eij)
+                if self.resolve_wij_l:
+                    wij = jnp.repeat(wij.reshape(-1,self.nchannels_l,self.lmax+1),nrep_l,axis=-1)
+                else:
+                    wij = wij[:,:,None]
+                
+                ### aggregate equivariant messages
+                drhoi = jax.ops.segment_sum(
+                    wij * Vij,
+                    edge_src,
+                    species.shape[0],
+                )
+
+                Vi0 = []
+                if initialize_e3:
+                    rhoi = drhoi
+                    Vi = ChannelMixingE3(
+                        self.lmax,
+                        self.nchannels_l,
+                        self.nchannels_l,
+                        name=f"e3_initial_mixing_{layer}",
+                    )(rhoi)
+                    assert n_tp[layer] > 0, "n_tp must be > 0 for the first equivariant layer."
+                else:
+                    rhoi = rhoi + drhoi
+                    # if message_passing[layer]:
+                        # Vi0.append(drhoi[:, :, 0])
+                initialize_e3 = False
+                for itp in range(n_tp[layer]):
+                    dVi = FilteredTensorProduct(
+                        self.lmax, self.lmax, name=f"tensor_product_{layer}_{itp}",ignore_parity=self.ignore_irreps_parity,weights_by_channel=False
+                    )(rhoi, Vi)
+                    Vi = ChannelMixing(
+                            self.lmax,
+                            self.nchannels_l,
+                            self.nchannels_l,
+                            name=f"tp_mixing_{layer}_{itp}",
+                        )(Vi + dVi)
+                    Vi0.append(dVi[:, :, 0])
+                Vi0 = jnp.concatenate(Vi0, axis=-1)
+                components.append(Vi0)
+                if self.pair_embedding_key is not None:
+                    Vij = Vi[edge_src]*Yij
+                    Vij0 = [Vij[...,0]]
+                    for l in range(1,self.lmax+1):
+                        Vij0.append(Vij[...,l**2:(l+1)**2].sum(axis=-1))
+                    Vij0 = jnp.concatenate(Vij0,axis=-1)
+                    components_pair.append(Vij0)
 
             ##################################################
             ### CONCATENATE EMBEDDING COMPONENTS ###
-            components = [si, Li]
-            if use_angles:
-                components.append(ang_embedding)
-            if self.lmax > 0:
-                components.append(Vi0)
             if do_lode:
                 components.append(Mi)
 
@@ -586,36 +642,19 @@ class CRATEmbedding(nn.Module):
             ##################################################
             ### CONCATENATE PAIR EMBEDDING COMPONENTS ###
             if self.pair_embedding_key is not None:
-                components = [si[edge_src], xij, Lij]
-                if use_angles:
-                    components.append(ang_ij)
-                if self.lmax > 0:
-                    components.append(Vij0)
-                dxij = jnp.concatenate(components, axis=-1)
+                dxij = jnp.concatenate(components_pair, axis=-1)
 
             ##################################################
             ### MIX AND APPLY NONLINEARITY ###
-            if self.use_zacnet:
-                dxi = actmix(
-                    ZAcNet(
-                        [*self.mixing_hidden, self.dim],
-                        zmax=species_encoder.zmax,
-                        activation=self.activation,
-                        name=f"dxi_{layer}",
-                        use_bias=True,
-                        kernel_init=kernel_init,
-                    )((species, dxi))
-                )
-            else:
-                dxi = actmix(
-                    FullyConnectedNet(
-                        [*self.mixing_hidden, self.dim],
-                        activation=self.activation,
-                        name=f"dxi_{layer}",
-                        use_bias=True,
-                        kernel_init=kernel_init,
-                    )(dxi)
-                )
+            dxi = actmix(
+                FullyConnectedNet(
+                    [*self.mixing_hidden, self.dim],
+                    activation=self.activation,
+                    name=f"dxi_{layer}",
+                    use_bias=True,
+                    kernel_init=kernel_init,
+                )(dxi)
+            )
 
             if self.pair_embedding_key is not None:
                 ### UPDATE PAIR EMBEDDING ###
@@ -629,12 +668,12 @@ class CRATEmbedding(nn.Module):
                         kernel_init=kernel_init,
                     )(dxij)
                 )
-                xij = xij + dxij
+                xij = layer_norm(xij + dxij)
 
             ##################################################
             ### UPDATE EMBEDDING ###
-            if layer == 0 and not self.species_init:
-                xi = dxi
+            if layer == 0 and not (self.species_init or self.charge_embedding):
+                xi = layer_norm(dxi)
             else:
                 ### FORGET GATE ###
                 R = jax.nn.sigmoid(
@@ -644,7 +683,7 @@ class CRATEmbedding(nn.Module):
                         (xi.shape[-1],),
                     )
                 )
-                xi = R[None, :] * xi + dxi
+                xi = layer_norm(R[None, :] * xi + dxi)
 
             if self.keep_all_layers:
                 xis.append(xi)
