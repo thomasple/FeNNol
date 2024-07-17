@@ -103,7 +103,7 @@ class SpookyNetEmbedding(nn.Module):
             kq = jnp.where(pos_mask[:,None], kq_pos[None, :], kq_neg[None, :])
             vq = jnp.where(pos_mask[:,None], vq_pos[None, :], vq_neg[None, :])
             qik = (qi * kq[batch_index]).sum(axis=-1) / self.dim**0.5
-            wi = jnp.log(1 + jnp.exp(qik))
+            wi =  jax.nn.softplus(qik)
             wnorm = jax.ops.segment_sum(wi, batch_index, Q.shape[0])
             avi = wi[:,None] * ((Q / wnorm)[:, None] * vq)[batch_index]
             eQ = ResMLP(use_bias=False, name="eQ", kernel_init=kernel_init)(avi)
@@ -121,7 +121,7 @@ class SpookyNetEmbedding(nn.Module):
             )
             si = nn.Dense(self.dim, kernel_init=kernel_init, name="s_linear")(eZ)
             sik = (si * ks[None, :]).sum(axis=-1) / self.dim**0.5
-            wi = jnp.log(1 + jnp.exp(sik))
+            wi = jax.nn.softplus(sik)
             wnorm = jax.ops.segment_sum(wi, batch_index, S.shape[0])
             avi = wi[:,None] * ((S / wnorm)[:, None] * vs[None, :])[batch_index]
             eS = ResMLP(use_bias=False, name="eS", kernel_init=kernel_init)(avi)
