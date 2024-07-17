@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from . import FENNIX
 from .models.preprocessing import convert_to_jax
 from typing import Sequence, Union, Optional
-
+from ase.stress import full_3x3_to_voigt_6_stress
 
 class FENNIXCalculator(ase.calculators.calculator.Calculator):
     """FENNIX calculator for ASE.
@@ -36,6 +36,7 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
         atoms: Optional[ase.Atoms] = None,
         verbose: bool = False,
         energy_terms: Optional[Sequence[str]] = None,
+        float_type: str = "float32",
         **kwargs
     ):
         super().__init__()
@@ -45,6 +46,8 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
             self.model = FENNIX.load(model, **kwargs)
         if energy_terms is not None:
             self.model.set_energy_terms(energy_terms)
+        assert float_type in ["float32", "float64"], "float_type must be either 'float32' or 'float64'"
+        self.dtype = float_type
         self.gpu_preprocessing = gpu_preprocessing
         self.verbose = verbose
         self._fennol_inputs = None
@@ -64,7 +67,7 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
             e, f, stress, output = self.model._energy_and_forces_and_virial(
                 self.model.variables, inputs
             )
-            self.results["stress"] = np.asarray(stress[0]) * ase.units.Hartree
+            self.results["stress"] = full_3x3_to_voigt_6_stress(np.asarray(stress[0]) * ase.units.Hartree)
             self.results["forces"] = np.asarray(f) * ase.units.Hartree
         elif "forces" in properties:
             e, f, output = self.model._energy_and_forces(self.model.variables, inputs)
@@ -73,14 +76,14 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
             e, output = self.model._total_energy(self.model.variables, inputs)
 
         self.results["energy"] = float(e[0]) * ase.units.Hartree
-        self.results["fennol_output"] = output
+        # self.results["fennol_output"] = output
 
     def preprocess(self, atoms, system_changes=ase.calculators.calculator.all_changes):
 
         force_cpu_preprocessing = False
         if self._fennol_inputs is None:
             force_cpu_preprocessing = True
-            cell = np.asarray(atoms.get_cell(complete=True).array, dtype=np.float32)
+            cell = np.asarray(atoms.get_cell(complete=True).array, dtype=self.dtype)
             pbc = np.asarray(atoms.get_pbc(), dtype=bool)
             if np.all(pbc):
                 use_pbc = True
@@ -90,7 +93,7 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
                 use_pbc = False
 
             species = np.asarray(atoms.get_atomic_numbers(), dtype=np.int32)
-            coordinates = np.asarray(atoms.get_positions(), dtype=np.float32)
+            coordinates = np.asarray(atoms.get_positions(), dtype=self.dtype)
             natoms = np.array([len(species)], dtype=np.int32)
             batch_index = np.array([0] * len(species), dtype=np.int32)
 
@@ -118,7 +121,7 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
                     use_pbc = False
                 if use_pbc:
                     cell = np.asarray(
-                        atoms.get_cell(complete=True).array, dtype=np.float32
+                        atoms.get_cell(complete=True).array, dtype=self.dtype
                     )
                     reciprocal_cell = np.linalg.inv(cell)
                     self._fennol_inputs["cells"] = jnp.asarray(cell.reshape(1, 3, 3))
@@ -141,7 +144,7 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
                 force_cpu_preprocessing = True
             if "positions" in system_changes:
                 self._fennol_inputs["coordinates"] = jnp.asarray(
-                    atoms.get_positions(), dtype=jnp.float32
+                    atoms.get_positions(), dtype=self.dtype
                 )
 
         if self.gpu_preprocessing and not force_cpu_preprocessing:
