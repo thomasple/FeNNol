@@ -64,7 +64,7 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
             e, f, stress, output = self.model._energy_and_forces_and_virial(
                 self.model.variables, inputs
             )
-            self.results["stress"] = np.asarray(stress) * ase.units.Hartree
+            self.results["stress"] = np.asarray(stress[0]) * ase.units.Hartree
             self.results["forces"] = np.asarray(f) * ase.units.Hartree
         elif "forces" in properties:
             e, f, output = self.model._energy_and_forces(self.model.variables, inputs)
