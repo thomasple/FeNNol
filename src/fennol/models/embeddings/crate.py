@@ -91,7 +91,7 @@ class CRATEmbedding(nn.Module):
     pair_embedding_key: Optional[str] = None
     """The key for the pair embedding data in the output dictionary."""
 
-    species_encoding: dict | str = dataclasses.field(default_factory=dict)
+    species_encoding: Union[dict, str] = dataclasses.field(default_factory=dict)
     """If `str`, it is the key in the inputs dictionary that contains species encodings. Else, it is the dictionary of parameters for species encoding. See `fennol.models.misc.encodings.SpeciesEncoding`."""
     radial_basis: dict = dataclasses.field(default_factory=dict)
     """The dictionary of parameters for radial basis functions. See `fennol.models.misc.encodings.RadialBasis`."""

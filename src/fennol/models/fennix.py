@@ -33,7 +33,7 @@ class FENNIX:
     in the wrapper. If only `rng_key` is provided, the model is initialized with a dummy system and the resulting.
     """
 
-    cutoff: float | None
+    cutoff: Union[float,None]
     modules: FENNIXModules
     variables: Dict
     preprocessing: PreprocessingChain
@@ -167,7 +167,7 @@ class FENNIX:
 
         self._initializing = False
 
-    def set_energy_terms(self, energy_terms: Sequence[str] | None, jit=True) -> None:
+    def set_energy_terms(self, energy_terms: Union[Sequence[str],None], jit:bool=True) -> None:
         """ Set the energy terms to be computed by the model and prepare the energy and force functions."""
         object.__setattr__(self, "energy_terms", energy_terms)
         if energy_terms is None:

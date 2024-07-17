@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
-from typing import Sequence, Dict, Callable, ClassVar
+from typing import Sequence, Dict, Callable, ClassVar,Union
 import numpy as np
 from ...utils.periodic_table import PERIODIC_TABLE
 from ..misc.encodings import SpeciesEncoding
@@ -48,7 +48,7 @@ class AIMNet(nn.Module):
     keep_all_layers: bool = False
     """ If True, the output will contain the embeddings from all layers."""
 
-    activation: Callable | str = "swish"
+    activation: Union[Callable, str] = "swish"
     """ The activation function to use."""
     combination_neurons: Sequence[int] = dataclasses.field(
         default_factory=lambda: [256, 128, 16]

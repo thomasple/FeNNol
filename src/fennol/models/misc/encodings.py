@@ -34,7 +34,7 @@ class SpeciesEncoding(nn.Module):
     output_key: Optional[str] = None
     """ The key to use for the output in the returned dictionary."""
 
-    species_order: None | str | Sequence[str] = None
+    species_order: Optional[Union[str, Sequence[str]]] = None
     """ The order of the species to use for the encoding. Only used for "onehot" encoding.
          If None, we encode all elements up to `zmax`."""
     trainable: bool = False

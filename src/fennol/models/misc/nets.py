@@ -301,7 +301,7 @@ class SpeciesIndexNet(nn.Module):
     """The hidden dimensions of the fully connected networks.
         If a dictionary is provided, it should map species names to dimensions.
         If a sequence is provided, the same dimensions will be used for all species."""
-    species_order: None | str | Sequence[str] = None
+    species_order: Optional[Union[str, Sequence[str]]] = None
     """The species for which to build a network. Only required if neurons is not a dictionary."""
     activation: Union[Callable, str] = "silu"
     """The activation function to use in the fully connected networks."""
@@ -417,7 +417,7 @@ class ChemicalNet(nn.Module):
 
     """
 
-    species_order: str | Sequence[str]
+    species_order: Union[str, Sequence[str]]
     """The species for which to build a network."""
     neurons: Sequence[int]
     """The dimensions of the fully connected networks."""

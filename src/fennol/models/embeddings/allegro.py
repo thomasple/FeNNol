@@ -46,7 +46,7 @@ class AllegroEmbedding(nn.Module):
     """ The number of hidden neurons in the embedding network."""
     latent_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
     """ The number of hidden neurons in the latent network."""
-    activation: Callable | str = "silu"
+    activation: Union[Callable, str] = "silu"
     """ The activation function to use."""
     graph_key: str = "graph"
     """ The key in the input dictionary that corresponds to the graph."""
@@ -168,7 +168,7 @@ if E3NN_AVAILABLE:
         """ The number of hidden neurons in the embedding network."""
         latent_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [128])
         """ The number of hidden neurons in the latent network."""
-        activation: Callable | str = "silu"
+        activation: Union[Callable, str] = "silu"
         """ The activation function to use."""
         graph_key: str = "graph"
         """ The key in the input dictionary that corresponds to the graph."""

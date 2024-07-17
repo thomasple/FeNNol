@@ -5,7 +5,7 @@ import numpy as np
 import jax.numpy as jnp
 from . import FENNIX
 from .models.preprocessing import convert_to_jax
-from typing import Sequence
+from typing import Sequence, Union, Optional
 
 
 class FENNIXCalculator(ase.calculators.calculator.Calculator):
@@ -31,11 +31,11 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
 
     def __init__(
         self,
-        model: str | FENNIX,
+        model: Union[str, FENNIX],
         gpu_preprocessing: bool = False,
-        atoms: ase.Atoms | None = None,
+        atoms: Optional[ase.Atoms] = None,
         verbose: bool = False,
-        energy_terms: Sequence[str] | None = None,
+        energy_terms: Optional[Sequence[str]] = None,
         **kwargs
     ):
         super().__init__()
