@@ -7,6 +7,7 @@ from . import FENNIX
 from .models.preprocessing import convert_to_jax
 from typing import Sequence, Union, Optional
 from ase.stress import full_3x3_to_voigt_6_stress
+import jax
 
 class FENNIXCalculator(ase.calculators.calculator.Calculator):
     """FENNIX calculator for ASE.
@@ -36,18 +37,24 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
         atoms: Optional[ase.Atoms] = None,
         verbose: bool = False,
         energy_terms: Optional[Sequence[str]] = None,
-        float_type: str = "float32",
+        use_float64: bool = False,
+        matmul_prec:Optional[str]=None,
         **kwargs
     ):
         super().__init__()
+        if use_float64:
+            jax.config.update("jax_enable_x64", True)
+        if matmul_prec is not None:
+            assert matmul_prec in ["default","high","highest"], "matmul_prec should be one of 'default', 'high', 'highest'"
+            jax.config.update("jax_default_matmul_precision", matmul_prec)
+
         if isinstance(model, FENNIX):
             self.model = model
         else:
             self.model = FENNIX.load(model, **kwargs)
         if energy_terms is not None:
             self.model.set_energy_terms(energy_terms)
-        assert float_type in ["float32", "float64"], "float_type must be either 'float32' or 'float64'"
-        self.dtype = float_type
+        self.dtype = "float64" if use_float64 else "float32"
         self.gpu_preprocessing = gpu_preprocessing
         self.verbose = verbose
         self._fennol_inputs = None
@@ -64,10 +71,12 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
         inputs = self.preprocess(self.atoms, system_changes=system_changes)
 
         if "stress" in properties:
-            e, f, stress, output = self.model._energy_and_forces_and_virial(
+            e, f, virial, output = self.model._energy_and_forces_and_virial(
                 self.model.variables, inputs
             )
-            self.results["stress"] = full_3x3_to_voigt_6_stress(np.asarray(stress[0]) * ase.units.Hartree)
+            volume = self.atoms.get_volume()
+            stress = -np.asarray(virial[0])* ase.units.Hartree / volume
+            self.results["stress"] = full_3x3_to_voigt_6_stress(stress)
             self.results["forces"] = np.asarray(f) * ase.units.Hartree
         elif "forces" in properties:
             e, f, output = self.model._energy_and_forces(self.model.variables, inputs)
