@@ -18,8 +18,8 @@ from ...utils.periodic_table import (
 
 
 class SpeciesEncoding(nn.Module):
-    """ A module that encodes chemical species information.
-    
+    """A module that encodes chemical species information.
+
     FID: SPECIES_ENCODING
     """
 
@@ -33,7 +33,7 @@ class SpeciesEncoding(nn.Module):
     """ The maximum atomic number to encode."""
     output_key: Optional[str] = None
     """ The key to use for the output in the returned dictionary."""
-    
+
     species_order: None | str | Sequence[str] = None
     """ The order of the species to use for the encoding. Only used for "onehot" encoding.
          If None, we encode all elements up to `zmax`."""
@@ -41,7 +41,6 @@ class SpeciesEncoding(nn.Module):
     """ Whether the encoding is trainable or fixed. Does not apply to "random" encoding which is always trainable."""
 
     FID: ClassVar[str] = "SPECIES_ENCODING"
-
 
     @nn.compact
     def __call__(self, inputs: Union[dict, jax.Array]) -> Union[dict, jax.Array]:
@@ -132,8 +131,9 @@ class SpeciesEncoding(nn.Module):
                 )
             else:
                 conv_tensor = jnp.asarray(conv_tensor, dtype=jnp.float32)
+            conv_tensors = [conv_tensor]
         else:
-            conv_tensor = None
+            conv_tensors = []
 
         if "random" in encodings:
             rand_encoding = self.param(
@@ -143,10 +143,26 @@ class SpeciesEncoding(nn.Module):
                 ),
                 (zmaxpad, self.dim),
             )
-            if conv_tensor is None:
-                conv_tensor = rand_encoding
-            else:
-                conv_tensor = jnp.concatenate([conv_tensor, rand_encoding], axis=1)
+            conv_tensors.append(rand_encoding)
+
+        if "randint" in encodings:
+            rand_encoding = self.param(
+                "randint_encoding",
+                lambda key, shape: jax.random.randint(key, shape, 0,2).astype(jnp.float32),
+                (zmaxpad, self.dim),
+            )
+            conv_tensors.append(rand_encoding)
+        
+        if "randtri" in encodings:
+            rand_encoding = self.param(
+                "randtri_encoding",
+                lambda key, shape: (jax.random.randint(key, shape, 0,3)-1).astype(jnp.float32),
+                (zmaxpad, self.dim),
+            )
+            conv_tensors.append(rand_encoding)
+        
+        conv_tensor = jnp.concatenate(conv_tensors, axis=1)
+
 
         assert conv_tensor is not None, "No encoding selected."
 
@@ -162,7 +178,7 @@ class SpeciesEncoding(nn.Module):
 
 class RadialBasis(nn.Module):
     """Computes a radial encoding of distances.
-    
+
     FID: RADIAL_BASIS
     """
 
@@ -182,8 +198,10 @@ class RadialBasis(nn.Module):
     """ Whether the basis parameters are trainable or fixed."""
     enforce_positive: bool = False
     """ Whether to enforce distance-start to be positive"""
-    gamma: float = 1./(2*au.BOHR)
+    gamma: float = 1.0 / (2 * au.BOHR)
     """ The gamma parameter for the "spooky" basis."""
+    n_levels: int = 10
+    """ The number of levels for the "levels" basis."""
 
     FID: ClassVar[str] = "RADIAL_BASIS"
 
@@ -193,7 +211,7 @@ class RadialBasis(nn.Module):
             x = inputs[self.graph_key]["distances"]
         else:
             x = inputs["distances"] if isinstance(inputs, dict) else inputs
-        
+
         shape = x.shape
         x = x.reshape(-1)
 
@@ -226,7 +244,7 @@ class RadialBasis(nn.Module):
 
             out = norm * jnp.sin(x * bessel_roots) / x
             if self.enforce_positive:
-                out = jnp.where(x>0, out*(1.-jnp.exp(-x**2)), 0.0)
+                out = jnp.where(x > 0, out * (1.0 - jnp.exp(-(x**2))), 0.0)
 
         elif basis == "gaussian":
             if self.trainable:
@@ -261,11 +279,15 @@ class RadialBasis(nn.Module):
                     dtype=x.dtype,
                 )
 
-            x=x[:,None]
+            x = x[:, None]
             x2 = (eta * (x - roots)) ** 2
             out = jnp.exp(-x2)
             if self.enforce_positive:
-                out = jnp.where(x>self.start, out*(1.-jnp.exp(-10*(x-self.start)**2)), 0.0)
+                out = jnp.where(
+                    x > self.start,
+                    out * (1.0 - jnp.exp(-10 * (x - self.start) ** 2)),
+                    0.0,
+                )
 
         elif basis == "gaussian_rinv":
             rinv_high = 1.0 / max(self.start, 0.1)
@@ -326,33 +348,34 @@ class RadialBasis(nn.Module):
             norm = 1.0 / (0.25 + 0.5 * self.dim) ** 0.5
             out = norm * jnp.cos(x * roots / c)
             if self.enforce_positive:
-                out = jnp.where(x>0, out, norm)
-            
+                out = jnp.where(x > 0, out, norm)
 
         elif basis == "spooky":
-            
+
             gamma = self.gamma
             if self.trainable:
                 gamma = jnp.abs(
                     self.param("gamma", lambda key: jnp.asarray(gamma, dtype=x.dtype))
                 )
-                
+
             if self.enforce_positive:
-                x = jnp.where(x>self.start, x-self.start, 0.0)[:,None]
+                x = jnp.where(x - self.start > 1.0e-3, x - self.start, 1.0e-3)[:, None]
                 dim = self.dim
             else:
                 x = x[:, None] - self.start
                 dim = self.dim - 1
-            
+
             norms = []
             for k in range(self.dim):
-                norms.append(math.comb(dim , k))
+                norms.append(math.comb(dim, k))
             norms = jnp.asarray(np.array(norms)[None, :], dtype=x.dtype)
 
             e = jnp.exp(-gamma * x)
             k = jnp.asarray(np.arange(self.dim, dtype=x.dtype)[None, :])
-            b = e**k * (1 - e) ** (dim  - k)
-            out = b*e * norms
+            b = e**k * (1 - e) ** (dim - k)
+            out = b * e * norms
+            if self.enforce_positive:
+                out = jnp.where(x > 1.0e-3, out * (1.0 - jnp.exp(-(x**2))), 0.0)
             # logfac = np.zeros(self.dim)
             # for i in range(2, self.dim):
             #     logfac[i] = logfac[i - 1] + np.log(i)
@@ -370,6 +393,45 @@ class RadialBasis(nn.Module):
             # gammar = (-gamma * x)[:,None]
             # x = logbin + n * gammar + k * jnp.log(-jnp.expm1(gammar))
             # out = jnp.exp(x)*jnp.exp(gammar)
+        elif basis == "levels":
+            assert self.n_levels >= 2, "Number of levels must be >= 2."
+
+            def initialize_levels(key):
+                key0, key1, key_phi = jax.random.split(key, 3)
+                level0 = jax.random.randint(key0, (self.dim,), 0, 2)
+                level1 = jax.random.randint(key1, (self.dim,), 0, 2)
+                # level0 = jax.random.normal(key0, (self.dim,), dtype=jnp.float32)
+                # level1 = jax.random.normal(key1, (self.dim,), dtype=jnp.float32)
+                phi = jax.random.uniform(key_phi, (self.dim,), dtype=jnp.float32)
+                levels = [level0]
+                for l in range(2, self.n_levels - 1):
+                    tau = float(self.n_levels - l) / float(self.n_levels - 1)
+                    phil = phi < tau
+                    level = jnp.where(phil, level0, level1)
+                    levels.append(level)
+                levels.append(level1)
+                return jnp.stack(levels).astype(jnp.float32)
+
+            levels = self.param("levels",initialize_levels)
+            # levels = self.param(
+            #     "levels",
+            #     lambda key, shape: jax.random.normal(key, shape, dtype=jnp.float32),
+            #     (self.n_levels,self.dim),
+            # )
+
+            flevel = (x - self.start) / (self.end - self.start) * (self.n_levels - 1)
+            ilevel = jnp.floor(flevel).astype(jnp.int32)
+            ilevel1 = jnp.clip(ilevel + 1, 0, self.n_levels - 1)
+            ilevel = jnp.clip(ilevel, 0, self.n_levels - 1)
+
+            dx = flevel - ilevel
+            w = 0.5 * (1 + jnp.cos(jnp.pi * dx))[:,None]
+
+            ## interpolate between level vectors
+            v1 = levels[ilevel]
+            v2 = levels[ilevel1]
+            out = v1 * w + v2 * (1 - w)
+
         else:
             raise NotImplementedError(f"Unknown radial basis {basis}.")
         ############################
@@ -382,16 +444,15 @@ class RadialBasis(nn.Module):
         return out
 
 
-@partial(jax.jit, static_argnums=(1,2),inline=True)
-def positional_encoding(t,d:int,n:float=10000.):
-    if d%2==0:
-        k=np.arange(d//2)
+@partial(jax.jit, static_argnums=(1, 2), inline=True)
+def positional_encoding(t, d: int, n: float = 10000.0):
+    if d % 2 == 0:
+        k = np.arange(d // 2)
     else:
-        k=np.arange((d+1)//2)
-    wk = jnp.asarray(1.0/(n**(2*k/d)))
-    wkt = wk[None,:]*t[:,None]
-    out = jnp.concatenate([jnp.cos(wkt),jnp.sin(wkt)],axis=-1)
-    if d%2==1:
-        out = out[:,:-1]
+        k = np.arange((d + 1) // 2)
+    wk = jnp.asarray(1.0 / (n ** (2 * k / d)))
+    wkt = wk[None, :] * t[:, None]
+    out = jnp.concatenate([jnp.cos(wkt), jnp.sin(wkt)], axis=-1)
+    if d % 2 == 1:
+        out = out[:, :-1]
     return out
-    
