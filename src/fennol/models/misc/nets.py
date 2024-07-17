@@ -51,11 +51,11 @@ class FullyConnectedNet(nn.Module):
         else:
             x = inputs[self.input_key]
 
-        activation = (
-            activation_from_str(self.activation)
-            if isinstance(self.activation, str)
-            else self.activation
-        )
+        # activation = (
+        #     activation_from_str(self.activation)
+        #     if isinstance(self.activation, str)
+        #     else self.activation
+        # )
         kernel_init = (
             initializer_from_str(self.kernel_init)
             if isinstance(self.kernel_init, str)
@@ -70,7 +70,7 @@ class FullyConnectedNet(nn.Module):
                 kernel_init=kernel_init,
                 # precision=jax.lax.Precision.HIGH,
             )(x)
-            x = activation(x)
+            x = activation_from_str(self.activation)(x)
         x = nn.Dense(
             self.neurons[-1],
             use_bias=self.use_bias,
@@ -180,11 +180,11 @@ class FullyResidualNet(nn.Module):
         else:
             x = inputs[self.input_key]
 
-        activation = (
-            activation_from_str(self.activation)
-            if isinstance(self.activation, str)
-            else self.activation
-        )
+        # activation = (
+        #     activation_from_str(self.activation)
+        #     if isinstance(self.activation, str)
+        #     else self.activation
+        # )
         kernel_init = (
             initializer_from_str(self.kernel_init)
             if isinstance(self.kernel_init, str)
@@ -200,7 +200,7 @@ class FullyResidualNet(nn.Module):
             )(x)
 
         for i in range(self.nlayers - 1):
-            x = x + activation(
+            x = x + activation_from_str(self.activation)(
                 nn.Dense(
                     self.dim,
                     use_bias=self.use_bias,
@@ -663,11 +663,11 @@ class GatedPerceptron(nn.Module):
         else:
             x = inputs[self.input_key]
 
-        activation = (
-            activation_from_str(self.activation)
-            if isinstance(self.activation, str)
-            else self.activation
-        )
+        # activation = (
+        #     activation_from_str(self.activation)
+        #     if isinstance(self.activation, str)
+        #     else self.activation
+        # )
         kernel_init = (
             initializer_from_str(self.kernel_init)
             if isinstance(self.kernel_init, str)
@@ -677,7 +677,7 @@ class GatedPerceptron(nn.Module):
         gate = jax.nn.sigmoid(
             nn.Dense(self.dim, use_bias=self.use_bias, kernel_init=kernel_init)(x)
         )
-        x = gate * activation(
+        x = gate * activation_from_str(self.activation)(
             nn.Dense(self.dim, use_bias=self.use_bias, kernel_init=kernel_init)(x)
         )
 
@@ -713,6 +713,8 @@ class ZAcNet(nn.Module):
     """Whether to remove the last axis of the output tensor if it is of dimension 1."""
     kernel_init: Union[str, Callable] = "lecun_normal()"
     """The kernel initialization method to use."""
+    species_key: str = "species"
+    """The key of the species tensor."""
 
     FID: ClassVar[str] = "ZACNET"
 
@@ -724,13 +726,13 @@ class ZAcNet(nn.Module):
             ), "input key must be provided if inputs is a dictionary"
             species, x = inputs
         else:
-            species, x = inputs["species"], inputs[self.input_key]
+            species, x = inputs[self.species_key], inputs[self.input_key]
 
-        activation = (
-            activation_from_str(self.activation)
-            if isinstance(self.activation, str)
-            else self.activation
-        )
+        # activation = (
+        #     activation_from_str(self.activation)
+        #     if isinstance(self.activation, str)
+        #     else self.activation
+        # )
         kernel_init = (
             initializer_from_str(self.kernel_init)
             if isinstance(self.kernel_init, str)
@@ -754,7 +756,7 @@ class ZAcNet(nn.Module):
                 )[species]
             else:
                 b = 0
-            x = activation(sig * x + b)
+            x = activation_from_str(self.activation)(sig * x + b)
         x = nn.Dense(
             self.neurons[-1],
             use_bias=self.use_bias,
@@ -809,6 +811,8 @@ class ZLoRANet(nn.Module):
     """Whether to remove the last axis of the output tensor if it is of dimension 1."""
     kernel_init: Union[str, Callable] = "lecun_normal()"
     """The kernel initialization method to use."""
+    species_key: str = "species"
+    """The key of the species tensor."""
 
     FID: ClassVar[str] = "ZLORANET"
 
@@ -820,13 +824,13 @@ class ZLoRANet(nn.Module):
             ), "input key must be provided if inputs is a dictionary"
             species, x = inputs
         else:
-            species, x = inputs["species"], inputs[self.input_key]
+            species, x = inputs[self.species_key], inputs[self.input_key]
 
-        activation = (
-            activation_from_str(self.activation)
-            if isinstance(self.activation, str)
-            else self.activation
-        )
+        # activation = (
+        #     activation_from_str(self.activation)
+        #     if isinstance(self.activation, str)
+        #     else self.activation
+        # )
         kernel_init = (
             initializer_from_str(self.kernel_init)
             if isinstance(self.kernel_init, str)
@@ -849,7 +853,7 @@ class ZLoRANet(nn.Module):
             )[species]
             Ax = jnp.einsum("zrd,zd->zr", A, x)
             BAx = jnp.einsum("zrd,zd->zr", B, Ax)
-            x = activation(xi + BAx)
+            x = activation_from_str(self.activation)(xi + BAx)
         xi = nn.Dense(
             self.neurons[-1],
             use_bias=self.use_bias,
