@@ -35,7 +35,7 @@ class VdwOQDO(nn.Module):
     """ The key for the ratio between AIM volume and free-atom volume. 
          If None, the volume ratio is assumed to be 1.0."""
     energy_key: Optional[str] = None
-    """ The key for the output energy."""
+    """ The key for the output energy. If None, the name of the module is used."""
     damped: bool = True
     """ Whether to use short-range damping."""
 

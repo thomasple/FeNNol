@@ -27,8 +27,9 @@ class ElectricField(nn.Module):
     """Key of the charges in the input."""
     graph_key: str = 'graph'
     """Key of the graph in the input."""
-    polarisability_key: str = 'polarisability'
-    """Key of the polarisability in the input."""
+    polarizability_key: str = 'polarizability'
+    """Key of the polarizability in the input."""
+    trainable: bool = False
 
     FID: ClassVar[str] = 'ELECTRIC_FIELD'
 
@@ -44,23 +45,27 @@ class ElectricField(nn.Module):
         distances = graph['distances']
         rij = distances / Au.BOHR
         vec_ij = graph['vec'] / Au.BOHR
-        polarisability = (
-            inputs[self.polarisability_key] / Au.BOHR**3
+        polarizability = (
+            inputs[self.polarizability_key] / Au.BOHR**3
         )
-        pol_src = polarisability[edge_src]
-        pol_dst = polarisability[edge_dst]
+        pol_src = polarizability[edge_src]
+        pol_dst = polarizability[edge_dst]
         alpha_ij = pol_dst * pol_src
         # Effective distance
         uij = rij / alpha_ij ** (1 / 6)
 
-        # Charges and polarisability
+        # Charges and polarizability
         charges = inputs[self.charges_key]
         rij = rij[:, None]
         q_ij = charges[edge_dst, None]
 
+        if self.trainable:
+            damping_param = jnp.abs(self.param('damping_param', lambda key: jnp.array(self.damping_param)))
+        else:
+            damping_param = self.damping_param
         # Damping term
         damping_field = 1 - jnp.exp(
-            -self.damping_param * uij**1.5
+            -damping_param * uij**1.5
         )[:, None]
 
         # Electric field
