@@ -202,6 +202,8 @@ class RadialBasis(nn.Module):
     """ The gamma parameter for the "spooky" basis."""
     n_levels: int = 10
     """ The number of levels for the "levels" basis."""
+    alt_bessel_norm: bool = False
+    """ If True, use the (2/(end-start))**0.5 normalization for the bessel basis."""
 
     FID: ClassVar[str] = "RADIAL_BASIS"
 
@@ -241,7 +243,7 @@ class RadialBasis(nn.Module):
                 norm = 1.0 / (
                     self.dim * math.pi / c
                 )  # (2.0 / c) ** 0.5/(self.dim*math.pi/c)
-
+            if self.alt_bessel_norm: norm = (2.0 / c) ** 0.5 
             out = norm * jnp.sin(x * bessel_roots) / x
             if self.enforce_positive:
                 out = jnp.where(x > 0, out * (1.0 - jnp.exp(-(x**2))), 0.0)
