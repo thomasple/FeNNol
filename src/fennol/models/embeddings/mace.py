@@ -339,7 +339,7 @@ class SymmetricContraction(nn.Module):
     symmetric_tensor_product_basis: bool
 
     @nn.compact
-    def __call__(self, input: e3nn.IrrepsArray, index: jnp.ndarray):
+    def __call__(self, input, index):
         if not E3NN_AVAILABLE:
             raise E3NN_EXCEPTION
 
@@ -476,7 +476,7 @@ class SymmetricContraction(nn.Module):
 #     symmetric_tensor_product_basis: bool
 
 #     @nn.compact
-#     def __call__(self, input: e3nn.IrrepsArray, index: jnp.ndarray):
+#     def __call__(self, input: IrrepsArray, index: jnp.ndarray):
 #         if not E3NN_AVAILABLE:
 #             raise E3NN_EXCEPTION
 
