@@ -47,11 +47,11 @@ class MACE(nn.Module):
 
     """
     _graphs_properties: Dict
-    output_irreps: Irreps | str = "1x0e"
+    output_irreps: Union[Irreps, str] = "1x0e"
     """The output irreps of the model."""
-    hidden_irreps: Irreps | str = "128x0e + 128x1o"
+    hidden_irreps: Union[Irreps, str] = "128x0e + 128x1o"
     """The hidden irreps of the model."""
-    readout_mlp_irreps: Irreps | str = "16x0e"
+    readout_mlp_irreps: Union[Irreps, str] = "16x0e"
     """The hidden irreps of the readout MLP."""
     graph_key: str = "graph"
     """The key in the input dictionary that corresponds to the molecular graph to use."""
