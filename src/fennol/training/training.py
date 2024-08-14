@@ -189,7 +189,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
 
     # rename_refs = training_parameters.get("rename_refs", [])
     loss_definition, used_keys, ref_keys = get_loss_definition(
-        training_parameters
+        training_parameters, model_energy_unit = model.energy_unit
     )
 
     coordinates_ref_key = training_parameters.get("coordinates_ref_key", None)
@@ -207,6 +207,8 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
     batch_size = training_parameters.get("batch_size", 16)
 
     compute_forces = "forces" in used_keys
+    compute_virial = "virial_tensor" in used_keys or "virial" in used_keys
+    compute_stress = "stress_tensor" in used_keys or "stress" in used_keys
 
     # get optimizer parameters
     lr = training_parameters.get("lr", 1.0e-3)
@@ -302,7 +304,21 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         model.set_energy_terms(training_parameters["energy_terms"], jit=False)
     print("energy terms:", model.energy_terms)
 
-    if compute_forces:
+    pbc_training = training_parameters.get("pbc_training", False)
+    if compute_stress or compute_virial:
+        virial_key = "virial" if "virial" in used_keys else "virial_tensor"
+        stress_key = "stress" if "stress" in used_keys else "stress_tensor"
+        assert pbc_training, "PBC must be enabled for stress or virial training"
+        print("Computing stress and forces")
+        def evaluate(model, variables, data):
+            _, _,vir, output = model._energy_and_forces_and_virial(variables, data)
+            cells = output["cells"]
+            volume = jnp.linalg.det(cells)
+            stress = -vir / volume[:, None, None]
+            output[stress_key] = stress
+            output[virial_key] = vir
+            return output
+    elif compute_forces:
         print("Computing forces")
         def evaluate(model, variables, data):
             _, _, output = model._energy_and_forces(variables, data)
@@ -344,7 +360,6 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
     assert metric_use_best in ["mae", "rmse"], "metric_best must be 'mae' or 'rmse'"
 
     ## configure preprocessing ##
-    pbc_training = training_parameters.get("pbc_training", False)
     minimum_image = training_parameters.get("minimum_image", False)
     preproc_state = unfreeze(model.preproc_state)
     layer_state = []

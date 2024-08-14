@@ -147,18 +147,21 @@ def dynamic(simulation_parameters, device, fprec):
             f"Unknown trajectory format '{traj_format}'. Supported formats are 'arc' and 'xyz'"
         )
 
-
+    model_energy_unit = au.get_multiplier(model.energy_unit)
     ### Print initial pressure
     estimate_pressure = dyn_state["estimate_pressure"]
     if estimate_pressure and fprec == "float64":
         volume = system_data["pbc"]["volume"]
         coordinates = conformation["coordinates"]
         cell = conformation["cells"][0]
+        # temper = 2 * ek / (3.0 * nat) * au.KELVIN
+        ek = 1.5*nat * system_data["kT"] 
         Pkin = (2 * au.KBAR) * ek / ((3.0 / au.BOHR**3) * volume)
         e, f, vir_t, _ = model._energy_and_forces_and_virial(
             model.variables, conformation
         )
-        Pvir = -(np.trace(vir_t[0]) * au.KBAR) / ((3.0 / au.BOHR**3) * volume)
+        KBAR = au.KBAR/model_energy_unit
+        Pvir = -(np.trace(vir_t[0]) * KBAR) / ((3.0 / au.BOHR**3) * volume)
         vstep = volume * 0.000001
         scalep = ((volume + vstep) / volume) ** (1.0 / 3.0)
         cellp = cell * scalep
@@ -184,7 +187,7 @@ def dynamic(simulation_parameters, device, fprec):
             }
         )
         em, _ = model._total_energy(model.variables, sysm)
-        Pvir_fd = -(ep[0] * au.KBAR - em[0] * au.KBAR) / (2.0 * vstep / au.BOHR**3)
+        Pvir_fd = -(ep[0] * KBAR - em[0] * KBAR) / (2.0 * vstep / au.BOHR**3)
         print(
             f"# Initial pressure: {Pkin+Pvir:.3f} (virial); {Pkin+Pvir_fd:.3f} (finite difference) ; Pkin: {Pkin:.3f} ; Pvir: {Pvir:.3f} ; Pvir_fd: {Pvir_fd:.3f}"
         )
@@ -244,7 +247,9 @@ def dynamic(simulation_parameters, device, fprec):
     if include_thermostat_energy:
         header += "      Etherm"
     if estimate_pressure:
-        header += "  Press[kbar]"
+        pressure_unit_str = simulation_parameters.get("pressure_unit", "atm")
+        pressure_unit = au.get_multiplier(pressure_unit_str)*au.BOHR**3
+        header += f"  Press[{pressure_unit_str}]"
     print(header)
 
     ### Open trajectory file
@@ -311,9 +316,9 @@ def dynamic(simulation_parameters, device, fprec):
                     etherm * atom_energy_unit
                 )
             if estimate_pressure:
-                pres = system["pressure"]
-                properties_traj["Pressure[kbar]"].append(pres * au.KBAR * au.BOHR**3)
-                line += f" {pres*au.KBAR*au.BOHR**3:10.3f}"
+                pres = system["pressure"]*pressure_unit
+                properties_traj[f"Pressure[{pressure_unit_str}]"].append(pres)
+                line += f" {pres:10.3f}"
 
             print(line)
 

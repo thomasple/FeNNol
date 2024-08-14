@@ -32,6 +32,8 @@ class Polarization(nn.Module):
     """Damping parameter for mutual polarization."""
     neglect_mutual: bool = False
     """Neglect the mutual polarization term (like in iAMOEBA)."""
+    _energy_unit: str = 'Ha'
+    """The energy unit of the model. **Automatically set by FENNIX**"""
 
     FID: ClassVar[str] = 'POLARIZATION'
 
@@ -130,7 +132,8 @@ class Polarization(nn.Module):
         energy_key = (
             self.energy_key if self.energy_key is not None else self.name
         )
-        output[energy_key] = pol_energy
+        energy_unit = Au.get_multiplier(self._energy_unit)
+        output[energy_key] = pol_energy*energy_unit
         output['tmu'] = tmu.reshape(-1, 3)
 
         return {**inputs, **output}

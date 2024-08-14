@@ -253,9 +253,11 @@ class SumAxis(nn.Module):
         if self.norm is not None:
             norm=self.norm.lower()
             if norm == "dim":
-                output = output / x.shape[self.axis]
+                dim = np.prod(x.shape[self.axis])
+                output = output / dim
             elif norm == "sqrt":
-                output = output / np.sqrt(x.shape[self.axis])
+                dim = np.prod(x.shape[self.axis])
+                output = output / dim**0.5
             elif norm == "none":
                 pass
             else:

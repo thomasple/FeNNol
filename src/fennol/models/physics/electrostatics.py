@@ -127,6 +127,8 @@ class Coulomb(nn.Module):
     """Screening parameter. If >0, the Coulomb potential becomes a Yukawa potential and the reciprocal space is not computed"""
     trainable: bool = True
     """Whether the parameters are trainable"""
+    _energy_unit: str = "Ha"
+    """The energy unit of the model. **Automatically set by FENNIX**"""
 
     FID: ClassVar[str] = "COULOMB"
 
@@ -399,9 +401,10 @@ class Coulomb(nn.Module):
             eat = eat * scale
 
         energy_key = self.energy_key if self.energy_key is not None else self.name
-        out = {**inputs, energy_key: eat}
+        energy_unit = au.get_multiplier(self._energy_unit)
+        out = {**inputs, energy_key: eat*energy_unit}
         if do_recip:
-            out[energy_key + "_reciprocal"] = erec
+            out[energy_key + "_reciprocal"] = erec*energy_unit
         return out
 
 
@@ -431,6 +434,8 @@ class QeqD4(nn.Module):
     """Key for additional c4 in the inputs. Only used if charges are provided in the inputs"""
     total_charge_key: str = "total_charge"
     """Key for the total charge in the inputs"""
+    _energy_unit: str = "Ha"
+    """The energy unit of the model. **Automatically set by FENNIX**"""
 
     FID: ClassVar[str] = "QEQ_D4"
 
@@ -557,7 +562,7 @@ class QeqD4(nn.Module):
             Qtot = (
                 inputs[self.total_charge_key].astype(chi.dtype)
                 if self.total_charge_key in inputs
-                else jnp.zeros(nsys, dype=chi.dtype)
+                else jnp.zeros(nsys, dtype=chi.dtype)
             )
             b = jnp.concatenate([Qtot, -chi])
             # x = solve_cg(matvec, b, ridge=self.ridge)
@@ -614,18 +619,18 @@ class QeqD4(nn.Module):
             energy = energy + erec
 
         energy_key = self.energy_key if self.energy_key is not None else self.name
-
+        energy_unit = au.get_multiplier(self._energy_unit)
         output = {
             **inputs,
             self.charges_key: q_,
-            energy_key: energy,
+            energy_key: energy*energy_unit,
         }
         if do_recip:
-            output[energy_key + "_reciprocal"] = erec
+            output[energy_key + "_reciprocal"] = erec*energy_unit
         if self.charges_key in inputs and self.trainable and "training_flag" in inputs:
             output[energy_key + "_regularization"] = regularization
-            output[energy_key + "_dedq"] = dedq
-            output[energy_key + "_etrain"] = etrain
+            output[energy_key + "_dedq"] = dedq*energy_unit
+            output[energy_key + "_etrain"] = etrain*energy_unit
         return output
 
 
@@ -650,6 +655,8 @@ class ChargeCorrection(nn.Module):
     """Key for the coordination number in the inputs. Used to adjust charge redistribution."""
     total_charge_key: str = "total_charge"
     """Key for the total charge in the inputs"""
+    _energy_unit: str = "Ha"
+    """The energy unit of the model. **Automatically set by FENNIX**"""
 
     FID: ClassVar[str] = "CHARGE_CORRECTION"
 
@@ -694,7 +701,8 @@ class ChargeCorrection(nn.Module):
 
         qf = q + s * f[batch_index]
 
-        ecorr = 0.5 * eta * (qf - q) ** 2
+        energy_unit = au.get_multiplier(self._energy_unit)
+        ecorr = (0.5*energy_unit) * eta * (qf - q) ** 2
         output_key = self.output_key if self.output_key is not None else self.key
         return {
             **inputs,
@@ -712,7 +720,7 @@ class DistributeElectrons(nn.Module):
     """
     embedding_key: str
     """Key for the embedding in the inputs that is used to predict an 'electron affinity' weight"""
-    output_key: str = "charges"
+    output_key: Union[str,None] = None
     """Key for the charges in the outputs"""
     total_charge_key: str = "total_charge"
     """Key for the total charge in the inputs"""
@@ -743,7 +751,7 @@ class DistributeElectrons(nn.Module):
         q = Nel-Ni
         
 
-        output_key = self.output_key if self.output_key is not None else self.key
+        output_key = self.output_key if self.output_key is not None else self.name
         return {
             **inputs,
             output_key: q,

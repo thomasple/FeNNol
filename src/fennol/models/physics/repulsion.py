@@ -22,6 +22,8 @@ class RepulsionZBL(nn.Module):
     """The key for the output energy."""
     trainable: bool = True
     """Whether the parameters are trainable."""
+    _energy_unit: str = "Ha"
+    """The energy unit of the model. **Automatically set by FENNIX**"""
 
     FID: ClassVar[str]  = "REPULSION_ZBL"
 
@@ -82,5 +84,6 @@ class RepulsionZBL(nn.Module):
 
         erep_atomic = jax.ops.segment_sum(ereppair, edge_src, species.shape[0])
 
+        energy_unit = au.get_multiplier(self._energy_unit)
         energy_key = self.energy_key if self.energy_key is not None else self.name
-        return {**inputs, energy_key: erep_atomic}
+        return {**inputs, energy_key: erep_atomic*energy_unit}

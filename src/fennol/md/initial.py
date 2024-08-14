@@ -96,9 +96,10 @@ def load_system_data(simulation_parameters, fprec):
         totmass_amu = mass_amu.sum()
         dens = totmass_amu / 6.02214129e-1 / volume
         print("# density: ", dens.item(), " g/cm^3")
-        pscale = au.KBAR / (3.0 * volume / au.BOHR**3)
+        pscale = 1. / (3.0 * volume)
         minimum_image = simulation_parameters.get("minimum_image", True)
         estimate_pressure = simulation_parameters.get("estimate_pressure", False)
+        print("# minimum_image: ", minimum_image)
 
         crystal_input = simulation_parameters.get("xyz_input/crystal", False)
         if crystal_input:
@@ -205,8 +206,9 @@ def initialize_system(conformation, vel, model, system_data, fprec):
     ## initial energy and forces
     print("# Computing initial energy and forces")
     e, f, _ = model._energy_and_forces(model.variables, conformation)
-    f = np.array(f)
-    epot = np.mean(e)
+    model_energy_unit = model.Ha_to_model_energy
+    f = np.array(f) / model_energy_unit
+    epot = np.mean(e) / model_energy_unit
     ek = 0.5 * jnp.sum(system_data["mass"][:, None] * vel**2)
 
     ## build system

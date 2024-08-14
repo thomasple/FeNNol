@@ -37,7 +37,7 @@ def get_training_parameters(
 
 
 def get_loss_definition(
-    training_parameters: Dict[str, any]  # , manual_renames: List[str] = []
+    training_parameters: Dict[str, any], model_energy_unit:str = "Ha"  # , manual_renames: List[str] = []
 ) -> Tuple[Dict[str, any], List[str], List[str]]:
     """
     Returns the loss definition and a list of renamed references.
@@ -54,9 +54,15 @@ def get_loss_definition(
     loss_definition = deepcopy(training_parameters["loss"])
     used_keys = []
     ref_keys = []
+    energy_mult = au.get_multiplier(model_energy_unit)
     for k in loss_definition.keys():
         loss_prms = loss_definition[k]
-        if "unit" in loss_prms:
+        if "energy_unit" in loss_prms:
+            loss_prms["mult"] = energy_mult/au.get_multiplier(loss_prms["energy_unit"])
+            if "unit" in loss_prms:
+                print("Warning: Both 'unit' and 'energy_unit' are defined for loss component",k, " -> using 'energy_unit'")
+            loss_prms["unit"] = loss_prms["energy_unit"]
+        elif "unit" in loss_prms:
             loss_prms["mult"] = 1.0 / au.get_multiplier(loss_prms["unit"])
         else:
             loss_prms["mult"] = 1.0

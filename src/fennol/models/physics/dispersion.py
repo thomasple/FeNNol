@@ -38,11 +38,15 @@ class VdwOQDO(nn.Module):
     """ The key for the output energy. If None, the name of the module is used."""
     damped: bool = True
     """ Whether to use short-range damping."""
+    _energy_unit: str = "Ha"
+    """The energy unit of the model. **Automatically set by FENNIX**"""
 
     FID: ClassVar[str]  = "VDW_OQDO"
 
     @nn.compact
     def __call__(self, inputs):
+        energy_unit = au.get_multiplier(self._energy_unit)
+
         species = inputs["species"]
         graph = inputs[self.graph_key]
         edge_src, edge_dst = graph["edge_src"], graph["edge_dst"]
@@ -101,7 +105,7 @@ class VdwOQDO(nn.Module):
         else:
             epair = c6ij / rij**6 + c8ij / rij**8 + c10ij / rij**10
 
-        edisp = -0.5 * jax.ops.segment_sum(epair * switch, edge_src, species.shape[0])
+        edisp = (-0.5*energy_unit) * jax.ops.segment_sum(epair * switch, edge_src, species.shape[0])
 
         output_key = self.name if self.energy_key is None else self.energy_key
 
@@ -143,7 +147,7 @@ class VdwOQDO(nn.Module):
             ez = jnp.exp(-0.5 * muw * rij**2)
 
         exij = A * q2 * ez / rij
-        ex = 0.5 * jax.ops.segment_sum(exij * switch, edge_src, species.shape[0])
+        ex = (0.5*energy_unit) * jax.ops.segment_sum(exij * switch, edge_src, species.shape[0])
 
         return {
             **inputs,

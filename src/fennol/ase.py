@@ -8,6 +8,7 @@ from .models.preprocessing import convert_to_jax
 from typing import Sequence, Union, Optional
 from ase.stress import full_3x3_to_voigt_6_stress
 import jax
+from .utils import AtomicUnits as au
 
 class FENNIXCalculator(ase.calculators.calculator.Calculator):
     """FENNIX calculator for ASE.
@@ -58,6 +59,9 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
         self.gpu_preprocessing = gpu_preprocessing
         self.verbose = verbose
         self._fennol_inputs = None
+
+        model_unit = au.get_multiplier(self.model.energy_unit)
+        self.energy_conv = ase.units.Hartree / model_unit
         if atoms is not None:
             self.preprocess(atoms)
 
@@ -75,16 +79,16 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
                 self.model.variables, inputs
             )
             volume = self.atoms.get_volume()
-            stress = -np.asarray(virial[0])* ase.units.Hartree / volume
+            stress = -np.asarray(virial[0])* self.energy_conv / volume
             self.results["stress"] = full_3x3_to_voigt_6_stress(stress)
-            self.results["forces"] = np.asarray(f) * ase.units.Hartree
+            self.results["forces"] = np.asarray(f) * self.energy_conv
         elif "forces" in properties:
             e, f, output = self.model._energy_and_forces(self.model.variables, inputs)
-            self.results["forces"] = np.asarray(f) * ase.units.Hartree
+            self.results["forces"] = np.asarray(f) * self.energy_conv
         else:
             e, output = self.model._total_energy(self.model.variables, inputs)
 
-        self.results["energy"] = float(e[0]) * ase.units.Hartree
+        self.results["energy"] = float(e[0]) * self.energy_conv
         # self.results["fennol_output"] = output
 
     def preprocess(self, atoms, system_changes=ase.calculators.calculator.all_changes):

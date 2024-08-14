@@ -62,6 +62,8 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
         "pimd": nbeads is not None,
     }
 
+    model_energy_unit = au.get_multiplier(model.energy_unit)
+
     # initialize thermostat
     thermostat, thermostat_post, thermostat_state, vel, dyn_state["thermostat_name"] = (
         get_thermostat(simulation_parameters, dt, system_data, fprec, rng_key)
@@ -72,13 +74,15 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
         thermostat_post, post_state = thermostat_post
         dyn_state["thermostat_post_state"] = post_state
 
-    pbc_data = system_data.get("pbc_data", None)
+    pbc_data = system_data.get("pbc", None)
     if pbc_data is not None:
         pscale = pbc_data["pscale"]
         estimate_pressure = pbc_data["estimate_pressure"]
     else:
         pscale = 1.0
         estimate_pressure = False
+        
+    print("# Estimate pressure: ", estimate_pressure)
 
     dyn_state["estimate_pressure"] = estimate_pressure
 
@@ -174,6 +178,9 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
                 epot, f, vir_t, _ = model._energy_and_forces_and_virial(
                     model.variables, conformation
                 )
+                epot = epot / model_energy_unit
+                f = f / model_energy_unit
+                vir_t = vir_t / model_energy_unit
                 return {
                     **system,
                     "forces": coords_to_eig(f),
@@ -182,6 +189,8 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
                 }
             else:
                 epot, f, _ = model._energy_and_forces(model.variables, conformation)
+                epot = epot / model_energy_unit
+                f = f / model_energy_unit
                 return {**system, "forces": coords_to_eig(f), "epot": jnp.mean(epot)}
         
         @jax.jit
@@ -225,6 +234,9 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
                 epot, f, vir_t, _ = model._energy_and_forces_and_virial(
                     model.variables, conformation
                 )
+                epot = epot/ model_energy_unit
+                f = f / model_energy_unit
+                vir_t = vir_t / model_energy_unit
                 return {
                     **system,
                     "forces": f,
@@ -233,6 +245,8 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
                 }
             else:
                 epot, f, _ = model._energy_and_forces(model.variables, conformation)
+                epot = epot / model_energy_unit
+                f = f / model_energy_unit
                 return {**system, "forces": f, "epot": epot[0]}
 
         @jax.jit

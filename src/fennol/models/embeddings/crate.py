@@ -81,6 +81,8 @@ class CRATEmbedding(nn.Module):
     """The activation function applied after mixing."""
     layer_normalization: bool = False
     """Whether to apply layer normalization after each layer."""
+    use_bias: bool = True
+    """Whether to use bias in the Dense operations."""
 
     graph_key: str = "graph"
     """The key for the graph data in the inputs dictionary."""
@@ -460,7 +462,7 @@ class CRATEmbedding(nn.Module):
                 nn.Dense(
                     dim_src[layer] + dim_dst,
                     name=f"species_linear_{layer}",
-                    use_bias=True,
+                    use_bias=self.use_bias,
                 )(xi),
                 [
                     dim_src[layer],
@@ -651,7 +653,7 @@ class CRATEmbedding(nn.Module):
                     [*self.mixing_hidden, self.dim],
                     activation=self.activation,
                     name=f"dxi_{layer}",
-                    use_bias=True,
+                    use_bias=self.use_bias,
                     kernel_init=kernel_init,
                 )(dxi)
             )

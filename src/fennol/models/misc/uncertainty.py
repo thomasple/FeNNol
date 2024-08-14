@@ -27,7 +27,10 @@ class EnsembleStatistics(nn.Module):
     def __call__(self, inputs) -> Any:
         x = inputs[self.key]
         mean = jnp.mean(x, axis=self.axis)
-        var = jnp.var(x, axis=self.axis, ddof=1)
+        if x.shape[self.axis] == 1:
+            var = jnp.zeros_like(mean)
+        else:
+            var = jnp.var(x, axis=self.axis, ddof=1)
         output = {**inputs, self.key + "_mean": mean, self.key + "_var": var}
 
         if self.shuffle_ensemble and "training_flag" in inputs and "rng_key" in inputs:

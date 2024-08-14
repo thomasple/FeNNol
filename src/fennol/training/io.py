@@ -82,7 +82,10 @@ def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, a
                 output["natoms"].append(np.asarray([nat]))
                 output["batch_index"].append(np.asarray([i] * nat))
                 if "total_charge" not in d:
-                    output["total_charge"].append(np.asarray(0.0, dtype=np.float32))
+                    total_charge = np.asarray(0.0, dtype=np.float32)
+                else:
+                    total_charge = np.asarray(d["total_charge"],dtype=np.float32)
+                output["total_charge"].append(total_charge)
                 if "cell" not in d:
                     cell = np.asarray(
                         [
@@ -97,7 +100,7 @@ def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, a
 
                 if extract_all_keys:
                     for k, v in d.items():
-                        if k == "cell":
+                        if k in ("cell","total_charge"):
                             continue
                         v_array = np.array(v)
                         # Shift atom number if necessary
@@ -123,6 +126,7 @@ def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, a
                             output[k+"_mask"].append(np.asarray(d[k+"_mask"]))
                 atom_shift += nat
 
+            
             for k, v in output.items():
                 if v[0].ndim == 0:
                     output[k] = np.stack(v)
@@ -149,9 +153,14 @@ def load_dataset(training_parameters, rename_refs=[], infinite_iterator=False, a
                 output["natoms"].append(np.asarray([nat]))
                 output["batch_index"].append(np.asarray([i] * nat))
                 if "total_charge" not in d:
-                    output["total_charge"].append(np.asarray([0.0], dtype=np.float32))
+                    total_charge = np.asarray(0.0, dtype=np.float32)
+                else:
+                    total_charge = np.asarray(d["total_charge"],dtype=np.float32)
+                output["total_charge"].append(total_charge)
                 if extract_all_keys:
                     for k, v in d.items():
+                        if k == "total_charge":
+                            continue
                         v_array = np.array(v)
                         # Shift atom number if necessary
                         if k.endswith("_atidx"):
