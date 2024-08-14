@@ -40,3 +40,4 @@ Homepage = "https://github.com/thomasple/FeNNol"
 [project.scripts]
 fennol_md = "fennol.md.dynamic:main"
 fennol_train = "fennol.training.training:main"
+fennol_inspect = "fennol.models.inspect:main"
