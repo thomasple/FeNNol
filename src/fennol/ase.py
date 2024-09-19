@@ -39,14 +39,18 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
         verbose: bool = False,
         energy_terms: Optional[Sequence[str]] = None,
         use_float64: bool = False,
-        matmul_prec:Optional[str]=None,
+        matmul_prec: Optional[str] = None,
         **kwargs
     ):
         super().__init__()
         if use_float64:
             jax.config.update("jax_enable_x64", True)
         if matmul_prec is not None:
-            assert matmul_prec in ["default","high","highest"], "matmul_prec should be one of 'default', 'high', 'highest'"
+            assert matmul_prec in [
+                "default",
+                "high",
+                "highest",
+            ], "matmul_prec should be one of 'default', 'high', 'highest'"
             jax.config.update("jax_default_matmul_precision", matmul_prec)
 
         if isinstance(model, FENNIX):
@@ -79,7 +83,7 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
                 self.model.variables, inputs
             )
             volume = self.atoms.get_volume()
-            stress = -np.asarray(virial[0])* self.energy_conv / volume
+            stress = -np.asarray(virial[0]) * self.energy_conv / volume
             self.results["stress"] = full_3x3_to_voigt_6_stress(stress)
             self.results["forces"] = np.asarray(f) * self.energy_conv
         elif "forces" in properties:
@@ -89,6 +93,9 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
             e, output = self.model._total_energy(self.model.variables, inputs)
 
         self.results["energy"] = float(e[0]) * self.energy_conv
+        if self.model.use_atom_padding and "forces" in self.results:
+            mask = np.asarray(output["true_atoms"])
+            self.results["forces"] = self.results["forces"][mask]
         # self.results["fennol_output"] = output
 
     def preprocess(self, atoms, system_changes=ase.calculators.calculator.all_changes):
