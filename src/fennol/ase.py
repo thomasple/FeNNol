@@ -63,6 +63,7 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
         self.gpu_preprocessing = gpu_preprocessing
         self.verbose = verbose
         self._fennol_inputs = None
+        self._raw_inputs = None
 
         model_unit = au.get_multiplier(self.model.energy_unit)
         self.energy_conv = ase.units.Hartree / model_unit
@@ -78,30 +79,32 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
         super().calculate(atoms, properties, system_changes)
         inputs = self.preprocess(self.atoms, system_changes=system_changes)
 
+        results = {}
         if "stress" in properties:
             e, f, virial, output = self.model._energy_and_forces_and_virial(
                 self.model.variables, inputs
             )
             volume = self.atoms.get_volume()
             stress = -np.asarray(virial[0]) * self.energy_conv / volume
-            self.results["stress"] = full_3x3_to_voigt_6_stress(stress)
-            self.results["forces"] = np.asarray(f) * self.energy_conv
+            results["stress"] = full_3x3_to_voigt_6_stress(stress)
+            results["forces"] = np.asarray(f) * self.energy_conv
         elif "forces" in properties:
             e, f, output = self.model._energy_and_forces(self.model.variables, inputs)
-            self.results["forces"] = np.asarray(f) * self.energy_conv
+            results["forces"] = np.asarray(f) * self.energy_conv
         else:
             e, output = self.model._total_energy(self.model.variables, inputs)
 
-        self.results["energy"] = float(e[0]) * self.energy_conv
-        if self.model.use_atom_padding and "forces" in self.results:
+        results["energy"] = float(e[0]) * self.energy_conv
+        if self.model.use_atom_padding and "forces" in results:
             mask = np.asarray(output["true_atoms"])
-            self.results["forces"] = self.results["forces"][mask]
-        # self.results["fennol_output"] = output
+            results["forces"] = results["forces"][mask]
+
+        self.results.update(results)
 
     def preprocess(self, atoms, system_changes=ase.calculators.calculator.all_changes):
 
         force_cpu_preprocessing = False
-        if self._fennol_inputs is None:
+        if self._raw_inputs is None:
             force_cpu_preprocessing = True
             cell = np.asarray(atoms.get_cell(complete=True).array, dtype=self.dtype)
             pbc = np.asarray(atoms.get_pbc(), dtype=bool)
@@ -127,7 +130,7 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
                 reciprocal_cell = np.linalg.inv(cell)
                 inputs["cells"] = cell.reshape(1, 3, 3)
                 inputs["reciprocal_cells"] = reciprocal_cell.reshape(1, 3, 3)
-            self._fennol_inputs = convert_to_jax(inputs)
+            self._raw_inputs = convert_to_jax(inputs)
         else:
             if "cell" in system_changes:
                 pbc = np.asarray(atoms.get_pbc(), dtype=bool)
@@ -144,42 +147,46 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
                         atoms.get_cell(complete=True).array, dtype=self.dtype
                     )
                     reciprocal_cell = np.linalg.inv(cell)
-                    self._fennol_inputs["cells"] = jnp.asarray(cell.reshape(1, 3, 3))
-                    self._fennol_inputs["reciprocal_cells"] = jnp.asarray(
+                    self._raw_inputs["cells"] = jnp.asarray(cell.reshape(1, 3, 3))
+                    self._raw_inputs["reciprocal_cells"] = jnp.asarray(
                         reciprocal_cell.reshape(1, 3, 3)
                     )
-                elif "cells" in self._fennol_inputs:
-                    del self._fennol_inputs["cells"]
-                    del self._fennol_inputs["reciprocal_cells"]
+                elif "cells" in self._raw_inputs:
+                    del self._raw_inputs["cells"]
+                    del self._raw_inputs["reciprocal_cells"]
             if "numbers" in system_changes:
-                self._fennol_inputs["species"] = jnp.asarray(
+                self._raw_inputs["species"] = jnp.asarray(
                     atoms.get_atomic_numbers(), dtype=jnp.int32
                 )
-                self._fennol_inputs["natoms"] = jnp.array(
-                    [len(self._fennol_inputs["species"])], dtype=np.int32
+                self._raw_inputs["natoms"] = jnp.array(
+                    [len(self._raw_inputs["species"])], dtype=np.int32
                 )
-                self._fennol_inputs["batch_index"] = jnp.array(
-                    [0] * len(self._fennol_inputs["species"]), dtype=np.int32
+                self._raw_inputs["batch_index"] = jnp.array(
+                    [0] * len(self._raw_inputs["species"]), dtype=np.int32
                 )
                 force_cpu_preprocessing = True
             if "positions" in system_changes:
-                self._fennol_inputs["coordinates"] = jnp.asarray(
+                self._raw_inputs["coordinates"] = jnp.asarray(
                     atoms.get_positions(), dtype=self.dtype
                 )
 
         if self.gpu_preprocessing and not force_cpu_preprocessing:
-            inputs = self.model.preprocessing.process(
-                self.model.preproc_state, self._fennol_inputs
+            _, inputs = self.model.preprocessing.atom_padding(
+                self.model.preproc_state, self._raw_inputs
             )
-            self.model.preproc_state, state_up, self._fennol_inputs, overflow = (
+            inputs = {**self._fennol_inputs, **inputs}
+
+            inputs = self.model.preprocessing.process(self.model.preproc_state, inputs)
+            self.model.preproc_state, state_up, inputs, overflow = (
                 self.model.preprocessing.check_reallocate(
                     self.model.preproc_state, inputs
                 )
             )
+            self._fennol_inputs = inputs
             if self.verbose and overflow:
                 print("FENNIX nblist overflow => reallocating nblist")
                 print("  size updates:", state_up)
         else:
-            self._fennol_inputs = self.model.preprocess(**self._fennol_inputs)
+            self._fennol_inputs = self.model.preprocess(**self._raw_inputs)
 
         return self._fennol_inputs

@@ -85,11 +85,15 @@ class GraphGenerator:
         new_state = {**state}
         state_up = {}
 
-        max_nat = state.get("max_nat", round(coords.shape[0] / natoms.shape[0]))
-        true_max_nat = np.max(natoms)
-        if true_max_nat > max_nat:
-            state_up["max_nat"] = (true_max_nat, max_nat)
-            new_state["max_nat"] = true_max_nat
+        if natoms.shape[0] == 1:
+            max_nat = coords.shape[0]
+            true_max_nat = max_nat
+        else:
+            max_nat = state.get("max_nat", round(coords.shape[0] / natoms.shape[0]))
+            true_max_nat = np.max(natoms)
+            if true_max_nat > max_nat:
+                state_up["max_nat"] = (true_max_nat, max_nat)
+                new_state["max_nat"] = true_max_nat
 
         cutoff_skin = self.cutoff + state.get("nblist_skin", 0.0)
 
@@ -314,7 +318,10 @@ class GraphGenerator:
         natoms = inputs["natoms"]
         batch_index = inputs["batch_index"]
 
-        max_nat = state.get("max_nat", int(round(coords.shape[0] / natoms.shape[0])))
+        if natoms.shape[0] == 1:
+            max_nat = coords.shape[0]
+        else:
+            max_nat = state.get("max_nat", int(round(coords.shape[0] / natoms.shape[0])))
 
         ### compute indices of all pairs
         p1, p2 = np.triu_indices(max_nat, 1)
@@ -1308,7 +1315,7 @@ class AtomPadding:
 
         state = {**state, "prev_nat": prev_nat_}
 
-        return state, output
+        return FrozenDict(state), output
 
 
 def atom_unpadding(inputs: Dict[str, Any]) -> Dict[str, Any]:
@@ -1455,6 +1462,12 @@ class PreprocessingChain:
             inputs,
             True,
         )
+
+    def atom_padding(self, state, inputs):
+        if self.use_atom_padding:
+            padder_state = state["layers_state"][0]
+            return self.atom_padder(padder_state,inputs)
+        return state, inputs
 
     @partial(jax.jit, static_argnums=(0, 1))
     def process(self, state, inputs):

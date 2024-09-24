@@ -256,6 +256,7 @@ class FENNIX:
             def energy_and_forces_and_virial(variables, data):
                 assert "cells" in data
                 cells = data["cells"]
+                ## cells is a 3x3 matrix which lines are cell vectors (i.e. cells[0] is the first cell vector)
                 batch_index = data["batch_index"]
                 x = data["coordinates"]
 
