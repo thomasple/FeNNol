@@ -20,18 +20,33 @@ class EnsembleStatistics(nn.Module):
     """The axis along which to compute the mean and variance."""
     shuffle_ensemble: bool = False
     """Whether to shuffle the ensemble."""
+    weights_key: Optional[str] = None
+    mean_key: Optional[str] = None
 
     FID: ClassVar[str] = "ENSEMBLE_STAT"
 
     @nn.compact
     def __call__(self, inputs) -> Any:
         x = inputs[self.key]
-        mean = jnp.mean(x, axis=self.axis)
-        if x.shape[self.axis] == 1:
+        if self.weights_key is not None:
+            weights = inputs[self.weights_key]
+        else:
+            weights = jnp.ones_like(x)
+        weights = weights/jnp.sum(weights,axis=self.axis,keepdims=True)
+        mean = jnp.sum(x*weights, axis=self.axis,keepdims=True)
+
+        nsamples = x.shape[self.axis]
+        if nsamples == 1:
             var = jnp.zeros_like(mean)
         else:
-            var = jnp.var(x, axis=self.axis, ddof=1)
+            # var = jnp.var(x, axis=self.axis, ddof=1)
+            var = jnp.sum(weights*(x-mean)**2,axis=self.axis)*(nsamples/(nsamples-1.))
+        
+        mean = jnp.squeeze(mean,axis=self.axis)
         output = {**inputs, self.key + "_mean": mean, self.key + "_var": var}
+
+        if self.mean_key is not None:
+            output[self.mean_key] = mean
 
         if self.shuffle_ensemble and "training_flag" in inputs and "rng_key" in inputs:
             key, subkey = jax.random.split(inputs["rng_key"])
