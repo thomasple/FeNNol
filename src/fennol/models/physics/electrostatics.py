@@ -434,6 +434,9 @@ class QeqD4(nn.Module):
     """Key for additional c4 in the inputs. Only used if charges are provided in the inputs"""
     total_charge_key: str = "total_charge"
     """Key for the total charge in the inputs"""
+    non_interacting_guess: bool = False
+    """Whether to use the non-interacting limit as an initial guess."""
+    solver: str = "gmres"
     _energy_unit: str = "Ha"
     """The energy unit of the model. **Automatically set by FENNIX**"""
 
@@ -560,15 +563,35 @@ class QeqD4(nn.Module):
                 return jnp.concatenate((Al, Aq))
 
             Qtot = (
-                inputs[self.total_charge_key].astype(chi.dtype)
+                inputs[self.total_charge_key].astype(chi.dtype).reshape(nsys)
                 if self.total_charge_key in inputs
                 else jnp.zeros(nsys, dtype=chi.dtype)
             )
             b = jnp.concatenate([Qtot, -chi])
-            # x = solve_cg(matvec, b, ridge=self.ridge)
-            # x = jax.lax.custom_linear_solve(matvec, b, solve_cg, symmetric=True)
-            # x,_ = jax.lax.custom_linear_solve(matvec,b,jax.scipy.sparse.linalg.cg,symmetric=True,has_aux=True)
-            x = jax.scipy.sparse.linalg.cg(matvec, b)[0]
+
+            if self.non_interacting_guess:
+                # build initial guess
+                si = 1./Aii
+                q0 = -chi*si
+                qtot = jax.ops.segment_sum(q0,batch_index,nsys)
+                sisum = jax.ops.segment_sum(si,batch_index,nsys)
+                l0 = sisum*(qtot - Qtot)
+                q0 = q0 - si*l0[batch_index]
+                x0 = jnp.concatenate((l0,q0))
+            else:
+                x0 = None
+
+            solver = self.solver.lower()
+            if solver == "bicg":
+                x = jax.scipy.sparse.linalg.bicgstab(matvec, b,x0=x0)[0]
+            elif solver == "gmres":
+                x = jax.scipy.sparse.linalg.gmres(matvec, b,x0=x0)[0]
+            elif solver == "cg":
+                print("Warning: Use of cg solver for Qeq is not recommended")
+                x = jax.scipy.sparse.linalg.cg(matvec, b,x0=x0)[0]
+            else:
+                raise NotImplementedError(f"solver '{solver}' is not implemented. Choose one of [bicg, gmres]")
+
 
             q = x[nsys:]
             q_ = jax.lax.stop_gradient(q)
@@ -622,7 +645,7 @@ class QeqD4(nn.Module):
         energy_unit = au.get_multiplier(self._energy_unit)
         output = {
             **inputs,
-            self.charges_key: q_,
+            self.charges_key: q,
             energy_key: energy*energy_unit,
         }
         if do_recip:
