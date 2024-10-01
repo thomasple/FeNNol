@@ -1,5 +1,5 @@
 import flax.linen as nn
-from typing import Any, Sequence, Callable, Union, ClassVar,Optional,Dict, List
+from typing import Any, Sequence, Callable, Union, ClassVar, Optional, Dict, List
 import jax.numpy as jnp
 import jax
 import numpy as np
@@ -22,7 +22,7 @@ def apply_switch(x: jax.Array, switch: jax.Array):
 
 class ApplySwitch(nn.Module):
     """Multiply an edge array by a switch array.
-    
+
     FID: APPLY_SWITCH
     """
 
@@ -46,17 +46,18 @@ class ApplySwitch(nn.Module):
             switch = inputs[self.switch_key]
         else:
             raise ValueError("Either graph_key or switch_key must be specified")
-        
+
         x = inputs[self.key]
         output = apply_switch(x, switch)
         output_key = self.key if self.output_key is None else self.output_key
         return {**inputs, output_key: output}
 
+
 class AtomToEdge(nn.Module):
     """Map atom-wise values to edge-wise values.
 
     FID: ATOM_TO_EDGE
-    
+
     By default, we map the destination atom value to the edge. This can be changed by setting `use_source` to True.
     """
 
@@ -74,7 +75,6 @@ class AtomToEdge(nn.Module):
     use_source: bool = False
     """Whether to use the source atom value instead of the destination atom value."""
 
-
     FID: ClassVar[str] = "ATOM_TO_EDGE"
 
     @nn.compact
@@ -85,7 +85,7 @@ class AtomToEdge(nn.Module):
 
         x = inputs[self.key]
         if self.use_source:
-            x_edge  = x[edge_src]
+            x_edge = x[edge_src]
         else:
             x_edge = x[edge_dst]
 
@@ -98,9 +98,10 @@ class AtomToEdge(nn.Module):
         output_key = self.key if self.output_key is None else self.output_key
         return {**inputs, output_key: x_edge}
 
+
 class ScatterEdges(nn.Module):
-    """ Reduce an edge array to atoms by summing over neighbors.
-    
+    """Reduce an edge array to atoms by summing over neighbors.
+
     FID: SCATTER_EDGES
     """
 
@@ -131,16 +132,19 @@ class ScatterEdges(nn.Module):
             x = apply_switch(x, switch)
 
         edge_src, edge_dst = graph["edge_src"], graph["edge_dst"]
-        output = jax.ops.segment_sum(x,edge_src,nat) #jnp.zeros((nat, *x.shape[1:])).at[edge_src].add(x,mode="drop")
+        output = jax.ops.segment_sum(
+            x, edge_src, nat
+        )  # jnp.zeros((nat, *x.shape[1:])).at[edge_src].add(x,mode="drop")
         if not self._graphs_properties[self.graph_key]["directed"]:
-            output = output + jax.ops.segment_sum(x,edge_dst,nat)
+            output = output + jax.ops.segment_sum(x, edge_dst, nat)
 
         output_key = self.key if self.output_key is None else self.output_key
         return {**inputs, output_key: output}
 
+
 class EdgeConcatenate(nn.Module):
     """Concatenate the source and destination atom values of an edge.
-    
+
     FID: EDGE_CONCATENATE
     """
 
@@ -157,7 +161,7 @@ class EdgeConcatenate(nn.Module):
     """The key of the switch array. If None, the switch is taken from the graph."""
     axis: int = -1
     """The axis along which to concatenate the atom values."""
-    
+
     FID: ClassVar[str] = "EDGE_CONCATENATE"
 
     @nn.compact
@@ -167,29 +171,35 @@ class EdgeConcatenate(nn.Module):
         nat = inputs["species"].shape[0]
         xi = inputs[self.key]
 
-        assert self._graphs_properties[self.graph_key]["directed"], "EdgeConcatenate only works for directed graphs"
+        assert self._graphs_properties[self.graph_key][
+            "directed"
+        ], "EdgeConcatenate only works for directed graphs"
         assert xi.shape[0] == nat, "Shape mismatch, xi.shape[0] != nat"
 
         xij = jnp.concatenate([xi[edge_src], xi[edge_dst]], axis=self.axis)
-        
+
         if self.switch:
             switch = (
                 graph["switch"] if self.switch_key is None else inputs[self.switch_key]
             )
-            xij = apply_switch(xij, switch) 
+            xij = apply_switch(xij, switch)
 
         output_key = self.name if self.output_key is None else self.output_key
         return {**inputs, output_key: xij}
 
+
 class ScatterSystem(nn.Module):
     """Reduce an atom-wise array to a system-wise array by summing over atoms (in the batch).
-    
+
     FID: SCATTER_SYSTEM
     """
+
     key: str
     """The key of the input atom-wise array."""
     output_key: Optional[str] = None
     """The key of the output system-wise array. If None, the input key is used."""
+    average: bool = False
+    """Wether to divide by the number of atoms in the system."""
 
     FID: ClassVar[str] = "SCATTER_SYSTEM"
 
@@ -201,14 +211,19 @@ class ScatterSystem(nn.Module):
             x.shape[0] == batch_index.shape[0]
         ), f"Shape mismatch {x.shape[0]} != {batch_index.shape[0]}"
         nsys = inputs["natoms"].shape[0]
+        if self.average:
+            shape = [batch_index.shape[0]] + (x.ndim - 1) * [1]
+            x = x / inputs["natoms"][batch_index].reshape(shape)
+
         output = jax.ops.segment_sum(x, batch_index, nsys)
 
         output_key = self.key if self.output_key is None else self.output_key
         return {**inputs, output_key: output}
 
+
 class SystemToAtoms(nn.Module):
     """Broadcast a system-wise array to an atom-wise array.
-    
+
     FID: SYSTEM_TO_ATOMS
     """
 
@@ -231,7 +246,7 @@ class SystemToAtoms(nn.Module):
 
 class SumAxis(nn.Module):
     """Sum an array along an axis.
-    
+
     FID: SUM_AXIS
     """
 
@@ -251,7 +266,7 @@ class SumAxis(nn.Module):
         x = inputs[self.key]
         output = jnp.sum(x, axis=self.axis)
         if self.norm is not None:
-            norm=self.norm.lower()
+            norm = self.norm.lower()
             if norm == "dim":
                 dim = np.prod(x.shape[self.axis])
                 output = output / dim
@@ -268,7 +283,7 @@ class SumAxis(nn.Module):
 
 class Split(nn.Module):
     """Split an array along an axis.
-    
+
     FID: SPLIT
     """
 
@@ -313,9 +328,10 @@ class Split(nn.Module):
 
         return {**inputs, **outs}
 
+
 class Concatenate(nn.Module):
     """Concatenate a list of arrays along an axis.
-    
+
     FID: CONCATENATE
     """
 
@@ -337,10 +353,10 @@ class Concatenate(nn.Module):
 
 class Activation(nn.Module):
     """Apply an element-wise activation function to an array.
-    
+
     FID: ACTIVATION
     """
-    
+
     key: str
     """The key of the input array."""
     activation: Union[Callable, str]
@@ -369,7 +385,7 @@ class Activation(nn.Module):
 
 class Scale(nn.Module):
     """Scale an array by a constant factor.
-    
+
     FID: SCALE
     """
 
@@ -399,8 +415,8 @@ class Scale(nn.Module):
 
 
 class Add(nn.Module):
-    """ Add together a list of arrays.
-    
+    """Add together a list of arrays.
+
     FID: ADD
     """
 
@@ -423,7 +439,7 @@ class Add(nn.Module):
 
 class Multiply(nn.Module):
     """Element-wise-multiply together a list of arrays.
-    
+
     FID: MULTIPLY
     """
 
@@ -443,15 +459,16 @@ class Multiply(nn.Module):
         output_key = self.output_key if self.output_key is not None else self.name
         return {**inputs, output_key: output}
 
+
 class Transpose(nn.Module):
     """Transpose an array.
-    
+
     FID: TRANSPOSE
     """
 
     key: str
     """The key of the input array."""
-    axes: Sequence[int] 
+    axes: Sequence[int]
     """The permutation of the axes. See `jax.numpy.transpose` for more details."""
     output_key: Optional[str] = None
     """The key of the output array. If None, the input key is used."""
@@ -464,9 +481,10 @@ class Transpose(nn.Module):
         output_key = self.output_key if self.output_key is not None else self.key
         return {**inputs, output_key: output}
 
+
 class Reshape(nn.Module):
     """Reshape an array.
-    
+
     FID: RESHAPE
     """
 
@@ -485,9 +503,10 @@ class Reshape(nn.Module):
         output_key = self.output_key if self.output_key is not None else self.key
         return {**inputs, output_key: output}
 
+
 class ChemicalConstant(nn.Module):
     """Map atomic species to a constant value.
-    
+
     FID: CHEMICAL_CONSTANT
     """
 
@@ -500,7 +519,6 @@ class ChemicalConstant(nn.Module):
 
     FID: ClassVar[str] = "CHEMICAL_CONSTANT"
 
-
     @nn.compact
     def __call__(self, inputs) -> Any:
         if isinstance(self.value, str):
@@ -509,7 +527,7 @@ class ChemicalConstant(nn.Module):
             constant = self.value
         elif isinstance(self.value, float):
             constant = [self.value] * len(PERIODIC_TABLE)
-        elif hasattr(self.value,'items' ): 
+        elif hasattr(self.value, "items"):
             constant = [0.0] * len(PERIODIC_TABLE)
             for k, v in self.value.items():
                 constant[PERIODIC_TABLE_REV_IDX[k]] = v
@@ -529,7 +547,7 @@ class ChemicalConstant(nn.Module):
 
 class SwitchFunction(nn.Module):
     """Compute a switch array from an array of distances and a cutoff.
-    
+
     FID: SWITCH_FUNCTION
     """
 
@@ -549,7 +567,6 @@ class SwitchFunction(nn.Module):
     """Whether the switch parameter is trainable."""
 
     FID: ClassVar[str] = "SWITCH_FUNCTION"
-
 
     @nn.compact
     def __call__(self, inputs) -> Any:
@@ -622,4 +639,4 @@ class SwitchFunction(nn.Module):
             else:
                 return {**inputs, self.graph_key: {**graph, "switch": switch}}
         else:
-            return switch #, edge_mask
+            return switch  # , edge_mask
