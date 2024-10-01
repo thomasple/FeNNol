@@ -1,8 +1,9 @@
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
-from typing import Optional, Union, List, Sequence, ClassVar
+from typing import Optional, Union, List, Sequence, ClassVar, Dict
 import math
+import dataclasses
 import numpy as np
 from ...utils import AtomicUnits as au
 from functools import partial
@@ -148,21 +149,24 @@ class SpeciesEncoding(nn.Module):
         if "randint" in encodings:
             rand_encoding = self.param(
                 "randint_encoding",
-                lambda key, shape: jax.random.randint(key, shape, 0,2).astype(jnp.float32),
+                lambda key, shape: jax.random.randint(key, shape, 0, 2).astype(
+                    jnp.float32
+                ),
                 (zmaxpad, self.dim),
             )
             conv_tensors.append(rand_encoding)
-        
+
         if "randtri" in encodings:
             rand_encoding = self.param(
                 "randtri_encoding",
-                lambda key, shape: (jax.random.randint(key, shape, 0,3)-1).astype(jnp.float32),
+                lambda key, shape: (jax.random.randint(key, shape, 0, 3) - 1).astype(
+                    jnp.float32
+                ),
                 (zmaxpad, self.dim),
             )
             conv_tensors.append(rand_encoding)
-        
-        conv_tensor = jnp.concatenate(conv_tensors, axis=1)
 
+        conv_tensor = jnp.concatenate(conv_tensors, axis=1)
 
         assert conv_tensor is not None, "No encoding selected."
 
@@ -204,6 +208,8 @@ class RadialBasis(nn.Module):
     """ The number of levels for the "levels" basis."""
     alt_bessel_norm: bool = False
     """ If True, use the (2/(end-start))**0.5 normalization for the bessel basis."""
+    extra_params: Dict = dataclasses.field(default_factory=dict)
+    """ Dictionary of extra parameters for the basis."""
 
     FID: ClassVar[str] = "RADIAL_BASIS"
 
@@ -243,7 +249,8 @@ class RadialBasis(nn.Module):
                 norm = 1.0 / (
                     self.dim * math.pi / c
                 )  # (2.0 / c) ** 0.5/(self.dim*math.pi/c)
-            if self.alt_bessel_norm: norm = (2.0 / c) ** 0.5 
+            if self.alt_bessel_norm:
+                norm = (2.0 / c) ** 0.5
             out = norm * jnp.sin(x * bessel_roots) / x
             if self.enforce_positive:
                 out = jnp.where(x > 0, out * (1.0 - jnp.exp(-(x**2))), 0.0)
@@ -414,7 +421,7 @@ class RadialBasis(nn.Module):
                 levels.append(level1)
                 return jnp.stack(levels).astype(jnp.float32)
 
-            levels = self.param("levels",initialize_levels)
+            levels = self.param("levels", initialize_levels)
             # levels = self.param(
             #     "levels",
             #     lambda key, shape: jax.random.normal(key, shape, dtype=jnp.float32),
@@ -427,12 +434,44 @@ class RadialBasis(nn.Module):
             ilevel = jnp.clip(ilevel, 0, self.n_levels - 1)
 
             dx = flevel - ilevel
-            w = 0.5 * (1 + jnp.cos(jnp.pi * dx))[:,None]
+            w = 0.5 * (1 + jnp.cos(jnp.pi * dx))[:, None]
 
             ## interpolate between level vectors
             v1 = levels[ilevel]
             v2 = levels[ilevel1]
             out = v1 * w + v2 * (1 - w)
+        elif basis ==  "finite_support":
+            flevel = (x - self.start) / (self.end - self.start) * (self.dim + 1)
+            ilevel = jnp.floor(flevel).astype(jnp.int32)
+            ilevel1 = jnp.clip(ilevel + 1, 0, self.dim + 1)
+            ilevel = jnp.clip(ilevel, 0, self.dim + 1)
+
+            dx = flevel - ilevel
+            w = 0.5 * (1 + jnp.cos(jnp.pi * dx))
+
+            ilevelflat = ilevel + jnp.arange(x.shape[0]) * (self.dim+2)
+            ilevel1flat = ilevel1 + jnp.arange(x.shape[0]) * (self.dim+2)
+
+            out = jnp.zeros((x.shape[0]*(self.dim+2)), dtype=x.dtype).at[ilevelflat].set(w).at[ilevel1flat].set(1-w).reshape(-1, self.dim+2)[:,1:-1]
+
+        elif basis == "exp_lr" or basis == "exp":
+            zeta = self.extra_params.get("zeta", default=2.0)
+            s = self.extra_params.get("s", default=0.5)
+            n = np.arange(self.dim)
+            # if self.trainable:
+                # zeta = jnp.abs(
+                #     self.param("zeta", lambda key: jnp.asarray(zeta, dtype=x.dtype))
+                # )
+                # s = jnp.abs(self.param("s", lambda key: jnp.asarray(s, dtype=x.dtype)))
+
+            a = zeta * s**n
+            xx = np.linspace(self.start, self.end, 10000)
+            norm = 1./np.trapz(np.exp(-a[None, :] * xx[:, None]), xx, axis=0)
+
+            if self.trainable:
+                a=jnp.abs(self.param("exponent",lambda key: jnp.asarray(a)))
+
+            out = jnp.exp(-a[None, :] * x[:, None])*norm[None, :]
 
         else:
             raise NotImplementedError(f"Unknown radial basis {basis}.")
