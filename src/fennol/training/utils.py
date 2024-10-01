@@ -37,7 +37,8 @@ def get_training_parameters(
 
 
 def get_loss_definition(
-    training_parameters: Dict[str, any], model_energy_unit:str = "Ha"  # , manual_renames: List[str] = []
+    training_parameters: Dict[str, any],
+    model_energy_unit: str = "Ha",  # , manual_renames: List[str] = []
 ) -> Tuple[Dict[str, any], List[str], List[str]]:
     """
     Returns the loss definition and a list of renamed references.
@@ -58,9 +59,15 @@ def get_loss_definition(
     for k in loss_definition.keys():
         loss_prms = loss_definition[k]
         if "energy_unit" in loss_prms:
-            loss_prms["mult"] = energy_mult/au.get_multiplier(loss_prms["energy_unit"])
+            loss_prms["mult"] = energy_mult / au.get_multiplier(
+                loss_prms["energy_unit"]
+            )
             if "unit" in loss_prms:
-                print("Warning: Both 'unit' and 'energy_unit' are defined for loss component",k, " -> using 'energy_unit'")
+                print(
+                    "Warning: Both 'unit' and 'energy_unit' are defined for loss component",
+                    k,
+                    " -> using 'energy_unit'",
+                )
             loss_prms["unit"] = loss_prms["energy_unit"]
         elif "unit" in loss_prms:
             loss_prms["mult"] = 1.0 / au.get_multiplier(loss_prms["unit"])
@@ -81,6 +88,29 @@ def get_loss_definition(
                 ref_keys.append(ref)
         if "ds_weight" in loss_prms:
             ref_keys.append(loss_prms["ds_weight"])
+
+        if "weight_start" in loss_prms:
+            weight_start = loss_prms["weight_start"]
+            if "weight_ramp" in loss_prms:
+                weight_ramp = loss_prms["weight_ramp"]
+            else:
+                weight_ramp = training_parameters.get("max_epochs")
+            weight_ramp_start = loss_prms.get("weight_ramp_start", 0.)
+            weight_end = loss_prms["weight"]
+            print(
+                "Weight ramp for",
+                k,
+                ":",
+                weight_start,
+                "->",
+                loss_prms["weight"],
+                " in",
+                weight_ramp,
+                "epochs",
+            )
+            loss_prms["weight_schedule"] = lambda e: weight_start + jnp.clip(
+                (e-float(weight_ramp_start)) / float(weight_ramp), 0.0, 1.0
+            ) * (weight_end - weight_start)
 
         used_keys.append(loss_prms["key"])
 
@@ -167,16 +197,14 @@ def get_optimizer(
     # weight decay
     weight_decay = training_parameters.get("weight_decay", 0.0)
     assert weight_decay >= 0.0, "Weight decay must be positive"
-    decay_targets = training_parameters.get(
-        "decay_targets", [""]
-    ) 
+    decay_targets = training_parameters.get("decay_targets", [""])
 
     def decay_status(full_path, v):
         full_path = "/".join(full_path).lower()
         status = False
         # print(full_path,re.match(r'^params\/', full_path))
         for path in decay_targets:
-            if re.match(r'^params/'+path.lower(), full_path):
+            if re.match(r"^params/" + path.lower(), full_path):
                 status = True
             # if full_path.startswith("params/" + path.lower()):
             #     status = True
@@ -189,7 +217,7 @@ def get_optimizer(
         grad_processing.append(
             optax.add_decayed_weights(weight_decay=-weight_decay, mask=decay_mask)
         )
-    
+
     if zero_nans:
         grad_processing.append(optax.zero_nans())
 
@@ -215,6 +243,7 @@ def get_train_step_function(
     jit: bool = True,
 ):
     def train_step(
+        epoch,
         data,
         inputs,
         variables,
@@ -272,25 +301,58 @@ def get_train_step_function(
                 else:
                     ref = jnp.zeros_like(predicted)
 
-                if loss_prms["type"] in ["ensemble_nll", "ensemble_crps"]:
+                if "norm_axis" in loss_prms and loss_prms["norm_axis"] is not None:
+                    norm_axis = loss_prms["norm_axis"]
+                    predicted = jnp.linalg.norm(
+                        predicted, axis=norm_axis, keepdims=True
+                    )
+                    ref = jnp.linalg.norm(ref, axis=norm_axis, keepdims=True)
+
+                if loss_prms["type"] in [
+                    "ensemble_nll",
+                    "ensemble_crps",
+                    "gaussian_mixture",
+                ]:
                     ensemble_axis = loss_prms.get("ensemble_axis", -1)
+                    ensemble_weights_key = loss_prms.get("ensemble_weights", None)
+                    ensemble_size = predicted.shape[ensemble_axis]
+                    if ensemble_weights_key is not None:
+                        ensemble_weights = output[ensemble_weights_key]
+                    else:
+                        ensemble_weights = jnp.ones_like(predicted)
                     if "ensemble_subsample" in loss_prms and "rng_key" in output:
                         ns = min(
                             loss_prms["ensemble_subsample"],
                             predicted.shape[ensemble_axis],
                         )
                         key, subkey = jax.random.split(output["rng_key"])
-                        predicted = jax.lax.slice_in_dim(
-                            jax.random.permutation(
-                                subkey, predicted, axis=ensemble_axis, independent=True
-                            ),
-                            start_index=0,
-                            limit_index=ns,
-                            axis=ensemble_axis,
-                        )
+
+                        def get_subsample(x):
+                            return jax.lax.slice_in_dim(
+                                jax.random.permutation(
+                                    subkey, x, axis=ensemble_axis, independent=True
+                                ),
+                                start_index=0,
+                                limit_index=ns,
+                                axis=ensemble_axis,
+                            )
+
+                        predicted = get_subsample(predicted)
+                        ensemble_weights = get_subsample(ensemble_weights)
                         output["rng_key"] = key
-                    predicted_var = predicted.var(axis=ensemble_axis, ddof=1)
-                    predicted = predicted.mean(axis=ensemble_axis)
+                    else:
+                        get_subsample = lambda x: x
+                    ensemble_weights = ensemble_weights / jnp.sum(
+                        ensemble_weights, axis=ensemble_axis, keepdims=True
+                    )
+                    predicted_ensemble = predicted
+                    predicted = (predicted * ensemble_weights).sum(
+                        axis=ensemble_axis, keepdims=True
+                    )
+                    predicted_var = (
+                        ensemble_weights * (predicted_ensemble - predicted) ** 2
+                    ).sum(axis=ensemble_axis) * (ensemble_size / (ensemble_size - 1.0))
+                    predicted = jnp.squeeze(predicted, axis=ensemble_axis)
 
                 if predicted.ndim > 1 and predicted.shape[-1] == 1:
                     predicted = jnp.squeeze(predicted, axis=-1)
@@ -341,15 +403,38 @@ def get_train_step_function(
                 ref = ref * truth_mask
                 predicted = predicted * truth_mask
 
+                natscale = natscale / nel
+
                 loss_type = loss_prms["type"]
                 if loss_type == "mse":
                     loss = jnp.sum(natscale * (predicted - ref) ** 2)
                 elif loss_type == "log_cosh":
                     loss = jnp.sum(natscale * optax.log_cosh(predicted, ref))
+                elif loss_type == "rel_mse":
+                    eps = loss_prms.get("rel_eps", 1.0e-6)
+                    rel_pow = loss_prms.get("rel_pow", 2.0)
+                    loss = jnp.sum(
+                        natscale
+                        * (predicted - ref) ** 2
+                        / (eps + jnp.abs(ref) ** rel_pow)
+                    )
                 elif loss_type == "rmse+mae":
                     loss = (
                         jnp.sum(natscale * (predicted - ref) ** 2)
                     ) ** 0.5 + jnp.sum(natscale * jnp.abs(predicted - ref))
+                elif loss_type == "crps":
+                    predicted_var_key = loss_prms.get(
+                        "var_key", loss_prms["key"] + "_var"
+                    )
+                    predicted_var = output[predicted_var_key]
+                    if per_atom:
+                        predicted_var = predicted_var / natoms.reshape(*shape_mask)
+                    predicted_var = predicted_var * truth_mask + (1.0 - truth_mask)
+                    sigma = predicted_var**0.5
+                    dy = (ref - predicted) / sigma
+                    Phi = 0.5 * (1.0 + jax.scipy.special.erf(dy / 2**0.5))
+                    phi = jnp.exp(-0.5 * dy**2) / (2 * jnp.pi) ** 0.5
+                    loss = jnp.sum(natscale * sigma * (dy * (2 * Phi - 1.0) + 2 * phi))
                 elif loss_type == "ensemble_nll":
                     predicted_var = predicted_var * truth_mask + (1.0 - truth_mask)
                     loss = 0.5 * jnp.sum(
@@ -371,6 +456,47 @@ def get_train_step_function(
                     loss = jnp.sum(
                         natscale * truth_mask * sigma * (dy * (2 * Phi - 1.0) + 2 * phi)
                     )
+                elif loss_type == "gaussian_mixture":
+                    gm_w = get_subsample(output[loss_prms["key"] + "_w"])
+                    gm_w = gm_w / jnp.sum(gm_w, axis=ensemble_axis, keepdims=True)
+                    sigma = get_subsample(output[loss_prms["key"] + "_sigma"])
+                    ref = jnp.expand_dims(ref, axis=ensemble_axis)
+                    # log_likelihoods = -0.5*jnp.log(2*np.pi*gm_sigma2) - ((ref - predicted_ensemble) ** 2) / (2 * gm_sigma2)
+                    # log_w =jnp.log(gm_w + 1.e-10)
+                    # negloglikelihood = -jax.scipy.special.logsumexp(log_w + log_likelihoods,axis=ensemble_axis)
+                    # loss = jnp.sum(natscale * truth_mask * negloglikelihood)
+
+                    # CRPS loss
+                    def compute_crps(mu, sigma):
+                        dy = mu / sigma
+                        Phi = 0.5 * (1.0 + jax.scipy.special.erf(dy / 2**0.5))
+                        phi = jnp.exp(-0.5 * dy**2) / (2 * jnp.pi) ** 0.5
+                        return sigma * (dy * (2 * Phi - 1.0) + 2 * phi)
+
+                    crps1 = compute_crps(ref - predicted_ensemble, sigma)
+                    gm_crps1 = (gm_w * crps1).sum(axis=ensemble_axis)
+
+                    if ensemble_axis < 0:
+                        ensemble_axis = predicted_ensemble.ndim + ensemble_axis
+                    muij = jnp.expand_dims(
+                        predicted_ensemble, axis=ensemble_axis
+                    ) - jnp.expand_dims(predicted_ensemble, axis=ensemble_axis + 1)
+                    sigma2 = sigma**2
+                    sigmaij = (
+                        jnp.expand_dims(sigma2, axis=ensemble_axis)
+                        + jnp.expand_dims(sigma2, axis=ensemble_axis + 1)
+                    ) ** 0.5
+                    wij = jnp.expand_dims(gm_w, axis=ensemble_axis) * jnp.expand_dims(
+                        gm_w, axis=ensemble_axis + 1
+                    )
+                    crps2 = compute_crps(muij, sigmaij)
+                    gm_crps2 = (wij * crps2).sum(
+                        axis=(ensemble_axis, ensemble_axis + 1)
+                    )
+
+                    crps = gm_crps1 - 0.5 * gm_crps2
+                    loss = jnp.sum(natscale * truth_mask * crps)
+
                 elif loss_type == "evidential":
                     evidence = loss_prms["evidence_key"]
                     nu, alpha, beta = jnp.split(output[evidence], 3, axis=-1)
@@ -412,8 +538,10 @@ def get_train_step_function(
                 else:
                     raise ValueError(f"Unknown loss type: {loss_type}")
 
-                loss_tot = loss_tot + loss_prms["weight"] * loss / nel
-            
+                w = loss_prms["weight_schedule"](epoch) if "weight_schedule" in loss_prms else loss_prms["weight"]
+
+                loss_tot = loss_tot + w * loss  # / nel
+
             if compute_ref_coords:
                 o = (output, output_data_ref)
             else:
@@ -421,7 +549,7 @@ def get_train_step_function(
 
             return loss_tot, o
 
-        (loss,o), grad = jax.value_and_grad(loss_fn,has_aux=True)(variables)
+        (loss, o), grad = jax.value_and_grad(loss_fn, has_aux=True)(variables)
         updates, opt_st = optimizer.update(grad, opt_st, params=variables)
         variables = optax.apply_updates(variables, updates)
         if ema is not None:
@@ -430,9 +558,9 @@ def get_train_step_function(
                     "train_step was setup with ema but either variables_ema or ema_st was not provided"
                 )
             variables_ema, ema_st = ema.update(variables, ema_st)
-            return loss, variables, opt_st, variables_ema, ema_st,o
+            return loss, variables, opt_st, variables_ema, ema_st, o
         else:
-            return loss, variables, opt_st,o
+            return loss, variables, opt_st, o
 
     if jit:
         return jax.jit(train_step)
@@ -491,9 +619,25 @@ def get_validation_function(
             else:
                 ref = jnp.zeros_like(predicted)
 
-            if loss_prms["type"] in ["ensemble_nll", "ensemble_crps"]:
+            if loss_prms["type"].startswith("ensemble"):
                 axis = loss_prms.get("ensemble_axis", -1)
-                predicted = predicted.mean(axis=axis)
+                ensemble_weights_key = loss_prms.get("ensemble_weights", None)
+                if ensemble_weights_key is not None:
+                    ensemble_weights = output[ensemble_weights_key]
+                else:
+                    ensemble_weights = jnp.ones_like(predicted)
+                ensemble_weights = ensemble_weights / jnp.sum(
+                    ensemble_weights, axis=axis, keepdims=True
+                )
+
+                # predicted = predicted.mean(axis=axis)
+                predicted = (ensemble_weights * predicted).sum(axis=axis)
+
+            if loss_prms["type"] in ["gaussian_mixture"]:
+                axis = loss_prms.get("ensemble_axis", -1)
+                gm_w = output[loss_prms["key"] + "_w"]
+                gm_w = gm_w / jnp.sum(gm_w, axis=axis, keepdims=True)
+                predicted = (predicted * gm_w).sum(axis=axis)
 
             if predicted.ndim > 1 and predicted.shape[-1] == 1:
                 predicted = jnp.squeeze(predicted, axis=-1)
@@ -528,8 +672,8 @@ def get_validation_function(
             ref = ref * truth_mask
             predicted = predicted * truth_mask
 
-            rmse = (jnp.sum((predicted - ref) ** 2) / nel) ** 0.5
-            mae = jnp.sum(jnp.abs(predicted - ref)) / nel
+            rmse = jnp.sum((predicted - ref) ** 2 / nel) ** 0.5
+            mae = jnp.sum(jnp.abs(predicted - ref) / nel)
 
             rmses[name] = rmse
             maes[name] = mae

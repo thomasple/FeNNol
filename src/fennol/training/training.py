@@ -109,19 +109,16 @@ def main():
     torch.manual_seed(rng_seed)
     np.random.seed(rng_seed)
     random.seed(rng_seed)
+    np_rng = np.random.Generator(np.random.PCG64(rng_seed))
 
     try:
         if "stages" in parameters["training"]:
             ## train in stages ##
             params = deepcopy(parameters)
             stages = params["training"].pop("stages")
-            assert isinstance(
-                stages, dict
-            ), "'stages' must be a dict with named stages"
+            assert isinstance(stages, dict), "'stages' must be a dict with named stages"
             model_file_stage = model_file
-            print_stages_params = params["training"].get(
-                "print_stages_params", False
-            )
+            print_stages_params = params["training"].get("print_stages_params", False)
             for i, (stage, stage_params) in enumerate(stages.items()):
                 rng_key, subkey = jax.random.split(rng_key)
                 print("")
@@ -143,12 +140,15 @@ def main():
 
                 ## train stage ##
                 _, model_file_stage = train(
-                    subkey, params, stage=i + 1, output_directory=output_directory
+                    (subkey, np_rng),
+                    params,
+                    stage=i + 1,
+                    output_directory=output_directory,
                 )
         else:
             ## single training stage ##
             train(
-                rng_key,
+                (rng_key, np_rng),
                 parameters,
                 model_file=model_file,
                 output_directory=output_directory,
@@ -161,13 +161,18 @@ def main():
             logger.close()
 
 
-def train(rng_key, parameters, model_file=None, stage=None, output_directory=None):
+def train(rng, parameters, model_file=None, stage=None, output_directory=None):
     if output_directory is None:
         output_directory = "./"
     elif not output_directory.endswith("/"):
         output_directory += "/"
     stage_prefix = f"_stage_{stage}" if stage is not None else ""
 
+    if isinstance(rng, tuple):
+        rng_key, np_rng = rng
+    else:
+        rng_key = rng
+        np_rng = np.random.Generator(np.random.PCG64(np.random.randint(0, 2**32 - 1)))
     rng_key, model_key = jax.random.split(rng_key)
     model = load_model(parameters, model_file, rng_key=model_key)
 
@@ -189,7 +194,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
 
     # rename_refs = training_parameters.get("rename_refs", [])
     loss_definition, used_keys, ref_keys = get_loss_definition(
-        training_parameters, model_energy_unit = model.energy_unit
+        training_parameters, model_energy_unit=model.energy_unit
     )
 
     coordinates_ref_key = training_parameters.get("coordinates_ref_key", None)
@@ -199,12 +204,21 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         ref_keys.append(coordinates_ref_key)
     else:
         compute_ref_coords = False
-    
-    training_iterator, validation_iterator = load_dataset(
-        training_parameters, infinite_iterator=True, atom_padding=True, ref_keys=ref_keys
-        ,split_data_inputs=True
-    )
+
+    dspath = training_parameters.get("dspath", None)
+    if dspath is None:
+        raise ValueError("Dataset path 'training/dspath' should be specified.")
     batch_size = training_parameters.get("batch_size", 16)
+    training_iterator, validation_iterator = load_dataset(
+        dspath=dspath,
+        batch_size=batch_size,
+        training_parameters=training_parameters,
+        infinite_iterator=True,
+        atom_padding=True,
+        ref_keys=ref_keys,
+        split_data_inputs=True,
+        np_rng=np_rng,
+    )
 
     compute_forces = "forces" in used_keys
     compute_virial = "virial_tensor" in used_keys or "virial" in used_keys
@@ -246,6 +260,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
 
         def schedule(state, rmse=None):
             new_state = {**state}
+            new_state["lr"] = lr
             if rmse is None:
                 new_state["count"] += 1
             return lr, new_state
@@ -275,6 +290,26 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
 
     else:
         raise ValueError(f"Unknown schedule_type: {schedule_type}")
+
+    stochastic_scheduler = training_parameters.get("stochastic_scheduler", False)
+    if stochastic_scheduler:
+        schedule_ = schedule
+        rng_key, scheduler_key = jax.random.split(rng_key)
+        sch_state["rng_key"] = scheduler_key
+        sch_state["lr_max"] = lr
+        sch_state["lr_min"] = final_lr
+
+        def schedule(state, rmse=None):
+            new_state = {**state, "lr": state["lr_max"]}
+            if rmse is None:
+                lr_max, new_state = schedule_(new_state, rmse=rmse)
+                lr_min = new_state["lr_min"]
+                new_state["rng_key"], subkey = jax.random.split(new_state["rng_key"])
+                lr = lr_min + (lr_max - lr_min) * jax.random.uniform(subkey)
+                new_state["lr"] = lr
+                new_state["lr_max"] = lr_max
+
+            return new_state["lr"], new_state
 
     optimizer = get_optimizer(
         training_parameters, model.variables, schedule(sch_state)[0]
@@ -310,24 +345,31 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         stress_key = "stress" if "stress" in used_keys else "stress_tensor"
         assert pbc_training, "PBC must be enabled for stress or virial training"
         print("Computing stress and forces")
+
         def evaluate(model, variables, data):
-            _, _,vir, output = model._energy_and_forces_and_virial(variables, data)
+            _, _, vir, output = model._energy_and_forces_and_virial(variables, data)
             cells = output["cells"]
             volume = jnp.linalg.det(cells)
             stress = -vir / volume[:, None, None]
             output[stress_key] = stress
             output[virial_key] = vir
             return output
+
     elif compute_forces:
         print("Computing forces")
+
         def evaluate(model, variables, data):
             _, _, output = model._energy_and_forces(variables, data)
             return output
+
     elif model.energy_terms is not None:
+
         def evaluate(model, variables, data):
             _, output = model._total_energy(variables, data)
             return output
+
     else:
+
         def evaluate(model, variables, data):
             output = model.modules.apply(variables, data)
             return output
@@ -351,14 +393,6 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         return_targets=False,
     )
 
-    
-
-    keep_all_bests = training_parameters.get("keep_all_bests", False)
-    previous_best_name = None
-    best_metric = np.inf
-    metric_use_best = training_parameters.get("metric_best", "rmse").lower()
-    assert metric_use_best in ["mae", "rmse"], "metric_best must be 'mae' or 'rmse'"
-
     ## configure preprocessing ##
     minimum_image = training_parameters.get("minimum_image", False)
     preproc_state = unfreeze(model.preproc_state)
@@ -378,14 +412,13 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         if "nblist_add_atoms" in training_parameters:
             stnew["add_atoms"] = training_parameters["nblist_add_atoms"]
         layer_state.append(freeze(stnew))
-    
+
     preproc_state["layers_state"] = layer_state
     model.preproc_state = freeze(preproc_state)
 
     # inputs,data = next(training_iterator)
     # inputs = model.preprocess(**inputs)
     # print("preproc_state:",model.preproc_state)
-
 
     ### Training loop ###
     start = time.time()
@@ -395,6 +428,15 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
     step_time = 0.0
 
     maes_prev = defaultdict(lambda: np.inf)
+    metrics_beta = training_parameters.get("metrics_ema_decay", -1.)
+    smoothen_metrics =  metrics_beta < 1.0 and metrics_beta > 0.0
+    if smoothen_metrics:
+        print("Computing smoothed metrics with beta =", metrics_beta)
+        rmses_smooth = defaultdict(lambda: 0.)
+        maes_smooth = defaultdict(lambda: 0.)
+        rmse_tot_smooth = 0.0
+        mae_tot_smooth = 0.0
+        nsmooth=0
     count = 0
     restore_count = 0
     max_restore_count = training_parameters.get("max_restore_count", 5)
@@ -404,12 +446,22 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
 
     fmetrics = open(output_directory + f"metrics{stage_prefix}.traj", "w")
 
+    keep_all_bests = training_parameters.get("keep_all_bests", False)
+    previous_best_name = None
+    best_metric = np.inf
+    metric_use_best = training_parameters.get("metric_best", "rmse_tot") #.lower()
+    # authorized_metrics = ["mae", "rmse"]
+    # if smoothen_metrics:
+    #     authorized_metrics+= ["mae_smooth", "rmse_smooth"]
+    # assert metric_use_best in authorized_metrics, f"metric_best must be one of {authorized_metrics}"
+    
+
     print("Starting training...")
     for epoch in range(max_epochs):
         for _ in range(nbatch_per_epoch):
             # fetch data
             s = time.time()
-            inputs0,data = next(training_iterator)
+            inputs0, data = next(training_iterator)
             e = time.time()
             fetch_time += e - s
 
@@ -439,6 +491,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
                 "step_size"
             ] = current_lr
             loss, variables, opt_st, model.variables, ema_st, output = train_step(
+                epoch=epoch,
                 data=data,
                 inputs=inputs,
                 variables=variables,
@@ -456,17 +509,20 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         rmses_avg = defaultdict(lambda: 0.0)
         maes_avg = defaultdict(lambda: 0.0)
         for _ in range(nbatch_per_validation):
-            inputs0,data = next(validation_iterator)
+            inputs0, data = next(validation_iterator)
 
             inputs = model.preprocess(**inputs0)
-            
+
             if compute_ref_coords:
                 inputs_ref = {**inputs0, "coordinates": data[coordinates_ref_key]}
                 inputs_ref = model.preprocess(**inputs_ref)
             else:
                 inputs_ref = None
             rmses, maes, output_val = validation(
-                data=data,inputs=inputs, variables=model.variables,inputs_ref=inputs_ref
+                data=data,
+                inputs=inputs,
+                variables=model.variables,
+                inputs_ref=inputs_ref,
             )
             for k, v in rmses.items():
                 rmses_avg[k] += v
@@ -476,6 +532,8 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
             rmses_avg[k] /= nbatch_per_validation
         for k in maes_avg.keys():
             maes_avg[k] /= nbatch_per_validation
+
+
 
         step_time /= nbatch_per_epoch
         fetch_time /= nbatch_per_epoch
@@ -487,22 +545,23 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         mae_tot = 0.0
         for k in rmses_avg.keys():
             mult = loss_definition[k]["mult"]
-            rmse_tot = (
-                rmse_tot + rmses_avg[k] * loss_definition[k]["weight"] ** 0.5
-            )
-            mae_tot = mae_tot + maes_avg[k] * loss_definition[k]["weight"]
+            loss_prms = loss_definition[k]
+            rmse_tot = rmse_tot + rmses_avg[k] * loss_prms["weight"] ** 0.5
+            mae_tot = mae_tot + maes_avg[k] * loss_prms["weight"]
             unit = (
-                "(" + loss_definition[k]["unit"] + ")"
-                if "unit" in loss_definition[k]
+                "(" + loss_prms["unit"] + ")"
+                if "unit" in loss_prms
                 else ""
             )
+            weight_str = f"(w={loss_prms['weight_schedule'](epoch):.3f})" if "weight_schedule" in loss_prms else ""
+            
             if rmses_avg[k] / mult < 1.0e-2:
                 print(
-                    f"    rmse_{k}= {rmses_avg[k]/mult:10.3e} ; mae_{k}= {maes_avg[k]/mult:10.3e}   {unit}"
+                    f"    rmse_{k}= {rmses_avg[k]/mult:10.3e} ; mae_{k}= {maes_avg[k]/mult:10.3e}   {unit}  {weight_str}"
                 )
             else:
                 print(
-                    f"    rmse_{k}= {rmses_avg[k]/mult:10.3f} ; mae_{k}= {maes_avg[k]/mult:10.3f}   {unit}"
+                    f"    rmse_{k}= {rmses_avg[k]/mult:10.3f} ; mae_{k}= {maes_avg[k]/mult:10.3f}   {unit}  {weight_str}"
                 )
 
         if print_timings:
@@ -523,7 +582,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
                 #     if hasattr(v,"shape"):
                 #         if np.isnan(v).any():
                 #             print(k,v)
-                #sys.exit(1)
+                # sys.exit(1)
             if "threshold" in loss_definition[k]:
                 thr = loss_definition[k]["threshold"]
                 if mae > thr * maes_prev[k]:
@@ -574,7 +633,22 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
 
         metrics["rmse_tot"] = rmse_tot
         metrics["mae_tot"] = mae_tot
-        metric_for_best = metrics[metric_use_best+"_tot"]
+        if smoothen_metrics:
+            nsmooth += 1
+            for k in rmses_avg.keys():
+                mult = loss_definition[k]["mult"]
+                rmses_smooth[k] = metrics_beta * rmses_smooth[k] + (1.0 - metrics_beta) * rmses_avg[k]
+                maes_smooth[k] = metrics_beta * maes_smooth[k] + (1.0 - metrics_beta) * maes_avg[k]
+                metrics[f"rmse_smooth_{k}"] = rmses_smooth[k] / (1.0 - metrics_beta ** nsmooth)/ mult
+                metrics[f"mae_smooth_{k}"] = maes_smooth[k] / (1.0 - metrics_beta ** nsmooth)/ mult
+            rmse_tot_smooth = metrics_beta * rmse_tot_smooth + (1.0 - metrics_beta) * rmse_tot
+            mae_tot_smooth = metrics_beta * mae_tot_smooth + (1.0 - metrics_beta) * mae_tot
+            metrics["rmse_smooth_tot"] = rmse_tot_smooth / (1.0 - metrics_beta ** nsmooth)
+            metrics["mae_smooth_tot"] = mae_tot_smooth / (1.0 - metrics_beta ** nsmooth)
+
+
+        assert metric_use_best in metrics, f"Error: metric for selectring best model '{metric_use_best}' not in metrics"
+        metric_for_best = metrics[metric_use_best]
         if metric_for_best < best_metric:
             best_metric = metric_for_best
             metrics["best_metric"] = best_metric
@@ -598,7 +672,7 @@ def train(rng_key, parameters, model_file=None, stage=None, output_directory=Non
         # update learning rate using current metrics
         assert (
             schedule_metrics in metrics
-        ), f"Error: cannot update lr, {schedule_metrics} not in metrics"
+        ), f"Error: cannot update lr, '{schedule_metrics}' not in metrics"
         current_lr, sch_state = schedule(sch_state, metrics[schedule_metrics])
 
         if is_end(metrics):
