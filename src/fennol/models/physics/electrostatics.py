@@ -497,7 +497,8 @@ class QeqD4(nn.Module):
             )
             kappai = self.param("kappa", lambda key: jnp.asarray(D3_KAPPA))[species]
             k1 = jnp.abs(self.param("k1", lambda key: jnp.asarray(7.5)))
-            if "training_flag" in inputs:
+            training = "training" in inputs.get("flags", {})
+            if training:
                 regularization = (
                     (ENi - jnp.asarray(D3_ELECTRONEGATIVITIES)[species]) ** 2
                     + (eta - jnp.asarray(ETA)[species]) ** 2
@@ -609,7 +610,8 @@ class QeqD4(nn.Module):
             if self.c4_key is not None:
                 c4 = c4 + inputs[self.c4_key]
             eself = eself + c3 * q_**3 + c4 * q_**4
-            if self.trainable and "training_flag" in inputs:
+            training = "training" in inputs.get("flags", {})
+            if self.trainable and training:
                 Aii_ = jax.lax.stop_gradient(Aii)
                 chi_ = jax.lax.stop_gradient(chi)
                 phi_ = jax.lax.stop_gradient(phi)
@@ -650,7 +652,9 @@ class QeqD4(nn.Module):
         }
         if do_recip:
             output[energy_key + "_reciprocal"] = erec*energy_unit
-        if self.charges_key in inputs and self.trainable and "training_flag" in inputs:
+
+        training = "training" in inputs.get("flags", {})
+        if self.charges_key in inputs and self.trainable and training:
             output[energy_key + "_regularization"] = regularization
             output[energy_key + "_dedq"] = dedq*energy_unit
             output[energy_key + "_etrain"] = etrain*energy_unit

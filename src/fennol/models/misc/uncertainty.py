@@ -48,7 +48,8 @@ class EnsembleStatistics(nn.Module):
         if self.mean_key is not None:
             output[self.mean_key] = mean
 
-        if self.shuffle_ensemble and "training_flag" in inputs and "rng_key" in inputs:
+        training = "training" in inputs.get("flags", {})
+        if self.shuffle_ensemble and training and "rng_key" in inputs:
             key, subkey = jax.random.split(inputs["rng_key"])
             x = jax.random.permutation(subkey, x, axis=self.axis, independent=True)
             output[self.key] = x

@@ -23,6 +23,7 @@ class AtomicUnits:
     MOL = 6.02214129e+23
     KCAL = KCALPERMOL * MOL
     KJ = KJPERMOL * MOL
+    RY = 2.  # Hartree to Rydberg
 
     mapping = {
         "1": 1.0,
@@ -55,6 +56,7 @@ class AtomicUnits:
         "MOLE": MOL,
         "KCAL": KCAL,
         "KJ": KJ,
+        "RY": RY,
     }
 
     @staticmethod

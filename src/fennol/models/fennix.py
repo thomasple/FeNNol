@@ -254,42 +254,45 @@ class FENNIX:
                 return out["total_energy"], out["forces"], out
 
             def energy_and_forces_and_virial(variables, data):
-                assert "cells" in data
-                cells = data["cells"]
-                ## cells is a 3x3 matrix which lines are cell vectors (i.e. cells[0] is the first cell vector)
-                batch_index = data["batch_index"]
                 x = data["coordinates"]
+                batch_index = data["batch_index"]
+                if "cells" in data:
+                    cells = data["cells"]
+                    ## cells is a 3x3 matrix which lines are cell vectors (i.e. cells[0] is the first cell vector)
 
-                def _etot(variables, coordinates, cells):
-                    reciprocal_cells = jnp.linalg.inv(cells)
-                    energy, out = total_energy(
-                        variables,
-                        {
-                            **data,
-                            "coordinates": coordinates,
-                            "cells": cells,
-                            "reciprocal_cells": reciprocal_cells,
-                        },
+                    def _etot(variables, coordinates, cells):
+                        reciprocal_cells = jnp.linalg.inv(cells)
+                        energy, out = total_energy(
+                            variables,
+                            {
+                                **data,
+                                "coordinates": coordinates,
+                                "cells": cells,
+                                "reciprocal_cells": reciprocal_cells,
+                            },
+                        )
+                        return energy.sum(), out
+
+                    (dedx, dedcells), out = jax.grad(_etot, argnums=(1, 2), has_aux=True)(
+                        variables, x, cells
                     )
-                    return energy.sum(), out
+                    f= -dedx
+                    out["forces"] = f
+                else:
+                    _,f,out = energy_and_forces(variables, data)
 
-                (dedx, dedcells), out = jax.grad(_etot, argnums=(1, 2), has_aux=True)(
-                    variables, x, cells
-                )
-                # dedx = jnp.einsum("sij,si->sj", reciprocal_cells[batch_index], deds)
-                out["forces"] = -dedx
-                fx = jax.ops.segment_sum(
-                    dedx[:, :, None] * x[:, None, :],
+                vir = -jax.ops.segment_sum(
+                    f[:, :, None] * x[:, None, :],
                     batch_index,
                     num_segments=len(data["natoms"]),
                 )
 
-                # out["virial_tensor"] = (
-                #     jnp.einsum("sik,skj->sij", dedcells, cells) + fx
-                # )
-                out["virial_tensor"] = jax.vmap(jnp.matmul)(dedcells, cells) + fx
+                if "cells" in data:
+                    vir = vir + jax.vmap(jnp.matmul)(dedcells, cells)
+                
+                out["virial_tensor"] = vir
 
-                return out["total_energy"], out["forces"], out["virial_tensor"], out
+                return out["total_energy"], f, vir, out
 
         if jit:
             object.__setattr__(self, "_total_energy", jax.jit(total_energy))

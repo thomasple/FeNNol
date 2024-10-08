@@ -7,9 +7,14 @@ from copy import deepcopy
 from flax import traverse_util
 import json
 import re
+from functools import partial
 
 from ..utils import deep_update, AtomicUnits as au
 from ..models import FENNIX
+
+@partial(jax.jit, static_argnums=(1,2,3,4))
+def linear_schedule(step, start_value,end_value, start_step, duration):
+    return start_value + jnp.clip((step - start_step) / duration, 0.0, 1.0) * (end_value - start_value)
 
 
 def get_training_parameters(
@@ -52,12 +57,14 @@ def get_loss_definition(
             - rename_refs (list): A list of renamed references.
     """
     default_loss_type = training_parameters.get("default_loss_type", "log_cosh")
-    loss_definition = deepcopy(training_parameters["loss"])
+    # loss_definition = deepcopy(training_parameters["loss"])
     used_keys = []
     ref_keys = []
     energy_mult = au.get_multiplier(model_energy_unit)
-    for k in loss_definition.keys():
-        loss_prms = loss_definition[k]
+    loss_definition = {}
+    for k in training_parameters["loss"]:
+        # loss_prms = loss_definition[k]
+        loss_prms = deepcopy(training_parameters["loss"][k])
         if "energy_unit" in loss_prms:
             loss_prms["mult"] = energy_mult / au.get_multiplier(
                 loss_prms["energy_unit"]
@@ -95,7 +102,7 @@ def get_loss_definition(
                 weight_ramp = loss_prms["weight_ramp"]
             else:
                 weight_ramp = training_parameters.get("max_epochs")
-            weight_ramp_start = loss_prms.get("weight_ramp_start", 0.)
+            weight_ramp_start = loss_prms.get("weight_ramp_start", 0.0)
             weight_end = loss_prms["weight"]
             print(
                 "Weight ramp for",
@@ -108,11 +115,13 @@ def get_loss_definition(
                 weight_ramp,
                 "epochs",
             )
-            loss_prms["weight_schedule"] = lambda e: weight_start + jnp.clip(
-                (e-float(weight_ramp_start)) / float(weight_ramp), 0.0, 1.0
-            ) * (weight_end - weight_start)
+            loss_prms["weight_schedule"] = (weight_start,weight_end,weight_ramp_start,weight_ramp)
+            # loss_prms["weight_schedule"] = lambda e: weight_start + jnp.clip(
+                # (e - float(weight_ramp_start)) / float(weight_ramp), 0.0, 1.0
+            # ) * (weight_end - weight_start)
 
         used_keys.append(loss_prms["key"])
+        loss_definition[k] = loss_prms
 
     # rename_refs = list(
     #     set(["forces", "total_energy", "atomic_energies"] + manual_renames + used_keys)
@@ -410,6 +419,8 @@ def get_train_step_function(
                     loss = jnp.sum(natscale * (predicted - ref) ** 2)
                 elif loss_type == "log_cosh":
                     loss = jnp.sum(natscale * optax.log_cosh(predicted, ref))
+                elif loss_type == "mae":
+                    loss = jnp.sum(natscale * jnp.abs(predicted - ref))
                 elif loss_type == "rel_mse":
                     eps = loss_prms.get("rel_eps", 1.0e-6)
                     rel_pow = loss_prms.get("rel_pow", 2.0)
@@ -538,7 +549,10 @@ def get_train_step_function(
                 else:
                     raise ValueError(f"Unknown loss type: {loss_type}")
 
-                w = loss_prms["weight_schedule"](epoch) if "weight_schedule" in loss_prms else loss_prms["weight"]
+                if "weight_schedule" in loss_prms:
+                    w = linear_schedule(epoch, *loss_prms["weight_schedule"])
+                else:
+                    w = loss_prms["weight"]
 
                 loss_tot = loss_tot + w * loss  # / nel
 

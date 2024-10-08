@@ -34,6 +34,8 @@ class RepulsionZBL(nn.Module):
         graph = inputs[self.graph_key]
         edge_src, edge_dst = graph["edge_src"], graph["edge_dst"]
 
+        training = "training" in inputs.get("flags", {})
+
         rijs = graph["distances"] / au.BOHR
 
         d_ = 0.46850 / au.BOHR
@@ -70,7 +72,7 @@ class RepulsionZBL(nn.Module):
                 )
             )
 
-            if "training_flag" in inputs:
+            if training:
                 reg = jnp.asarray(((alphas_ - alphas) ** 2).sum() + ((cs_ - cs) ** 2).sum() + (p_ - p) ** 2 + (d_ - d) ** 2).reshape(1)
         else:
             cs = jnp.asarray(cs_
@@ -92,7 +94,7 @@ class RepulsionZBL(nn.Module):
         energy_unit = au.get_multiplier(self._energy_unit)
         energy_key = self.energy_key if self.energy_key is not None else self.name
         output =  {**inputs, energy_key: erep_atomic*energy_unit}
-        if self.trainable and "training_flag" in inputs:
+        if self.trainable and training:
             output[energy_key+"_regularization"] = reg
         
         return output

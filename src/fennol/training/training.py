@@ -30,6 +30,7 @@ from .utils import (
     get_train_step_function,
     get_validation_function,
     get_optimizer,
+    linear_schedule,
 )
 from ..utils import deep_update, AtomicUnits as au
 from ..models.preprocessing import AtomPadding, check_input, convert_to_jax
@@ -218,6 +219,7 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
         ref_keys=ref_keys,
         split_data_inputs=True,
         np_rng=np_rng,
+        add_flags=["training"],
     )
 
     compute_forces = "forces" in used_keys
@@ -343,17 +345,26 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
     if compute_stress or compute_virial:
         virial_key = "virial" if "virial" in used_keys else "virial_tensor"
         stress_key = "stress" if "stress" in used_keys else "stress_tensor"
-        assert pbc_training, "PBC must be enabled for stress or virial training"
-        print("Computing stress and forces")
+        if compute_stress:
+            assert pbc_training, "PBC must be enabled for stress or virial training"
+            print("Computing forces and stress tensor")
 
-        def evaluate(model, variables, data):
-            _, _, vir, output = model._energy_and_forces_and_virial(variables, data)
-            cells = output["cells"]
-            volume = jnp.linalg.det(cells)
-            stress = -vir / volume[:, None, None]
-            output[stress_key] = stress
-            output[virial_key] = vir
-            return output
+            def evaluate(model, variables, data):
+                _, _, vir, output = model._energy_and_forces_and_virial(variables, data)
+                cells = output["cells"]
+                volume = jnp.linalg.det(cells)
+                stress = -vir / volume[:, None, None]
+                output[stress_key] = stress
+                output[virial_key] = vir
+                return output
+
+        else:
+            print("Computing forces and virial tensor")
+
+            def evaluate(model, variables, data):
+                _, _, vir, output = model._energy_and_forces_and_virial(variables, data)
+                output[virial_key] = vir
+                return output
 
     elif compute_forces:
         print("Computing forces")
@@ -420,23 +431,20 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
     # inputs = model.preprocess(**inputs)
     # print("preproc_state:",model.preproc_state)
 
-    ### Training loop ###
-    start = time.time()
-
     fetch_time = 0.0
     preprocess_time = 0.0
     step_time = 0.0
 
     maes_prev = defaultdict(lambda: np.inf)
-    metrics_beta = training_parameters.get("metrics_ema_decay", -1.)
-    smoothen_metrics =  metrics_beta < 1.0 and metrics_beta > 0.0
+    metrics_beta = training_parameters.get("metrics_ema_decay", -1.0)
+    smoothen_metrics = metrics_beta < 1.0 and metrics_beta > 0.0
     if smoothen_metrics:
         print("Computing smoothed metrics with beta =", metrics_beta)
-        rmses_smooth = defaultdict(lambda: 0.)
-        maes_smooth = defaultdict(lambda: 0.)
+        rmses_smooth = defaultdict(lambda: 0.0)
+        maes_smooth = defaultdict(lambda: 0.0)
         rmse_tot_smooth = 0.0
         mae_tot_smooth = 0.0
-        nsmooth=0
+        nsmooth = 0
     count = 0
     restore_count = 0
     max_restore_count = training_parameters.get("max_restore_count", 5)
@@ -449,13 +457,14 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
     keep_all_bests = training_parameters.get("keep_all_bests", False)
     previous_best_name = None
     best_metric = np.inf
-    metric_use_best = training_parameters.get("metric_best", "rmse_tot") #.lower()
+    metric_use_best = training_parameters.get("metric_best", "rmse_tot")  # .lower()
     # authorized_metrics = ["mae", "rmse"]
     # if smoothen_metrics:
     #     authorized_metrics+= ["mae_smooth", "rmse_smooth"]
     # assert metric_use_best in authorized_metrics, f"metric_best must be one of {authorized_metrics}"
-    
 
+    ### Training loop ###
+    start = time.time()
     print("Starting training...")
     for epoch in range(max_epochs):
         for _ in range(nbatch_per_epoch):
@@ -533,8 +542,6 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
         for k in maes_avg.keys():
             maes_avg[k] /= nbatch_per_validation
 
-
-
         step_time /= nbatch_per_epoch
         fetch_time /= nbatch_per_epoch
         preprocess_time /= nbatch_per_epoch
@@ -548,13 +555,13 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
             loss_prms = loss_definition[k]
             rmse_tot = rmse_tot + rmses_avg[k] * loss_prms["weight"] ** 0.5
             mae_tot = mae_tot + maes_avg[k] * loss_prms["weight"]
-            unit = (
-                "(" + loss_prms["unit"] + ")"
-                if "unit" in loss_prms
-                else ""
-            )
-            weight_str = f"(w={loss_prms['weight_schedule'](epoch):.3f})" if "weight_schedule" in loss_prms else ""
-            
+            unit = "(" + loss_prms["unit"] + ")" if "unit" in loss_prms else ""
+
+            weight_str = ""
+            if "weight_schedule" in loss_prms:
+                w = linear_schedule(epoch, *loss_prms["weight_schedule"])
+                weight_str = f"(w={w:.3f})"
+
             if rmses_avg[k] / mult < 1.0e-2:
                 print(
                     f"    rmse_{k}= {rmses_avg[k]/mult:10.3e} ; mae_{k}= {maes_avg[k]/mult:10.3e}   {unit}  {weight_str}"
@@ -637,17 +644,30 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
             nsmooth += 1
             for k in rmses_avg.keys():
                 mult = loss_definition[k]["mult"]
-                rmses_smooth[k] = metrics_beta * rmses_smooth[k] + (1.0 - metrics_beta) * rmses_avg[k]
-                maes_smooth[k] = metrics_beta * maes_smooth[k] + (1.0 - metrics_beta) * maes_avg[k]
-                metrics[f"rmse_smooth_{k}"] = rmses_smooth[k] / (1.0 - metrics_beta ** nsmooth)/ mult
-                metrics[f"mae_smooth_{k}"] = maes_smooth[k] / (1.0 - metrics_beta ** nsmooth)/ mult
-            rmse_tot_smooth = metrics_beta * rmse_tot_smooth + (1.0 - metrics_beta) * rmse_tot
-            mae_tot_smooth = metrics_beta * mae_tot_smooth + (1.0 - metrics_beta) * mae_tot
-            metrics["rmse_smooth_tot"] = rmse_tot_smooth / (1.0 - metrics_beta ** nsmooth)
-            metrics["mae_smooth_tot"] = mae_tot_smooth / (1.0 - metrics_beta ** nsmooth)
+                rmses_smooth[k] = (
+                    metrics_beta * rmses_smooth[k] + (1.0 - metrics_beta) * rmses_avg[k]
+                )
+                maes_smooth[k] = (
+                    metrics_beta * maes_smooth[k] + (1.0 - metrics_beta) * maes_avg[k]
+                )
+                metrics[f"rmse_smooth_{k}"] = (
+                    rmses_smooth[k] / (1.0 - metrics_beta**nsmooth) / mult
+                )
+                metrics[f"mae_smooth_{k}"] = (
+                    maes_smooth[k] / (1.0 - metrics_beta**nsmooth) / mult
+                )
+            rmse_tot_smooth = (
+                metrics_beta * rmse_tot_smooth + (1.0 - metrics_beta) * rmse_tot
+            )
+            mae_tot_smooth = (
+                metrics_beta * mae_tot_smooth + (1.0 - metrics_beta) * mae_tot
+            )
+            metrics["rmse_smooth_tot"] = rmse_tot_smooth / (1.0 - metrics_beta**nsmooth)
+            metrics["mae_smooth_tot"] = mae_tot_smooth / (1.0 - metrics_beta**nsmooth)
 
-
-        assert metric_use_best in metrics, f"Error: metric for selectring best model '{metric_use_best}' not in metrics"
+        assert (
+            metric_use_best in metrics
+        ), f"Error: metric for selectring best model '{metric_use_best}' not in metrics"
         metric_for_best = metrics[metric_use_best]
         if metric_for_best < best_metric:
             best_metric = metric_for_best

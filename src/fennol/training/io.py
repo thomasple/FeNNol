@@ -52,9 +52,10 @@ def load_dataset(
     atom_padding=False,
     ref_keys=None,
     split_data_inputs=False,
-    np_rng:Optional[np.random.Generator]=None,
+    np_rng: Optional[np.random.Generator] = None,
     train_val_split=True,
     training_parameters={},
+    add_flags=["training"],
 ):
     """
     Load a dataset from a pickle file and return two iterators for training and validation batches.
@@ -73,27 +74,32 @@ def load_dataset(
             - 'batch_index': np.ndarray. Array with the index of the system to which each atom
             if the keys "forces", "total_energy", "atomic_energies" or any of the elements in rename_refs are present, the keys are renamed by prepending "true_" to the key name.
     """
-    
+
     # rename_refs = set(["forces", "total_energy", "atomic_energies"] + list(rename_refs))
     rename_refs = set(list(rename_refs))
     pbc_training = training_parameters.get("pbc_training", False)
+    minimum_image = training_parameters.get("minimum_image", False)
 
     input_keys = [
         "species",
         "coordinates",
         "natoms",
         "batch_index",
-        "training_flag",
         "total_charge",
+        "flags",
     ]
     if pbc_training:
         input_keys += ["cells"]
     if atom_padding:
         input_keys += ["true_atoms", "true_sys"]
 
+    flags = {f: None for f in add_flags}
+    if minimum_image and pbc_training:
+        flags["minimum_image"] = None
+
     additional_input_keys = set(training_parameters.get("additional_input_keys", []))
     additional_input_keys_ = set()
-    for key in additional_input_keys_:
+    for key in additional_input_keys:
         if key not in input_keys:
             additional_input_keys_.add(key)
     additional_input_keys = additional_input_keys_
@@ -111,7 +117,10 @@ def load_dataset(
     random_rotation = training_parameters.get("random_rotation", False)
     if random_rotation:
         assert np_rng is not None, "np_rng must be provided for adding noise."
-        rotated_keys = set(["coordinates","cells","forces"] + list(training_parameters.get("rotated_keys", [])))
+        rotated_keys = set(
+            ["coordinates", "cells", "forces", "virial_tensor", "stress_tensor"]
+            + list(training_parameters.get("rotated_keys", []))
+        )
         print("Applying random Rotations to the following keys:", rotated_keys)
 
     if pbc_training:
@@ -171,10 +180,13 @@ def load_dataset(
                         if k + "_mask" in d:
                             output[k + "_mask"].append(np.asarray(d[k + "_mask"]))
                 atom_shift += nat
-            
+
             if random_rotation:
-                euler_angles = np_rng.uniform(0.0, 2 * np.pi, (len(batch),3))
-                r =[Rotation.from_euler("xyz", euler_angles[i]).as_matrix().T for i in range(len(batch))]
+                euler_angles = np_rng.uniform(0.0, 2 * np.pi, (len(batch), 3))
+                r = [
+                    Rotation.from_euler("xyz", euler_angles[i]).as_matrix().T
+                    for i in range(len(batch))
+                ]
                 for k in rotated_keys:
                     if k in output:
                         for i in range(len(batch)):
@@ -189,7 +201,7 @@ def load_dataset(
                 if key in output:
                     output["true_" + key] = output.pop(key)
 
-            output["training_flag"] = True
+            output["flags"] = flags
             return output
 
     else:
@@ -239,13 +251,16 @@ def load_dataset(
                 atom_shift += nat
 
             if random_rotation:
-                euler_angles = np_rng.uniform(0.0, 2 * np.pi, (len(batch),3))
-                r =[Rotation.from_euler("xyz", euler_angles[i]).as_matrix().T for i in range(len(batch))]
+                euler_angles = np_rng.uniform(0.0, 2 * np.pi, (len(batch), 3))
+                r = [
+                    Rotation.from_euler("xyz", euler_angles[i]).as_matrix().T
+                    for i in range(len(batch))
+                ]
                 for k in rotated_keys:
                     if k in output:
                         for i in range(len(batch)):
                             output[k][i] = output[k][i] @ r[i]
-                            
+
             for k, v in output.items():
                 try:
                     if v[0].ndim == 0:
@@ -258,20 +273,21 @@ def load_dataset(
                 if key in output:
                     output["true_" + key] = output.pop(key)
 
-            output["training_flag"] = True
+            output["flags"] = flags
             return output
 
     collate_layers_train = [collate_fn_]
     collate_layers_valid = [collate_fn_]
 
     ### collate preprocessing
+    # add noise to the training data
     noise_sigma = training_parameters.get("noise_sigma", None)
     if noise_sigma is not None:
         assert isinstance(noise_sigma, dict), "noise_sigma should be a dictionary"
 
         for sigma in noise_sigma.values():
             assert sigma >= 0, "Noise sigma should be a positive number"
-            
+
         print("Adding noise to the training data:")
         for key, sigma in noise_sigma.items():
             print(f"  - {key} with sigma = {sigma}")
@@ -281,8 +297,9 @@ def load_dataset(
         def collate_with_noise(batch):
             for key, sigma in noise_sigma.items():
                 if key in batch and sigma > 0:
-                    batch[key] += np_rng.normal(
-                        0, sigma, batch[key].shape).astype(batch[key].dtype)
+                    batch[key] += np_rng.normal(0, sigma, batch[key].shape).astype(
+                        batch[key].dtype
+                    )
             return batch
 
         collate_layers_train.append(collate_with_noise)
@@ -301,16 +318,20 @@ def load_dataset(
 
     if split_data_inputs:
 
-        input_keys += additional_input_keys
-        input_keys = set(input_keys)
+        # input_keys += additional_input_keys
+        # input_keys = set(input_keys)
+        print("Input keys:",all_inputs)
+        print("Ref keys:",ref_keys)
 
         def collate_split(batch):
             inputs = {}
             refs = {}
             for k, v in batch.items():
-                if k in input_keys:
+                if k in all_inputs:
                     inputs[k] = v
                 if k in ref_keys:
+                    refs[k] = v
+                if k.endswith("_mask") and k[:-5] in ref_keys:
                     refs[k] = v
             return inputs, refs
 
@@ -321,6 +342,7 @@ def load_dataset(
     if len(collate_layers_train) == 1:
         collate_fn_train = collate_layers_train[0]
     else:
+
         def collate_fn_train(batch):
             for layer in collate_layers_train:
                 batch = layer(batch)
@@ -329,11 +351,11 @@ def load_dataset(
     if len(collate_layers_valid) == 1:
         collate_fn_valid = collate_layers_valid[0]
     else:
+
         def collate_fn_valid(batch):
             for layer in collate_layers_valid:
                 batch = layer(batch)
             return batch
-
 
     # dspath = training_parameters.get("dspath", None)
     print(f"Loading dataset from {dspath}...", end="")
@@ -362,8 +384,8 @@ def load_dataset(
             with open(dspath + "/validation.pkl", "rb") as f:
                 dataset["validation"] = pickle.load(f)
         else:
-            dataset=None
-        
+            dataset = None
+
         shard_files = sorted(glob.glob(dspath + "/training_*.pkl"))
         nshards = len(shard_files)
         if nshards == 0:
@@ -377,8 +399,7 @@ def load_dataset(
         else:
             print(f"Found {nshards} dataset shards.")
             sharded_training = True
-        
-        
+
     else:
         raise ValueError(
             f"Unknown dataset format. Supported formats: '.db', '.h5', '.pkl', '.pickle'"
@@ -397,6 +418,7 @@ def load_dataset(
         )
 
     if sharded_training:
+
         def iterate_sharded_dataset():
             indices = np.arange(nshards)
             if shuffle:
