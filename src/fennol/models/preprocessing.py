@@ -139,7 +139,7 @@ class GraphGenerator:
             else:
                 ### GENERAL PBC
                 ## put all atoms in central box
-                if cells.shape[0] > 1:
+                if cells.shape[0] == 1:
                     coords_pbc = np.dot(coords, reciprocal_cells[0])
                     at_shifts = -np.floor(coords_pbc)
                     coords_pbc = coords + np.dot(at_shifts, cells[0])
@@ -1143,6 +1143,8 @@ class SpeciesIndexer:
     """Comma separated list of species in the order they should be indexed."""
     add_atoms: int = 0
     """Additional atoms to add to the sizes."""
+    add_atoms_margin: int = 10
+    """Additional atoms to add to the sizes when adding margin."""
 
     FPID: ClassVar[str] = "SPECIES_INDEXER"
 
@@ -1172,7 +1174,10 @@ class SpeciesIndexer:
             counts_dict[s] = c
             if c > sizes.get(s, 0):
                 up_sizes = True
-                new_sizes[s] = c + state.get("add_atoms", self.add_atoms)
+                add_atoms = state.get("add_atoms", self.add_atoms)
+                if add_margin:
+                    add_atoms += state.get("add_atoms_margin", self.add_atoms_margin)
+                new_sizes[s] = c + add_atoms
 
         new_sizes = FrozenDict(new_sizes)
         if up_sizes:
@@ -1206,6 +1211,7 @@ class SpeciesIndexer:
         output = {
             **inputs,
             self.output_key: species_index,
+            self.output_key + "_overflow": False,
         }
 
         if return_state_update:
@@ -1213,7 +1219,17 @@ class SpeciesIndexer:
         return FrozenDict(new_state), output
 
     def check_reallocate(self, state, inputs, parent_overflow=False):
-        return state, {}, inputs, parent_overflow
+        """check for overflow and reallocate nblist if necessary"""
+        overflow = parent_overflow or inputs[self.output_key + "_overflow"]
+        if not overflow:
+            return state, {}, inputs, False
+
+        add_margin = inputs[self.output_key + "_overflow"]
+        state, inputs, state_up = self(
+            state, inputs, return_state_update=True, add_margin=add_margin
+        )
+        return state, state_up, inputs, True
+        # return state, {}, inputs, parent_overflow
 
     @partial(jax.jit, static_argnums=(0, 1))
     def process(self, state, inputs):
@@ -1221,8 +1237,12 @@ class SpeciesIndexer:
         #     self.output_key in inputs
         # ), f"Species Index {self.output_key} must be provided on accelerator. Call the numpy routine (self.__call__) first."
 
-        if self.output_key in inputs and "recompute_species_index" not in inputs:
+        recompute_species_index = "recompute_species_index" in inputs.get("flags", {})
+        if self.output_key in inputs and not recompute_species_index:
             return inputs
+        
+        if state is None:
+            raise ValueError("Species Indexer state must be provided on accelerator.")
 
         species = inputs["species"]
         nat = species.shape[0]
@@ -1246,12 +1266,26 @@ class SpeciesIndexer:
                 # if s in counts_dict.keys():
                 #     species_index[i, : counts_dict[s]] = np.nonzero(species == s)[0]
         else:
-            species_index = {
-                PERIODIC_TABLE[s]: jnp.nonzero(species == s, size=c, fill_value=nat)[0]
-                for s, c in sizes.items()
-            }
+            # species_index = {
+                # PERIODIC_TABLE[s]: jnp.nonzero(species == s, size=c, fill_value=nat)[0]
+                # for s, c in sizes.items()
+            # }
+            species_index = {}
+            overflow = False
+            natcount = 0
+            for s, c in sizes.items():
+                mask = species == s
+                new_size = jnp.sum(mask)
+                natcount = natcount + new_size
+                overflow = overflow | (new_size > c) # check if sizes are correct
+                species_index[PERIODIC_TABLE[s]] = jnp.nonzero(species == s, size=c, fill_value=nat)[0]
+            
+            mask = species <= 0
+            new_size = jnp.sum(mask)
+            natcount = natcount + new_size
+            overflow = overflow | (natcount < species.shape[0]) # check if any species missing
 
-        return {**inputs, self.output_key: species_index}
+        return {**inputs, self.output_key: species_index, self.output_key + "_overflow": overflow,}
 
     @partial(jax.jit, static_argnums=(0,))
     def update_skin(self, inputs):
