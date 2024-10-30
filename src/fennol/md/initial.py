@@ -37,7 +37,10 @@ def load_model(simulation_parameters):
         print(f"# model_file: {model_file}")
 
     if "energy_terms" in simulation_parameters:
-        model.set_energy_terms(simulation_parameters["energy_terms"])
+        energy_terms = simulation_parameters["energy_terms"]
+        if isinstance(energy_terms, str):
+            energy_terms = energy_terms.split()
+        model.set_energy_terms(energy_terms)
         print("# energy terms:", model.energy_terms)
 
     return model
@@ -158,6 +161,10 @@ def load_system_data(simulation_parameters, fprec):
     if cell is not None:
         conformation["cells"] = cell[None, :, :]
         conformation["reciprocal_cells"] = reciprocal_cell[None, :, :]
+    
+    additional_keys = simulation_parameters.get("additional_keys", {})
+    for key, value in additional_keys.items():
+        conformation[key] = value
 
     return system_data, conformation
 
