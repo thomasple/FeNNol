@@ -258,7 +258,7 @@ class FENNIX:
                 batch_index = data["batch_index"]
                 if "cells" in data:
                     cells = data["cells"]
-                    ## cells is a 3x3 matrix which lines are cell vectors (i.e. cells[0] is the first cell vector)
+                    ## cells is a nbatchx3x3 matrix which lines are cell vectors (i.e. cells[0,0,:] is the first cell vector of the first system)
 
                     def _etot(variables, coordinates, cells):
                         reciprocal_cells = jnp.linalg.inv(cells)
@@ -288,7 +288,11 @@ class FENNIX:
                 )
 
                 if "cells" in data:
-                    vir = vir + jax.vmap(jnp.matmul)(dedcells, cells)
+                    dvir = jax.vmap(jnp.matmul)(dedcells, cells)
+                    nsys = data["natoms"].shape[0]
+                    if cells.shape[0]==1 and nsys>1:
+                        dvir = dvir / nsys
+                    vir = vir + dvir
                 
                 out["virial_tensor"] = vir
 
