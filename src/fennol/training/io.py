@@ -378,6 +378,8 @@ def load_dataset(
     elif dspath.endswith(".pkl") or dspath.endswith(".pickle"):
         with open(dspath, "rb") as f:
             dataset = pickle.load(f)
+        if not train_val_split and isinstance(dataset, dict):
+            dataset = dataset["training"]
     elif os.path.isdir(dspath):
         if train_val_split:
             dataset = {}
