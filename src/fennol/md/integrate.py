@@ -81,7 +81,7 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
     else:
         pscale = 1.0
         estimate_pressure = False
-        
+
     print("# Estimate pressure: ", estimate_pressure)
 
     dyn_state["estimate_pressure"] = estimate_pressure
@@ -113,6 +113,9 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
     dyn_state["nblist_countdown"] = 0
     dyn_state["print_skin_activation"] = nblist_warmup > 0
 
+    ### ENSEMBLE
+    ensemble_key = simulation_parameters.get("etot_ensemble_key", None)
+
     ### DEFINE INTEGRATION FUNCTIONS
 
     if nbeads is not None:
@@ -130,23 +133,22 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
             axv = jnp.asarray(np.sin(omk[1:, None, None] * dt2) / omk[1:, None, None])
             avx = jnp.asarray(-omk[1:, None, None] * np.sin(omk[1:, None, None] * dt2))
 
-
         @jax.jit
         def update_conformation(eigx):
-            """ update bead coordinates from ring polymer normal modes"""
+            """update bead coordinates from ring polymer normal modes"""
             return jnp.einsum("in,n...->i...", eigmat, eigx).reshape(
                 nbeads * nat, 3
             ) * (nbeads**0.5)
 
         @jax.jit
         def coords_to_eig(x):
-            """ update normal modes from bead coordinates"""
+            """update normal modes from bead coordinates"""
             return jnp.einsum("in,i...->n...", eigmat, x.reshape(nbeads, nat, 3)) * (
                 1.0 / nbeads**0.5
             )
-            
+
         def halfstep_free_polymer(eigx0, eigv0):
-            """ update coordinates and velocities of a free ring polymer for a half time step"""
+            """update coordinates and velocities of a free ring polymer for a half time step"""
             eigx_c = eigx0[0] + dt2 * eigv0[0]
             eigv_c = eigv0[0]
             eigx = eigx0[1:] * axx + eigv0[1:] * axv
@@ -156,7 +158,7 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
                 jnp.concatenate((eigx_c[None], eigx), axis=0),
                 jnp.concatenate((eigv_c[None], eigv), axis=0),
             )
-        
+
         @jax.jit
         def stepA(system):
             eigx = system["coordinates"]
@@ -171,28 +173,34 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
                 "vel": eigv,
                 "thermostat": thermosat_state,
             }
-        
+
         @jax.jit
         def update_forces(system, conformation):
             if estimate_pressure:
-                epot, f, vir_t, _ = model._energy_and_forces_and_virial(
+                epot, f, vir_t, out = model._energy_and_forces_and_virial(
                     model.variables, conformation
                 )
                 epot = epot / model_energy_unit
                 f = f / model_energy_unit
                 vir_t = vir_t / model_energy_unit
-                return {
+
+                new_sys = {
                     **system,
                     "forces": coords_to_eig(f),
                     "epot": jnp.mean(epot),
                     "virial": jnp.trace(jnp.mean(vir_t, axis=0)),
                 }
             else:
-                epot, f, _ = model._energy_and_forces(model.variables, conformation)
+                epot, f, out = model._energy_and_forces(model.variables, conformation)
                 epot = epot / model_energy_unit
                 f = f / model_energy_unit
-                return {**system, "forces": coords_to_eig(f), "epot": jnp.mean(epot)}
-        
+                new_sys = {**system, "forces": coords_to_eig(f), "epot": jnp.mean(epot)}
+            if ensemble_key is not None:
+                kT = system_data["kT"]
+                dE = jnp.mean(out[ensemble_key], axis=0)/ model_energy_unit - new_sys["epot"]
+                new_sys["ensemble_weights"] = -dE / kT
+            return new_sys
+
         @jax.jit
         def stepB(system):
             eigv = system["vel"] + dt2m * system["forces"]
@@ -231,23 +239,29 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
         @jax.jit
         def update_forces(system, conformation):
             if estimate_pressure:
-                epot, f, vir_t, _ = model._energy_and_forces_and_virial(
+                epot, f, vir_t, out = model._energy_and_forces_and_virial(
                     model.variables, conformation
                 )
-                epot = epot/ model_energy_unit
+                epot = epot / model_energy_unit
                 f = f / model_energy_unit
                 vir_t = vir_t / model_energy_unit
-                return {
+                new_sys = {
                     **system,
                     "forces": f,
                     "epot": epot[0],
                     "virial": jnp.trace(vir_t[0]),
                 }
             else:
-                epot, f, _ = model._energy_and_forces(model.variables, conformation)
+                epot, f, out = model._energy_and_forces(model.variables, conformation)
                 epot = epot / model_energy_unit
                 f = f / model_energy_unit
-                return {**system, "forces": f, "epot": epot[0]}
+                new_sys = {**system, "forces": f, "epot": epot[0]}
+
+            if ensemble_key is not None:
+                kT = system_data["kT"]
+                dE = out[ensemble_key][0, :]/ model_energy_unit - new_sys["epot"]
+                new_sys["ensemble_weights"] = -dE / kT
+            return new_sys
 
         @jax.jit
         def stepB(system):

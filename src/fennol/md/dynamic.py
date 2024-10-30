@@ -254,6 +254,9 @@ def dynamic(simulation_parameters, device, fprec):
 
     ### Open trajectory file
     fout = open(traj_file, "a+")
+    ensemble_key = simulation_parameters.get("etot_ensemble_key", None)
+    if ensemble_key is not None:
+        fens = open(f"{system_name}.ensemble_weights.traj", "a+")
 
     ### initialize proprerty trajectories
     properties_traj = defaultdict(list)
@@ -350,6 +353,11 @@ def dynamic(simulation_parameters, device, fprec):
                 properties=properties,
                 forces=None,  # np.asarray(system["forces"].reshape(nbeads, nat, 3)[0]) * energy_unit,
             )
+            if ensemble_key is not None:
+                weights = " ".join([f'{w:.6f}' for w in system["ensemble_weights"].tolist()])
+                fens.write(f"{weights}\n")
+                fens.flush()
+
 
         ### summary over last nsummary steps
         if istep % (nsummary) == 0:
@@ -418,6 +426,8 @@ def dynamic(simulation_parameters, device, fprec):
     print(f"# Run done in {human_time_duration(time.time()-tstart_dyn)}")
     ### close trajectory file
     fout.close()
+    if ensemble_key is not None:
+        fens.close()
 
 
 if __name__ == "__main__":
