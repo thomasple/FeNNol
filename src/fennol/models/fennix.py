@@ -297,7 +297,9 @@ class FENNIX:
                 out["virial_tensor"] = vir
 
                 return out["total_energy"], f, vir, out
+        
 
+        object.__setattr__(self, "_total_energy_raw", total_energy)
         if jit:
             object.__setattr__(self, "_total_energy", jax.jit(total_energy))
             object.__setattr__(self, "_energy_and_forces", jax.jit(energy_and_forces))
@@ -312,6 +314,36 @@ class FENNIX:
             object.__setattr__(
                 self, "_energy_and_forces_and_virial", energy_and_forces_and_virial
             )
+    
+    def get_gradient_function(self, *gradient_keys: Sequence[str], jit:bool=True, variables_as_input:bool=False):
+        """ Return a function that computes the energy and the gradient of the energy with respect to the keys in gradient_keys"""
+        def _energy_gradient(variables,data):
+            def _etot(variables, inputs):
+                if "cells" in inputs:
+                    reciprocal_cells = jnp.linalg.inv(inputs["cells"])
+                    inputs = {**inputs, "reciprocal_cells": reciprocal_cells}
+                energy, out = self._total_energy_raw(
+                    variables, {**data, **inputs}
+                )
+                return energy.sum(), out
+
+            inputs = {k: data[k] for k in gradient_keys}
+            de, out = jax.grad(_etot, argnums=1, has_aux=True)(
+                variables, inputs
+            )
+
+            return out["total_energy"],de, {**out, **{"dEd_"+k: de[k] for k in gradient_keys}}
+    
+        if variables_as_input:
+            energy_gradient = _energy_gradient
+        else:
+            def energy_gradient(data):
+                return _energy_gradient(self.variables, data)
+
+        if jit:
+            return jax.jit(energy_gradient)
+        else:
+            return energy_gradient
 
     def preprocess(self, **inputs) -> Dict[str, Any]:
         """apply preprocessing to the input data
