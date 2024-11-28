@@ -20,6 +20,7 @@ try:
 except Exception as e:
     E3NN_AVAILABLE = False
     E3NN_EXCEPTION = e
+    e3nn = None
 
     class Irreps(tuple):
         pass
