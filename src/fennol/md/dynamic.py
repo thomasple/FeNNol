@@ -130,22 +130,6 @@ def dynamic(simulation_parameters, device, fprec):
     Tdump = simulation_parameters.get("tdump", 1.0 / au.PS) * au.FS
     ndump = int(Tdump / dt)
     system_name = system_data["name"]
-    
-    # traj_file = Path(simulation_parameters.get("traj_file", system_name + ".arc"))
-    traj_format = simulation_parameters.get("traj_format", "arc").lower()
-    if traj_format == "xyz":
-        traj_file = system_name + ".traj.xyz"
-        write_frame = write_xyz_frame
-    elif traj_format == "extxyz":
-        traj_file = system_name + ".traj.extxyz"
-        write_frame = write_extxyz_frame
-    elif traj_format == "arc":
-        traj_file = system_name + ".arc"
-        write_frame = write_arc_frame
-    else:
-        raise ValueError(
-            f"Unknown trajectory format '{traj_format}'. Supported formats are 'arc' and 'xyz'"
-        )
 
     model_energy_unit = au.get_multiplier(model.energy_unit)
     ### Print initial pressure
@@ -253,10 +237,32 @@ def dynamic(simulation_parameters, device, fprec):
     print(header)
 
     ### Open trajectory file
-    fout = open(traj_file, "a+")
+    traj_format = simulation_parameters.get("traj_format", "arc").lower()
+    if traj_format == "xyz":
+        traj_ext = ".traj.xyz"
+        write_frame = write_xyz_frame
+    elif traj_format == "extxyz":
+        traj_ext =  ".traj.extxyz"
+        write_frame = write_extxyz_frame
+    elif traj_format == "arc":
+        traj_ext =  ".arc"
+        write_frame = write_arc_frame
+    else:
+        raise ValueError(
+            f"Unknown trajectory format '{traj_format}'. Supported formats are 'arc' and 'xyz'"
+        )
+    
+    write_all_beads = simulation_parameters.get("write_all_beads", False) and pimd
+    
+    if write_all_beads:
+        fout = [open(f"{system_name}_bead{i+1:03d}"+traj_ext, "w") for i in range(nbeads)]
+    else:
+        fout = open(system_name+traj_ext, "a+")
+
     ensemble_key = simulation_parameters.get("etot_ensemble_key", None)
     if ensemble_key is not None:
         fens = open(f"{system_name}.ensemble_weights.traj", "a+")
+
 
     ### initialize proprerty trajectories
     properties_traj = defaultdict(list)
@@ -345,14 +351,27 @@ def dynamic(simulation_parameters, device, fprec):
                 "Time": start_time + istep * dt,
                 "energy_unit": energy_unit_str,
             }
-            write_frame(
-                fout,
-                system_data["symbols"],
-                np.asarray(conformation["coordinates"].reshape(nbeads, nat, 3)[0]),
-                cell=cell,
-                properties=properties,
-                forces=None,  # np.asarray(system["forces"].reshape(nbeads, nat, 3)[0]) * energy_unit,
-            )
+            
+            if write_all_beads:
+                coords = np.asarray(conformation["coordinates"].reshape(nbeads, nat, 3))
+                for i,fb in enumerate(fout):
+                    write_frame(
+                        fb,
+                        system_data["symbols"],
+                        coords[i],
+                        cell=cell,
+                        properties=properties,
+                        forces=None,  # np.asarray(system["forces"].reshape(nbeads, nat, 3)[0]) * energy_unit,
+                    )
+            else:
+                write_frame(
+                    fout,
+                    system_data["symbols"],
+                    np.asarray(conformation["coordinates"].reshape(nbeads, nat, 3)[0]),
+                    cell=cell,
+                    properties=properties,
+                    forces=None,  # np.asarray(system["forces"].reshape(nbeads, nat, 3)[0]) * energy_unit,
+                )
             if ensemble_key is not None:
                 weights = " ".join([f'{w:.6f}' for w in system["ensemble_weights"].tolist()])
                 fens.write(f"{weights}\n")
