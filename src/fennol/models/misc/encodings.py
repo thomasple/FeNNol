@@ -10,11 +10,15 @@ from functools import partial
 from ...utils.periodic_table import (
     PERIODIC_TABLE_REV_IDX,
     PERIODIC_TABLE,
-    ELECTRONIC_STRUCTURE,
+    EL_STRUCT,
     VALENCE_STRUCTURE,
     XENONPY_PROPS,
     SJS_COORDINATES,
     PERIODIC_COORDINATES,
+    ATOMIC_IONIZATION_ENERGY,
+    POLARIZABILITIES,
+    D3_COV_RADII,
+    VDW_RADII,
 )
 
 
@@ -30,7 +34,7 @@ class SpeciesEncoding(nn.Module):
     """
     dim: int = 16
     """ The dimension of the encoding if not fixed by design."""
-    zmax: int = 50
+    zmax: int = 86
     """ The maximum atomic number to encode."""
     output_key: Optional[str] = None
     """ The key to use for the output in the returned dictionary."""
@@ -40,6 +44,8 @@ class SpeciesEncoding(nn.Module):
          If None, we encode all elements up to `zmax`."""
     trainable: bool = False
     """ Whether the encoding is trainable or fixed. Does not apply to "random" encoding which is always trainable."""
+    extra_params: Dict = dataclasses.field(default_factory=dict)
+    """ Dictionary of extra parameters for the basis."""
 
     FID: ClassVar[str] = "SPECIES_ENCODING"
 
@@ -85,12 +91,16 @@ class SpeciesEncoding(nn.Module):
 
         if "electronic_structure" in encodings:
             Z = np.arange(1, zmax + 1).reshape(-1, 1)
-            e_struct = np.array(ELECTRONIC_STRUCTURE[1 : zmax + 1])
+            Zref = [zmax]
+            e_struct = np.array(EL_STRUCT[1 : zmax + 1])
+            eref = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 10,6] 
             v_struct = np.array(VALENCE_STRUCTURE[1 : zmax + 1])
+            vref = [2, 6, 10, 14]
+            if zmax <= 86:
+                e_struct = e_struct[:,:15]
+                eref = eref[:15]
+            ref = np.array(Zref+eref+vref)
             conv_tensor = np.concatenate([Z, e_struct, v_struct], axis=1)
-            ref = np.array(
-                [zmax, 2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6] + [2, 6, 10, 14]
-            )
             conv_tensor = conv_tensor / ref[None, :]
             dim = conv_tensor.shape[1]
             conv_tensor = np.concatenate(
@@ -101,6 +111,7 @@ class SpeciesEncoding(nn.Module):
 
         if "properties" in encodings:
             props = np.array(XENONPY_PROPS)[1:-1]
+            assert self.zmax <= props.shape[0], f"zmax > {props.shape[0]} not supported for xenonpy properties"
             conv_tensor = props[1 : zmax + 1]
             mean = np.mean(props, axis=0)
             std = np.std(props, axis=0)
@@ -110,6 +121,37 @@ class SpeciesEncoding(nn.Module):
                 [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
             )
             conv_tensors.append(conv_tensor)
+        
+        if "valence_properties" in encodings:
+            assert zmax <= 86, "Valence properties only available for zmax <= 86"
+            Z = np.arange(1, zmax + 1).reshape(-1, 1)
+            Zref = [zmax]
+            Zinv = 1.0 / Z
+            Zinvref = [1.0]
+            v_struct = np.array(VALENCE_STRUCTURE[1 : zmax + 1])
+            vref = [2, 6, 10, 14]
+            ionization = np.array(ATOMIC_IONIZATION_ENERGY[1 : zmax + 1]).reshape(-1, 1)
+            ionizationref = [0.5]
+            polariz = np.array(POLARIZABILITIES[1 : zmax + 1]).reshape(-1, 1)**(1./3.)
+            polarizref = [np.median(polariz)]
+
+            cov = np.array(D3_COV_RADII[1 : zmax + 1]).reshape(-1, 1)
+            covref = [np.median(cov)]
+
+            vdw = np.array(VDW_RADII[1 : zmax + 1]).reshape(-1, 1)
+            vdwref = [np.median(vdw)]
+
+
+            ref = np.array(Zref+Zinvref+ionizationref+polarizref+covref+vdwref+vref)
+            conv_tensor = np.concatenate([Z, Zinv, ionization, polariz, cov, vdw, v_struct], axis=1)
+
+            conv_tensor = conv_tensor / ref[None, :]
+            dim = conv_tensor.shape[1]
+            conv_tensor = np.concatenate(
+                [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
+            )
+            conv_tensors.append(conv_tensor)
+
 
         if "sjs_coordinates" in encodings:
             coords = np.array(SJS_COORDINATES)[1:-1]
@@ -117,6 +159,23 @@ class SpeciesEncoding(nn.Module):
             mean = np.mean(coords, axis=0)
             std = np.std(coords, axis=0)
             conv_tensor = (conv_tensor - mean[None, :]) / std[None, :]
+            dim = conv_tensor.shape[1]
+            conv_tensor = np.concatenate(
+                [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
+            )
+            conv_tensors.append(conv_tensor)
+        
+        if "positional" in encodings:
+            coords = np.array(PERIODIC_COORDINATES)[1:zmax+1]
+            row,col = coords[:,0], coords[:,1]
+            drow = self.extra_params.get("drow", default=5)
+            dcol = self.dim - drow
+            nrow = self.extra_params.get("nrow", default=100.)
+            ncol = self.extra_params.get("ncol", default=1000.)
+
+            erow = positional_encoding_static(row, drow, nrow)
+            ecol = positional_encoding_static(col, dcol, ncol)
+            conv_tensor = np.concatenate([erow, ecol], axis=-1)
             dim = conv_tensor.shape[1]
             conv_tensor = np.concatenate(
                 [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
@@ -166,9 +225,10 @@ class SpeciesEncoding(nn.Module):
             )
             conv_tensors.append(rand_encoding)
 
+        assert len(conv_tensors)>0, f"No encoding recognized in '{self.encoding}'"
+
         conv_tensor = jnp.concatenate(conv_tensors, axis=1)
 
-        assert conv_tensor is not None, "No encoding selected."
 
         species = inputs["species"] if isinstance(inputs, dict) else inputs
         out = conv_tensor[species]
@@ -484,6 +544,18 @@ class RadialBasis(nn.Module):
             return {**inputs, output_key: out}
         return out
 
+
+def positional_encoding_static(t, d: int, n: float = 10000.0):
+    if d % 2 == 0:
+        k = np.arange(d // 2)
+    else:
+        k = np.arange((d + 1) // 2)
+    wk = np.asarray(1.0 / (n ** (2 * k / d)))
+    wkt = wk[None, :] * t[:, None]
+    out = np.concatenate([np.cos(wkt), np.sin(wkt)], axis=-1)
+    if d % 2 == 1:
+        out = out[:, :-1]
+    return out
 
 @partial(jax.jit, static_argnums=(1, 2), inline=True)
 def positional_encoding(t, d: int, n: float = 10000.0):

@@ -9,8 +9,8 @@ PERIODIC_TABLE_STR = """
 H                                                                                                                           He
 Li  Be                                                                                                  B   C   N   O   F   Ne
 Na  Mg                                                                                                  Al  Si  P   S   Cl  Ar
-K   Ca  Sc                                                          Ti  V   Cr  Mn  Fe  Co  Ni  Cu  Zn  Ga  Ge  As  Se  Br  Kr
-Rb  Sr  Y                                                           Zr  Nb  Mo  Tc  Ru  Rh  Pd  Ag  Cd  In  Sn  Sb  Te  I   Xe
+K   Ca                                                          Sc  Ti  V   Cr  Mn  Fe  Co  Ni  Cu  Zn  Ga  Ge  As  Se  Br  Kr
+Rb  Sr                                                          Y   Zr  Nb  Mo  Tc  Ru  Rh  Pd  Ag  Cd  In  Sn  Sb  Te  I   Xe
 Cs  Ba  La  Ce  Pr  Nd  Pm  Sm  Eu  Gd  Tb  Dy  Ho  Er  Tm  Yb  Lu  Hf  Ta  W   Re  Os  Ir  Pt  Au  Hg  Tl  Pb  Bi  Po  At  Rn
 Fr  Ra  Ac  Th  Pa  U   Np  Pu  Am  Cm  Bk  Cf  Es  Fm  Md  No  Lr  Rf  Db  Sg  Bh  Hs  Mt  Ds  Rg  Cn  Nh  Fl  Mc  Lv  Ts  Og
 """
@@ -157,107 +157,139 @@ ATOMIC_MASSES = [
 ]
 
 
-ELECTRONIC_STRUCTURE = [[0] * 15] * len(PERIODIC_TABLE)
-######################### 1s 2s 2p 3s 3p 4s 3d 4p 5s 4d 5p  6s 4f 5d 6p
-ELECTRONIC_STRUCTURE[1] = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # H
-ELECTRONIC_STRUCTURE[2] = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # He
-ELECTRONIC_STRUCTURE[3] = [2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Li
-ELECTRONIC_STRUCTURE[4] = [2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Be
-ELECTRONIC_STRUCTURE[5] = [2, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # B
-ELECTRONIC_STRUCTURE[6] = [2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # C
-ELECTRONIC_STRUCTURE[7] = [2, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # N
-ELECTRONIC_STRUCTURE[8] = [2, 2, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # O
-ELECTRONIC_STRUCTURE[9] = [2, 2, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # F
-ELECTRONIC_STRUCTURE[10] = [2, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ne
-########################## 1s 2s 2p 3s 3p 4s 3d 4p  5s 4d 5p 6s 4f 5d 6p
-ELECTRONIC_STRUCTURE[11] = [2, 2, 6, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Na
-ELECTRONIC_STRUCTURE[12] = [2, 2, 6, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Mg
-ELECTRONIC_STRUCTURE[13] = [2, 2, 6, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Al
-ELECTRONIC_STRUCTURE[14] = [2, 2, 6, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Si
-ELECTRONIC_STRUCTURE[15] = [2, 2, 6, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # P
-ELECTRONIC_STRUCTURE[16] = [2, 2, 6, 2, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # S
-ELECTRONIC_STRUCTURE[17] = [2, 2, 6, 2, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Cl
-ELECTRONIC_STRUCTURE[18] = [2, 2, 6, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ar
-########################## 1s 2s 2p 3s 3p 4s 3d 4p  5s 4d 5p 6s 4f 5d 6p
-ELECTRONIC_STRUCTURE[19] = [2, 2, 6, 2, 6, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # K
-ELECTRONIC_STRUCTURE[20] = [2, 2, 6, 2, 6, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ca
-ELECTRONIC_STRUCTURE[21] = [2, 2, 6, 2, 6, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0]  # Sc
-ELECTRONIC_STRUCTURE[22] = [2, 2, 6, 2, 6, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0]  # Ti
-ELECTRONIC_STRUCTURE[23] = [2, 2, 6, 2, 6, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0]  # V
-ELECTRONIC_STRUCTURE[24] = [2, 2, 6, 2, 6, 1, 5, 0, 0, 0, 0, 0, 0, 0, 0]  # Cr
-ELECTRONIC_STRUCTURE[25] = [2, 2, 6, 2, 6, 2, 5, 0, 0, 0, 0, 0, 0, 0, 0]  # Mn
-ELECTRONIC_STRUCTURE[26] = [2, 2, 6, 2, 6, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0]  # Fe
-ELECTRONIC_STRUCTURE[27] = [2, 2, 6, 2, 6, 2, 7, 0, 0, 0, 0, 0, 0, 0, 0]  # Co
-ELECTRONIC_STRUCTURE[28] = [2, 2, 6, 2, 6, 2, 8, 0, 0, 0, 0, 0, 0, 0, 0]  # Ni
-ELECTRONIC_STRUCTURE[29] = [2, 2, 6, 2, 6, 1, 10, 0, 0, 0, 0, 0, 0, 0, 0]  # Cu
-ELECTRONIC_STRUCTURE[30] = [2, 2, 6, 2, 6, 2, 10, 0, 0, 0, 0, 0, 0, 0, 0]  # Zn
-########################### 1s 2s 2p 3s 3p 4s 3d 4p 5s 4d 5p 6s 4f 5d 6p
-ELECTRONIC_STRUCTURE[31] = [2, 2, 6, 2, 6, 2, 10, 1, 0, 0, 0, 0, 0, 0, 0]  # Ga
-ELECTRONIC_STRUCTURE[32] = [2, 2, 6, 2, 6, 2, 10, 2, 0, 0, 0, 0, 0, 0, 0]  # Ge
-ELECTRONIC_STRUCTURE[33] = [2, 2, 6, 2, 6, 2, 10, 3, 0, 0, 0, 0, 0, 0, 0]  # As
-ELECTRONIC_STRUCTURE[34] = [2, 2, 6, 2, 6, 2, 10, 4, 0, 0, 0, 0, 0, 0, 0]  # Se
-ELECTRONIC_STRUCTURE[35] = [2, 2, 6, 2, 6, 2, 10, 5, 0, 0, 0, 0, 0, 0, 0]  # Br
-ELECTRONIC_STRUCTURE[36] = [2, 2, 6, 2, 6, 2, 10, 6, 0, 0, 0, 0, 0, 0, 0]  # Kr
-########################### 1s 2s 2p 3s 3p 4s 3d 4p 5s 4d 5p 6s 4f 5d 6p
-ELECTRONIC_STRUCTURE[37] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 0, 0, 0, 0, 0, 0]  # Rb
-ELECTRONIC_STRUCTURE[38] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 0, 0, 0, 0, 0, 0]  # Sr
-ELECTRONIC_STRUCTURE[39] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 1, 0, 0, 0, 0, 0]  # Y
-ELECTRONIC_STRUCTURE[40] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 2, 0, 0, 0, 0, 0]  # Zr
-ELECTRONIC_STRUCTURE[41] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 4, 0, 0, 0, 0, 0]  # Nb
-ELECTRONIC_STRUCTURE[42] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 5, 0, 0, 0, 0, 0]  # Mo
-ELECTRONIC_STRUCTURE[43] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 5, 0, 0, 0, 0, 0]  # Tc
-ELECTRONIC_STRUCTURE[44] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 7, 0, 0, 0, 0, 0]  # Ru
-ELECTRONIC_STRUCTURE[45] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 8, 0, 0, 0, 0, 0]  # Rh
-ELECTRONIC_STRUCTURE[46] = [2, 2, 6, 2, 6, 2, 10, 6, 0, 10, 0, 0, 0, 0, 0]  # Pd
-ELECTRONIC_STRUCTURE[47] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 10, 0, 0, 0, 0, 0]  # Ag
-ELECTRONIC_STRUCTURE[48] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 0, 0, 0, 0, 0]  # Cd
-########################### 1s 2s 2p 3s 3p 4s 3d 4p 5s  4d 5p 6s 4f 5d 6p
-ELECTRONIC_STRUCTURE[49] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 1, 0, 0, 0, 0]  # In
-ELECTRONIC_STRUCTURE[50] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 2, 0, 0, 0, 0]  # Sn
-ELECTRONIC_STRUCTURE[51] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 3, 0, 0, 0, 0]  # Sb
-ELECTRONIC_STRUCTURE[52] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 4, 0, 0, 0, 0]  # Te
-ELECTRONIC_STRUCTURE[53] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 5, 0, 0, 0, 0]  # I
-ELECTRONIC_STRUCTURE[54] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 0, 0, 0, 0]  # Xe
-########################### 1s 2s 2p 3s 3p 4s 3d 4p 5s  4d 5p 6s 4f 5d 6p
-ELECTRONIC_STRUCTURE[55] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 1, 0, 0, 0]  # Cs
-ELECTRONIC_STRUCTURE[56] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 0, 0, 0]  # Ba
-ELECTRONIC_STRUCTURE[57] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 0, 1, 0]  # La
-ELECTRONIC_STRUCTURE[58] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 1, 1, 0]  # Ce
-ELECTRONIC_STRUCTURE[59] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 3, 0, 0]  # Pr
-ELECTRONIC_STRUCTURE[60] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 4, 0, 0]  # Nd
-ELECTRONIC_STRUCTURE[61] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 5, 0, 0]  # Pm
-ELECTRONIC_STRUCTURE[62] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 6, 0, 0]  # Sm
-ELECTRONIC_STRUCTURE[63] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 7, 0, 0]  # Eu
-ELECTRONIC_STRUCTURE[64] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 7, 1, 0]  # Gd
-ELECTRONIC_STRUCTURE[65] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 9, 0, 0]  # Tb
-ELECTRONIC_STRUCTURE[66] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 10, 0, 0] # Dy
-ELECTRONIC_STRUCTURE[67] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 11, 0, 0] # Ho
-ELECTRONIC_STRUCTURE[68] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 12, 0, 0] # Er
-ELECTRONIC_STRUCTURE[69] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 13, 0, 0] # Tm
-ELECTRONIC_STRUCTURE[70] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 0, 0] # Yb
-########################### 1s 2s 2p 3s 3p 4s 3d 4p 5s  4d 5p 6s  4f  5d 6p
-ELECTRONIC_STRUCTURE[71] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 1, 0] # Lu
-ELECTRONIC_STRUCTURE[71] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 2, 0] # Hf
-ELECTRONIC_STRUCTURE[73] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 3, 0] # Ta
-ELECTRONIC_STRUCTURE[74] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 4, 0] # W
-ELECTRONIC_STRUCTURE[75] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 5, 0] # Re
-ELECTRONIC_STRUCTURE[76] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 6, 0] # Os
-ELECTRONIC_STRUCTURE[77] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 7, 0] # Ir
-ELECTRONIC_STRUCTURE[78] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 1, 14, 9, 0] # Pt
-ELECTRONIC_STRUCTURE[79] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 1, 14, 10, 0] # Au
-ELECTRONIC_STRUCTURE[80] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 0] # Hg
-########################### 1s 2s 2p 3s 3p 4s 3d 4p 5s  4d 5p 6s  4f  5d 6p
-ELECTRONIC_STRUCTURE[81] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 1] # Tl
-ELECTRONIC_STRUCTURE[82] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 2] # Pb
-ELECTRONIC_STRUCTURE[83] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 3] # Bi
-ELECTRONIC_STRUCTURE[84] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 4] # Po
-ELECTRONIC_STRUCTURE[85] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 5] # At
-ELECTRONIC_STRUCTURE[86] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6] # Rn
-
+EL_STRUCT = [[0] * 19] * len(PERIODIC_TABLE)
+#########################1s 2s 2p 3s 3p 4s 3d 4p 5s 4d 5p  6s 4f 5d 6p 7s 5f 6d 7p
+EL_STRUCT[1] = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # H
+EL_STRUCT[2] = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # He
+EL_STRUCT[3] = [2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Li
+EL_STRUCT[4] = [2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Be
+EL_STRUCT[5] = [2, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # B
+EL_STRUCT[6] = [2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # C
+EL_STRUCT[7] = [2, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # N
+EL_STRUCT[8] = [2, 2, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # O
+EL_STRUCT[9] = [2, 2, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # F
+EL_STRUCT[10] = [2, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ne
+##########################1s 2s 2p 3s 3p 4s 3d 4p  5s 4d 5p 6s 4f 5d 6p
+EL_STRUCT[11] = [2, 2, 6, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Na
+EL_STRUCT[12] = [2, 2, 6, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Mg
+EL_STRUCT[13] = [2, 2, 6, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Al
+EL_STRUCT[14] = [2, 2, 6, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Si
+EL_STRUCT[15] = [2, 2, 6, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # P
+EL_STRUCT[16] = [2, 2, 6, 2, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # S
+EL_STRUCT[17] = [2, 2, 6, 2, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Cl
+EL_STRUCT[18] = [2, 2, 6, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ar
+##########################1s 2s 2p 3s 3p 4s 3d 4p  5s 4d 5p 6s 4f 5d 6p
+EL_STRUCT[19] = [2, 2, 6, 2, 6, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # K
+EL_STRUCT[20] = [2, 2, 6, 2, 6, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ca
+EL_STRUCT[21] = [2, 2, 6, 2, 6, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Sc
+EL_STRUCT[22] = [2, 2, 6, 2, 6, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ti
+EL_STRUCT[23] = [2, 2, 6, 2, 6, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # V
+EL_STRUCT[24] = [2, 2, 6, 2, 6, 1, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Cr
+EL_STRUCT[25] = [2, 2, 6, 2, 6, 2, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Mn
+EL_STRUCT[26] = [2, 2, 6, 2, 6, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Fe
+EL_STRUCT[27] = [2, 2, 6, 2, 6, 2, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Co
+EL_STRUCT[28] = [2, 2, 6, 2, 6, 2, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ni
+EL_STRUCT[29] = [2, 2, 6, 2, 6, 1, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Cu
+EL_STRUCT[30] = [2, 2, 6, 2, 6, 2, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Zn
+###########################1s 2s 2p 3s 3p 4s 3d 4p 5s 4d 5p 6s 4f 5d 6p
+EL_STRUCT[31] = [2, 2, 6, 2, 6, 2, 10, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ga
+EL_STRUCT[32] = [2, 2, 6, 2, 6, 2, 10, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ge
+EL_STRUCT[33] = [2, 2, 6, 2, 6, 2, 10, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # As
+EL_STRUCT[34] = [2, 2, 6, 2, 6, 2, 10, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Se
+EL_STRUCT[35] = [2, 2, 6, 2, 6, 2, 10, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Br
+EL_STRUCT[36] = [2, 2, 6, 2, 6, 2, 10, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Kr
+###########################1s 2s 2p 3s 3p 4s 3d 4p 5s 4d 5p 6s 4f 5d 6p
+EL_STRUCT[37] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Rb
+EL_STRUCT[38] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Sr
+EL_STRUCT[39] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Y
+EL_STRUCT[40] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Zr
+EL_STRUCT[41] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Nb
+EL_STRUCT[42] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Mo
+EL_STRUCT[43] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Tc
+EL_STRUCT[44] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ru
+EL_STRUCT[45] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Rh
+EL_STRUCT[46] = [2, 2, 6, 2, 6, 2, 10, 6, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Pd
+EL_STRUCT[47] = [2, 2, 6, 2, 6, 2, 10, 6, 1, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Ag
+EL_STRUCT[48] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0]  # Cd
+###########################1s 2s 2p 3s 3p 4s 3d 4p 5s  4d 5p 6s 4f 5d 6p
+EL_STRUCT[49] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 1, 0, 0, 0, 0, 0, 0, 0, 0]  # In
+EL_STRUCT[50] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 2, 0, 0, 0, 0, 0, 0, 0, 0]  # Sn
+EL_STRUCT[51] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 3, 0, 0, 0, 0, 0, 0, 0, 0]  # Sb
+EL_STRUCT[52] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 4, 0, 0, 0, 0, 0, 0, 0, 0]  # Te
+EL_STRUCT[53] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 5, 0, 0, 0, 0, 0, 0, 0, 0]  # I
+EL_STRUCT[54] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 0, 0, 0, 0, 0, 0, 0, 0]  # Xe
+###########################1s 2s 2p 3s 3p 4s 3d 4p 5s  4d 5p 6s 4f 5d 6p
+EL_STRUCT[55] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 1, 0, 0, 0, 0, 0, 0, 0]  # Cs
+EL_STRUCT[56] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 0, 0, 0, 0, 0, 0, 0]  # Ba
+EL_STRUCT[57] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 0, 1, 0, 0, 0, 0, 0]  # La
+EL_STRUCT[58] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 1, 1, 0, 0, 0, 0, 0]  # Ce
+EL_STRUCT[59] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 3, 0, 0, 0, 0, 0, 0]  # Pr
+EL_STRUCT[60] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 4, 0, 0, 0, 0, 0, 0]  # Nd
+EL_STRUCT[61] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 5, 0, 0, 0, 0, 0, 0]  # Pm
+EL_STRUCT[62] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 6, 0, 0, 0, 0, 0, 0]  # Sm
+EL_STRUCT[63] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 7, 0, 0, 0, 0, 0, 0]  # Eu
+EL_STRUCT[64] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 7, 1, 0, 0, 0, 0, 0]  # Gd
+EL_STRUCT[65] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 9, 0, 0, 0, 0, 0, 0]  # Tb
+EL_STRUCT[66] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 10, 0, 0, 0, 0, 0, 0]  # Dy
+EL_STRUCT[67] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 11, 0, 0, 0, 0, 0, 0]  # Ho
+EL_STRUCT[68] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 12, 0, 0, 0, 0, 0, 0]  # Er
+EL_STRUCT[69] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 13, 0, 0, 0, 0, 0, 0]  # Tm
+EL_STRUCT[70] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 0, 0, 0, 0, 0, 0]  # Yb
+###########################1s 2s 2p 3s 3p 4s 3d 4p 5s  4d 5p 6s  4f  5d 6p
+EL_STRUCT[71] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 1, 0, 0, 0, 0, 0]  # Lu
+EL_STRUCT[71] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 2, 0, 0, 0, 0, 0]  # Hf
+EL_STRUCT[73] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 3, 0, 0, 0, 0, 0]  # Ta
+EL_STRUCT[74] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 4, 0, 0, 0, 0, 0]  # W
+EL_STRUCT[75] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 5, 0, 0, 0, 0, 0]  # Re
+EL_STRUCT[76] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 6, 0, 0, 0, 0, 0]  # Os
+EL_STRUCT[77] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 7, 0, 0, 0, 0, 0]  # Ir
+EL_STRUCT[78] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 1, 14, 9, 0, 0, 0, 0, 0]  # Pt
+EL_STRUCT[79] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 1, 14, 10, 0, 0, 0, 0, 0]  # Au
+EL_STRUCT[80] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 0, 0, 0, 0, 0]  # Hg
+###########################1s 2s 2p 3s 3p 4s 3d 4p 5s  4d 5p 6s  4f  5d 6p
+EL_STRUCT[81] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 1, 0, 0, 0, 0]  # Tl
+EL_STRUCT[82] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 2, 0, 0, 0, 0]  # Pb
+EL_STRUCT[83] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 3, 0, 0, 0, 0]  # Bi
+EL_STRUCT[84] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 4, 0, 0, 0, 0]  # Po
+EL_STRUCT[85] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 5, 0, 0, 0, 0]  # At
+EL_STRUCT[86] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 0, 0, 0, 0]  # Rn
+###########################1s 2s 2p 3s 3p 4s 3d 4p 5s  4d 5p 6s  4f  5d 6p 7s 5f  6d 7p
+EL_STRUCT[87] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 1, 0, 0, 0]  # Fr
+EL_STRUCT[88] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 0, 0, 0]  # Ra
+EL_STRUCT[89] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 0, 1, 0]  # Ac
+EL_STRUCT[90] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 0, 2, 0]  # Th
+EL_STRUCT[91] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 2, 1, 0]  # Pa
+EL_STRUCT[92] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 3, 1, 0]  # U
+EL_STRUCT[93] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 4, 1, 0]  # Np
+EL_STRUCT[94] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 6, 0, 0]  # Pu
+EL_STRUCT[95] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 7, 0, 0]  # Am
+EL_STRUCT[96] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 7, 1, 0]  # Cm
+EL_STRUCT[97] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 9, 0, 0]  # Bk
+EL_STRUCT[98] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 10, 0, 0]  # Cf
+EL_STRUCT[99] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 11, 0, 0]  # Es
+EL_STRUCT[100] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 12, 0, 0]  # Fm
+EL_STRUCT[101] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 13, 0, 0]  # Md
+EL_STRUCT[102] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 0, 0]  # No
+EL_STRUCT[103] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 0, 1]  # Lr
+EL_STRUCT[104] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 2, 0]  # Rf
+EL_STRUCT[105] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 3, 0]  # Db
+EL_STRUCT[106] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 4, 0]  # Sg
+EL_STRUCT[107] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 5, 0]  # Bh
+EL_STRUCT[108] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 6, 0]  # Hs
+EL_STRUCT[109] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 7, 0]  # Mt
+EL_STRUCT[110] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 8, 0]  # Ds
+EL_STRUCT[111] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 9, 0]  # Rg
+EL_STRUCT[112] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 10, 0]  # Cn
+EL_STRUCT[113] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 10, 1]  # Nh
+EL_STRUCT[114] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 10, 2]  # Fl
+EL_STRUCT[115] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 10, 3]  # Mc
+EL_STRUCT[116] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 10, 4]  # Lv
+EL_STRUCT[117] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 10, 5]  # Ts
+EL_STRUCT[118] = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 10, 6]  # Og
 
 
 VALENCE_STRUCTURE = [[0.25] * 4] * len(PERIODIC_TABLE)
-###################### vs vp  vd  vf
+######################vs vp  vd  vf
 VALENCE_STRUCTURE[1] = [1, 0, 0, 0]  # H
 VALENCE_STRUCTURE[2] = [2, 0, 0, 0]  # He
 VALENCE_STRUCTURE[3] = [1, 0, 0, 0]  # Li
@@ -344,31 +376,205 @@ VALENCE_STRUCTURE[83] = [2, 3, 10, 14]  # Bi
 VALENCE_STRUCTURE[84] = [2, 4, 10, 14]  # Po
 VALENCE_STRUCTURE[85] = [2, 5, 10, 14]  # At
 VALENCE_STRUCTURE[86] = [2, 6, 10, 14]  # Rn
-###################### vs vp  vd  vf
+######################vs vp  vd  vf
+VALENCE_STRUCTURE[87] = [1, 0, 0, 0]  # Fr
+VALENCE_STRUCTURE[88] = [2, 0, 0, 0]  # Ra
+VALENCE_STRUCTURE[89] = [2, 0, 1, 0]  # Ac
+VALENCE_STRUCTURE[90] = [2, 0, 2, 0]  # Th
+VALENCE_STRUCTURE[91] = [2, 0, 1, 2]  # Pa
+VALENCE_STRUCTURE[92] = [2, 0, 1, 3]  # U
+VALENCE_STRUCTURE[93] = [2, 0, 1, 4]  # Np
+VALENCE_STRUCTURE[94] = [2, 0, 0, 6]  # Pu
+VALENCE_STRUCTURE[95] = [2, 0, 0, 7]  # Am
+VALENCE_STRUCTURE[96] = [2, 0, 1, 7]  # Cm
+VALENCE_STRUCTURE[97] = [2, 0, 0, 9]  # Bk
+VALENCE_STRUCTURE[98] = [2, 0, 0, 10]  # Cf
+VALENCE_STRUCTURE[99] = [2, 0, 0, 11]  # Es
+VALENCE_STRUCTURE[100] = [2, 0, 0, 12]  # Fm
+VALENCE_STRUCTURE[101] = [2, 0, 0, 13]  # Md
+VALENCE_STRUCTURE[102] = [2, 0, 0, 14]  # No
+VALENCE_STRUCTURE[103] = [2, 1, 0, 14]  # Lr
+VALENCE_STRUCTURE[104] = [2, 0, 2, 14]  # Rf
+VALENCE_STRUCTURE[105] = [2, 0, 3, 14]  # Db
+VALENCE_STRUCTURE[106] = [2, 0, 4, 14]  # Sg
+VALENCE_STRUCTURE[107] = [2, 0, 5, 14]  # Bh
+VALENCE_STRUCTURE[108] = [2, 0, 6, 14]  # Hs
+VALENCE_STRUCTURE[109] = [2, 0, 7, 14]  # Mt
+VALENCE_STRUCTURE[110] = [2, 0, 8, 14]  # Ds
+VALENCE_STRUCTURE[111] = [2, 0, 9, 14]  # Rg
+VALENCE_STRUCTURE[112] = [2, 0, 10, 14]  # Cn
+VALENCE_STRUCTURE[113] = [2, 1, 10, 14]  # Nh
+VALENCE_STRUCTURE[114] = [2, 2, 10, 14]  # Fl
+VALENCE_STRUCTURE[115] = [2, 3, 10, 14]  # Mc
+VALENCE_STRUCTURE[116] = [2, 4, 10, 14]  # Lv
+VALENCE_STRUCTURE[117] = [2, 5, 10, 14]  # Ts
+VALENCE_STRUCTURE[118] = [2, 6, 10, 14]  # Og
 
-VALENCE_ELECTRONS = [ sum(e) for e in VALENCE_STRUCTURE ]
+VALENCE_ELECTRONS = [sum(e) for e in VALENCE_STRUCTURE]
 
-VALENCE_STRUCTURE_FULL = [[[0]*9,[0]*9]] * len(PERIODIC_TABLE)
-VALENCE_STRUCTURE_FULL[1] = [[1]+[0]*8,[0]*9]  # H
-VALENCE_STRUCTURE_FULL[2] = [[1]+[0]*8,[1]+[0]*8]  # He
-VALENCE_STRUCTURE_FULL[3] = [[1]+[0]*8,[0]*9]  # Li
-VALENCE_STRUCTURE_FULL[4] = [[1]+[0]*8,[1]+[0]*8]  # Be
-VALENCE_STRUCTURE_FULL[5] = [[1]*2+[0]*7,[1]+[0]*8]  # B
-VALENCE_STRUCTURE_FULL[6] = [[1]*3+[0]*6,[1]+[0]*8]  # C
-VALENCE_STRUCTURE_FULL[7] = [[1]*4+[0]*5,[1]+[0]*8]  # N
-VALENCE_STRUCTURE_FULL[8] = [[1]*4+[0]*5,[1]*2+[0]*7]  # O
-VALENCE_STRUCTURE_FULL[9] = [[1]*4+[0]*5,[1]*3+[0]*6]  # F
-VALENCE_STRUCTURE_FULL[10] = [[1]*4+[0]*5,[1]*4+[0]*5]  # Ne
-VALENCE_STRUCTURE_FULL[11] = [[1]+[0]*8,[0]*9]  # Na
-VALENCE_STRUCTURE_FULL[12] = [[1]+[0]*8,[1]+[0]*8]  # Mg
-VALENCE_STRUCTURE_FULL[13] = [[1]*2+[0]*7,[1]+[0]*8]  # Al
-VALENCE_STRUCTURE_FULL[14] = [[1]*3+[0]*6,[1]+[0]*8]  # Si
-VALENCE_STRUCTURE_FULL[15] = [[1]*4+[0]*5,[1]+[0]*8]  # P
-VALENCE_STRUCTURE_FULL[16] = [[1]*4+[0]*5,[1]*2+[0]*7]  # S
-VALENCE_STRUCTURE_FULL[17] = [[1]*4+[0]*5,[1]*3+[0]*6]  # Cl
-VALENCE_STRUCTURE_FULL[18] = [[1]*4+[0]*5,[1]*4+[0]*5]  # Ar
-
-
+VALENCE_STRUCTURE_FULL = [[[0] * 9, [0] * 9]] * len(PERIODIC_TABLE)
+###########################################
+VALENCE_STRUCTURE_FULL[1] = [[1] + [0] * 8, [0] * 9]  # H
+VALENCE_STRUCTURE_FULL[2] = [[1] + [0] * 8, [1] + [0] * 8]  # He
+###########################################
+VALENCE_STRUCTURE_FULL[3] = [[1] + [0] * 8, [0] * 9]  # Li
+VALENCE_STRUCTURE_FULL[4] = [[1] + [0] * 8, [1] + [0] * 8]  # Be
+###########################################
+VALENCE_STRUCTURE_FULL[5] = [[1] * 2 + [0] * 7, [1] + [0] * 8]  # B
+VALENCE_STRUCTURE_FULL[6] = [[1] * 3 + [0] * 6, [1] + [0] * 8]  # C
+VALENCE_STRUCTURE_FULL[7] = [[1] * 4 + [0] * 5, [1] + [0] * 8]  # N
+VALENCE_STRUCTURE_FULL[8] = [[1] * 4 + [0] * 5, [1] * 2 + [0] * 7]  # O
+VALENCE_STRUCTURE_FULL[9] = [[1] * 4 + [0] * 5, [1] * 3 + [0] * 6]  # F
+VALENCE_STRUCTURE_FULL[10] = [[1] * 4 + [0] * 5, [1] * 4 + [0] * 5]  # Ne
+###########################################
+VALENCE_STRUCTURE_FULL[11] = [[1] + [0] * 8, [0] * 9]  # Na
+VALENCE_STRUCTURE_FULL[12] = [[1] + [0] * 8, [1] + [0] * 8]  # Mg
+###########################################
+VALENCE_STRUCTURE_FULL[13] = [[1] * 2 + [0] * 7, [1] + [0] * 8]  # Al
+VALENCE_STRUCTURE_FULL[14] = [[1] * 3 + [0] * 6, [1] + [0] * 8]  # Si
+VALENCE_STRUCTURE_FULL[15] = [[1] * 4 + [0] * 5, [1] + [0] * 8]  # P
+VALENCE_STRUCTURE_FULL[16] = [[1] * 4 + [0] * 5, [1] * 2 + [0] * 7]  # S
+VALENCE_STRUCTURE_FULL[17] = [[1] * 4 + [0] * 5, [1] * 3 + [0] * 6]  # Cl
+VALENCE_STRUCTURE_FULL[18] = [[1] * 4 + [0] * 5, [1] * 4 + [0] * 5]  # Ar
+###########################################
+VALENCE_STRUCTURE_FULL[19] = [[1] + [0] * 8, [0] * 9]  # K
+VALENCE_STRUCTURE_FULL[20] = [[1] + [0] * 8, [1] + [0] * 8]  # Ca
+###########################################
+VALENCE_STRUCTURE_FULL[21] = [
+    [1] + [0] * 3 + [1] * 1 + [0] * 4,
+    [1] + [0] * 3 + [0] * 5,
+]  # Sc
+VALENCE_STRUCTURE_FULL[22] = [
+    [1] + [0] * 3 + [1] * 2 + [0] * 3,
+    [1] + [0] * 3 + [0] * 5,
+]  # Ti
+VALENCE_STRUCTURE_FULL[23] = [
+    [1] + [0] * 3 + [1] * 3 + [0] * 2,
+    [1] + [0] * 3 + [0] * 5,
+]  # V
+VALENCE_STRUCTURE_FULL[24] = [
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+    [0] + [0] * 3 + [0] * 5,
+]  # Cr
+VALENCE_STRUCTURE_FULL[25] = [
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+    [1] + [0] * 3 + [0] * 5,
+]  # Mn
+VALENCE_STRUCTURE_FULL[26] = [
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+    [1] + [0] * 3 + [1] * 1 + [0] * 4,
+]  # Fe
+VALENCE_STRUCTURE_FULL[27] = [
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+    [1] + [0] * 3 + [1] * 2 + [0] * 3,
+]  # Co
+VALENCE_STRUCTURE_FULL[28] = [
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+    [1] + [0] * 3 + [1] * 3 + [0] * 2,
+]  # Ni
+VALENCE_STRUCTURE_FULL[29] = [
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+    [1] + [0] * 3 + [1] * 4 + [0] * 1,
+]  # Cu
+VALENCE_STRUCTURE_FULL[30] = [
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+]  # Zn
+###########################################
+VALENCE_STRUCTURE_FULL[31] = [
+    [1] * 2 + [0] * 2 + [1] * 5,
+    [1] * 1 + [0] * 3 + [1] * 5,
+]  # Ga
+VALENCE_STRUCTURE_FULL[32] = [
+    [1] * 3 + [0] * 1 + [1] * 5,
+    [1] * 1 + [0] * 3 + [1] * 5,
+]  # Ge
+VALENCE_STRUCTURE_FULL[33] = [
+    [1] * 4 + [0] * 0 + [1] * 5,
+    [1] * 1 + [0] * 3 + [1] * 5,
+]  # As
+VALENCE_STRUCTURE_FULL[34] = [
+    [1] * 4 + [0] * 0 + [1] * 5,
+    [1] * 2 + [0] * 2 + [1] * 5,
+]  # Se
+VALENCE_STRUCTURE_FULL[35] = [
+    [1] * 4 + [0] * 0 + [1] * 5,
+    [1] * 3 + [0] * 1 + [1] * 5,
+]  # Br
+VALENCE_STRUCTURE_FULL[36] = [
+    [1] * 4 + [0] * 0 + [1] * 5,
+    [1] * 4 + [0] * 0 + [1] * 5,
+]  # Kr
+###########################################
+VALENCE_STRUCTURE_FULL[37] = [[1] + [0] * 8, [0] * 9]  # Rb
+VALENCE_STRUCTURE_FULL[38] = [[1] + [0] * 8, [1] + [0] * 8]  # Sr
+###########################################
+VALENCE_STRUCTURE_FULL[39] = [
+    [1] + [0] * 3 + [1] * 1 + [0] * 4,
+    [1] + [0] * 3 + [0] * 5,
+]  # Y
+VALENCE_STRUCTURE_FULL[40] = [
+    [1] + [0] * 3 + [1] * 2 + [0] * 3,
+    [1] + [0] * 3 + [0] * 5,
+]  # Zr
+VALENCE_STRUCTURE_FULL[41] = [
+    [1] + [0] * 3 + [1] * 3 + [0] * 2,
+    [0] + [0] * 3 + [0] * 5,
+]  # Nb
+VALENCE_STRUCTURE_FULL[42] = [
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+    [0] + [0] * 3 + [0] * 5,
+]  # Mo
+VALENCE_STRUCTURE_FULL[43] = [
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+    [1] + [0] * 3 + [0] * 5,
+]  # Tc
+VALENCE_STRUCTURE_FULL[44] = [
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+    [1] + [0] * 3 + [1] * 1 + [0] * 4,
+]  # Ru
+VALENCE_STRUCTURE_FULL[45] = [
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+    [1] + [0] * 3 + [1] * 2 + [0] * 3,
+]  # Rh
+VALENCE_STRUCTURE_FULL[46] = [
+    [0] + [0] * 3 + [1] * 5 + [0] * 0,
+    [0] + [0] * 3 + [1] * 5 + [0] * 0,
+]  # Pd
+VALENCE_STRUCTURE_FULL[47] = [
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+    [1] + [0] * 3 + [1] * 4 + [0] * 1,
+]  # Ag
+VALENCE_STRUCTURE_FULL[48] = [
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+    [1] + [0] * 3 + [1] * 5 + [0] * 0,
+]  # Cd
+###########################################
+VALENCE_STRUCTURE_FULL[49] = [
+    [1] * 2 + [0] * 2 + [1] * 5,
+    [1] * 1 + [0] * 3 + [1] * 5,
+]  # In
+VALENCE_STRUCTURE_FULL[50] = [
+    [1] * 3 + [0] * 1 + [1] * 5,
+    [1] * 1 + [0] * 3 + [1] * 5,
+]  # Sn
+VALENCE_STRUCTURE_FULL[51] = [
+    [1] * 4 + [0] * 0 + [1] * 5,
+    [1] * 1 + [0] * 3 + [1] * 5,
+]  # Sb
+VALENCE_STRUCTURE_FULL[52] = [
+    [1] * 4 + [0] * 0 + [1] * 5,
+    [1] * 2 + [0] * 2 + [1] * 5,
+]  # Te
+VALENCE_STRUCTURE_FULL[53] = [
+    [1] * 4 + [0] * 0 + [1] * 5,
+    [1] * 3 + [0] * 1 + [1] * 5,
+]  # I
+VALENCE_STRUCTURE_FULL[54] = [
+    [1] * 4 + [0] * 0 + [1] * 5,
+    [1] * 4 + [0] * 0 + [1] * 5,
+]  # Xe
+###########################################
 
 # ATOMIC ELECTRONEGATIVITIES FROM
 # A generally applicable atomic-charge dependent London dispersion correction (SI)
@@ -467,7 +673,7 @@ D3_ELECTRONEGATIVITIES = (
 )
 
 D3_HARDNESSES = (
-    [1.0e3]
+    [1.0e1]
     + [
         -0.35015861,
         1.04121227,
@@ -556,7 +762,7 @@ D3_HARDNESSES = (
         0.08715453,
         0.10500484,
     ]
-    + [1.0e3]
+    + [1.0e1]
 )
 
 D3_KAPPA = (
@@ -840,7 +1046,7 @@ D3_COV_RADII = (
 D3_COV_RADII = [x / au.BOHR for x in D3_COV_RADII]
 
 # free atom vdw radii in bohr from Tkatchenko-Scheffler
-VDW_RADII = [
+VDW_RADII_TS = [
     1.0,  # Dummy
     3.1,  # H
     2.65,  # He
@@ -949,7 +1155,7 @@ VDW_RADII = [
 
 # free atom C6 coefficients in hartree*bohr**6
 C6_FREE = [
-    0.0,  # Dummy
+    1.0,  # Dummy
     6.5,  # H
     1.46,  # He
     1387.0,  # Li
@@ -1052,116 +1258,358 @@ C6_FREE = [
     1787.07,  # Fm
     1701.0,  # Md
     1578.18,  # No
-    0.0,  # Dummy
+    1.0,  # Dummy
 ]
 
 # free atom polarizabilities in bohr**3
-POLARIZABILITIES = [
-    1.0e-6,  # Dummy
-    4.5,  # H
-    1.38,  # He
-    164.2,  # Li
-    38.0,  # Be
-    21.0,  # B
-    12.0,  # C
-    7.4,  # N
-    5.4,  # O
-    3.8,  # F
-    2.67,  # Ne
-    162.7,  # Na
-    71.0,  # Mg
-    60.0,  # Al
-    37.0,  # Si
-    25.0,  # P
-    19.6,  # S
-    15.0,  # Cl
-    11.1,  # Ar
-    292.9,  # K
-    160.0,  # Ca
-    120.0,  # Sc
-    98.0,  # Ti
-    84.0,  # V
-    78.0,  # Cr
-    63.0,  # Mn
-    56.0,  # Fe
-    50.0,  # Co
-    48.0,  # Ni
-    42.0,  # Cu
-    40.0,  # Zn
-    60.0,  # Ga
-    41.0,  # Ge
-    29.0,  # As
-    25.0,  # Se
-    20.0,  # Br
-    16.8,  # Kr
-    319.2,  # Rb
-    199.0,  # Sr
-    126.737,  # Y
-    119.97,  # Zr
-    101.603,  # Nb
-    88.4225785,  # Mo
-    80.083,  # Tc
-    65.895,  # Ru
-    56.1,  # Rh
-    23.68,  # Pd
-    50.6,  # Ag
-    39.7,  # Cd
-    70.22,  # In
-    55.95,  # Sn
-    43.67197,  # Sb
-    37.65,  # Te
-    35.0,  # I
-    27.3,  # Xe
-    427.12,  # Cs
-    275.0,  # Ba
-    213.7,  # La
-    204.7,  # Ce
-    215.8,  # Pr
-    208.4,  # Nd
-    200.2,  # Pm
-    192.1,  # Sm
-    184.2,  # Eu
-    158.3,  # Gd
-    169.5,  # Tb
-    164.64,  # Dy
-    156.3,  # Ho
-    150.2,  # Er
-    144.3,  # Tm
-    138.9,  # Yb
-    137.2,  # Lu
-    99.52,  # Hf
-    82.53,  # Ta
-    71.041,  # W
-    63.04,  # Re
-    55.055,  # Os
-    42.51,  # Ir
-    39.68,  # Pt
-    36.5,  # Au
-    33.9,  # Hg
-    69.92,  # Tl
-    61.8,  # Pb
-    49.02,  # Bi
-    45.013,  # Po
-    38.93,  # At
-    33.54,  # Rn
-    317.8,  # Fr
-    246.2,  # Ra
-    203.3,  # Ac
-    217.0,  # Th
-    154.4,  # Pa
-    127.8,  # U
-    150.5,  # Np
-    132.2,  # Pu
-    131.2,  # Am
-    143.6,  # Cm
-    125.3,  # Bk
-    121.5,  # Cf
-    117.5,  # Es
-    113.4,  # Fm
-    109.4,  # Md
-    105.4,  # No
-    1.0e-6,  # Dummy
-]
+POLARIZABILITIES = [1.0] * len(PERIODIC_TABLE)
+POLARIZABILITIES[1] = 4.5
+POLARIZABILITIES[2] = 1.38
+POLARIZABILITIES[3] = 164
+POLARIZABILITIES[4] = 37.7010
+POLARIZABILITIES[5] = 20.5010
+POLARIZABILITIES[6] = 11.3020
+POLARIZABILITIES[7] = 7.4020
+POLARIZABILITIES[8] = 5.3020
+POLARIZABILITIES[9] = 3.74080
+POLARIZABILITIES[10] = 2.66
+POLARIZABILITIES[11] = 163.010
+POLARIZABILITIES[12] = 71.2040
+POLARIZABILITIES[13] = 57.8010
+POLARIZABILITIES[14] = 37.3070
+POLARIZABILITIES[15] = 25.010
+POLARIZABILITIES[16] = 19.4010
+POLARIZABILITIES[17] = 14.6020
+POLARIZABILITIES[18] = 11.1
+POLARIZABILITIES[19] = 290.010
+POLARIZABILITIES[20] = 161.040
+POLARIZABILITIES[21] = 9710
+POLARIZABILITIES[22] = 10010
+POLARIZABILITIES[23] = 8710
+POLARIZABILITIES[24] = 8312
+POLARIZABILITIES[25] = 68.090
+POLARIZABILITIES[26] = 62.040
+POLARIZABILITIES[27] = 55.040
+POLARIZABILITIES[28] = 49.030
+POLARIZABILITIES[29] = 47.010
+POLARIZABILITIES[30] = 38.7030
+POLARIZABILITIES[31] = 50.030
+POLARIZABILITIES[32] = 40.010
+POLARIZABILITIES[33] = 30.010
+POLARIZABILITIES[34] = 29.010
+POLARIZABILITIES[35] = 21.010
+POLARIZABILITIES[36] = 16.8
+POLARIZABILITIES[37] = 320.010
+POLARIZABILITIES[38] = 197.010
+POLARIZABILITIES[39] = 16212
+POLARIZABILITIES[40] = 11213
+POLARIZABILITIES[41] = 98.080
+POLARIZABILITIES[42] = 87.060
+POLARIZABILITIES[43] = 7910
+POLARIZABILITIES[44] = 7210
+POLARIZABILITIES[45] = 6610
+POLARIZABILITIES[46] = 26.1010
+POLARIZABILITIES[47] = 55.080
+POLARIZABILITIES[48] = 46.020
+POLARIZABILITIES[49] = 65.040
+POLARIZABILITIES[50] = 53.060
+POLARIZABILITIES[51] = 43.020
+POLARIZABILITIES[52] = 38.040
+POLARIZABILITIES[53] = 32.9010
+POLARIZABILITIES[54] = 27.3020
+POLARIZABILITIES[55] = 401.010
+POLARIZABILITIES[56] = 27210
+POLARIZABILITIES[57] = 21520
+POLARIZABILITIES[58] = 20520
+POLARIZABILITIES[59] = 21620
+POLARIZABILITIES[60] = 20820
+POLARIZABILITIES[61] = 20020
+POLARIZABILITIES[62] = 19220
+POLARIZABILITIES[63] = 18420
+POLARIZABILITIES[64] = 15820
+POLARIZABILITIES[65] = 17020
+POLARIZABILITIES[66] = 16515
+POLARIZABILITIES[67] = 15610
+POLARIZABILITIES[68] = 15015
+POLARIZABILITIES[69] = 14415
+POLARIZABILITIES[70] = 139.060
+POLARIZABILITIES[71] = 137.070
+POLARIZABILITIES[72] = 103.060
+POLARIZABILITIES[73] = 7420
+POLARIZABILITIES[74] = 6815
+POLARIZABILITIES[75] = 62.030
+POLARIZABILITIES[76] = 57.030
+POLARIZABILITIES[77] = 54.070
+POLARIZABILITIES[78] = 48.040
+POLARIZABILITIES[79] = 36.030
+POLARIZABILITIES[80] = 33.9040
+POLARIZABILITIES[81] = 50.020
+POLARIZABILITIES[82] = 47.030
+POLARIZABILITIES[83] = 48.040
+POLARIZABILITIES[84] = 44.040
+POLARIZABILITIES[85] = 42.040
+POLARIZABILITIES[86] = 35.020
+POLARIZABILITIES[87] = 318.020
+POLARIZABILITIES[88] = 246.040
+POLARIZABILITIES[89] = 20312
+POLARIZABILITIES[90] = 21754
+POLARIZABILITIES[91] = 15420
+POLARIZABILITIES[92] = 12917
+POLARIZABILITIES[93] = 15120
+POLARIZABILITIES[94] = 13220
+POLARIZABILITIES[95] = 13125
+POLARIZABILITIES[96] = 14425
+POLARIZABILITIES[97] = 12525
+POLARIZABILITIES[98] = 12220
+POLARIZABILITIES[99] = 11820
+POLARIZABILITIES[100] = 11320
+POLARIZABILITIES[101] = 10920
+POLARIZABILITIES[102] = 110.060
+POLARIZABILITIES[103] = 32020
+POLARIZABILITIES[104] = 11210
+POLARIZABILITIES[105] = 42.040
+POLARIZABILITIES[106] = 40.040
+POLARIZABILITIES[107] = 38.040
+POLARIZABILITIES[108] = 36.040
+POLARIZABILITIES[109] = 34.030
+POLARIZABILITIES[110] = 32.030
+POLARIZABILITIES[111] = 32.060
+POLARIZABILITIES[112] = 28.020
+POLARIZABILITIES[113] = 29.020
+POLARIZABILITIES[114] = 31.040
+POLARIZABILITIES[115] = 7120
+POLARIZABILITIES[116] = np.NaN
+POLARIZABILITIES[117] = 7615
+POLARIZABILITIES[118] = 58.060
+
+# POLARIZABILITIES = [
+#    1.0,  #Dummy
+#    4.5,  #H
+#    1.38,  #He
+#    164.2,  #Li
+#    38.0,  #Be
+#    21.0,  #B
+#    12.0,  #C
+#    7.4,  #N
+#    5.4,  #O
+#    3.8,  #F
+#    2.67,  #Ne
+#    162.7,  #Na
+#    71.0,  #Mg
+#    60.0,  #Al
+#    37.0,  #Si
+#    25.0,  #P
+#    19.6,  #S
+#    15.0,  #Cl
+#    11.1,  #Ar
+#    292.9,  #K
+#    160.0,  #Ca
+#    120.0,  #Sc
+#    98.0,  #Ti
+#    84.0,  #V
+#    78.0,  #Cr
+#    63.0,  #Mn
+#    56.0,  #Fe
+#    50.0,  #Co
+#    48.0,  #Ni
+#    42.0,  #Cu
+#    40.0,  #Zn
+#    60.0,  #Ga
+#    41.0,  #Ge
+#    29.0,  #As
+#    25.0,  #Se
+#    20.0,  #Br
+#    16.8,  #Kr
+#    319.2,  #Rb
+#    199.0,  #Sr
+#    126.737,  #Y
+#    119.97,  #Zr
+#    101.603,  #Nb
+#    88.4225785,  #Mo
+#    80.083,  #Tc
+#    65.895,  #Ru
+#    56.1,  #Rh
+#    23.68,  #Pd
+#    50.6,  #Ag
+#    39.7,  #Cd
+#    70.22,  #In
+#    55.95,  #Sn
+#    43.67197,  #Sb
+#    37.65,  #Te
+#    35.0,  #I
+#    27.3,  #Xe
+#    427.12,  #Cs
+#    275.0,  #Ba
+#    213.7,  #La
+#    204.7,  #Ce
+#    215.8,  #Pr
+#    208.4,  #Nd
+#    200.2,  #Pm
+#    192.1,  #Sm
+#    184.2,  #Eu
+#    158.3,  #Gd
+#    169.5,  #Tb
+#    164.64,  #Dy
+#    156.3,  #Ho
+#    150.2,  #Er
+#    144.3,  #Tm
+#    138.9,  #Yb
+#    137.2,  #Lu
+#    99.52,  #Hf
+#    82.53,  #Ta
+#    71.041,  #W
+#    63.04,  #Re
+#    55.055,  #Os
+#    42.51,  #Ir
+#    39.68,  #Pt
+#    36.5,  #Au
+#    33.9,  #Hg
+#    69.92,  #Tl
+#    61.8,  #Pb
+#    49.02,  #Bi
+#    45.013,  #Po
+#    38.93,  #At
+#    33.54,  #Rn
+#    317.8,  #Fr
+#    246.2,  #Ra
+#    203.3,  #Ac
+#    217.0,  #Th
+#    154.4,  #Pa
+#    127.8,  #U
+#    150.5,  #Np
+#    132.2,  #Pu
+#    131.2,  #Am
+#    143.6,  #Cm
+#    125.3,  #Bk
+#    121.5,  #Cf
+#    117.5,  #Es
+#    113.4,  #Fm
+#    109.4,  #Md
+#    105.4,  #No
+#    1.0,  #Dummy
+# ]
+
+# VDW radii in bohr from Charry, Tkatchenko, J. Chem. Theory Comput. 2024, 20, 17, 7469–7478
+VDW_RADII = [1.0] * len(PERIODIC_TABLE)
+VDW_RADII[1] = 3.164697
+VDW_RADII[2] = 2.672999
+VDW_RADII[3] = 5.289595
+VDW_RADII[4] = 4.287516
+VDW_RADII[5] = 3.930227
+VDW_RADII[6] = 3.609691
+VDW_RADII[7] = 3.39813
+VDW_RADII[8] = 3.24017
+VDW_RADII[9] = 3.082294
+VDW_RADII[10] = 2.935712
+VDW_RADII[11] = 5.285046
+VDW_RADII[12] = 4.695238
+VDW_RADII[13] = 4.557411
+VDW_RADII[14] = 4.28111
+VDW_RADII[15] = 4.04323
+VDW_RADII[16] = 3.899329
+VDW_RADII[17] = 3.744173
+VDW_RADII[18] = 3.600377
+VDW_RADII[19] = 5.738428
+VDW_RADII[20] = 5.27619
+VDW_RADII[21] = 4.90772
+VDW_RADII[22] = 4.92970
+VDW_RADII[23] = 4.83279
+VDW_RADII[24] = 4.79999
+VDW_RADII[25] = 4.66488
+VDW_RADII[26] = 4.60342
+VDW_RADII[27] = 4.52547
+VDW_RADII[28] = 4.45139
+VDW_RADII[29] = 4.42513
+VDW_RADII[30] = 4.303648
+VDW_RADII[31] = 4.46438
+VDW_RADII[32] = 4.32415
+VDW_RADII[33] = 4.15020
+VDW_RADII[34] = 4.13020
+VDW_RADII[35] = 3.94427
+VDW_RADII[36] = 3.819973
+VDW_RADII[37] = 5.819626
+VDW_RADII[38] = 5.430039
+VDW_RADII[39] = 5.28056
+VDW_RADII[40] = 5.00983
+VDW_RADII[41] = 4.91457
+VDW_RADII[42] = 4.83248
+VDW_RADII[43] = 4.76586
+VDW_RADII[44] = 4.70393
+VDW_RADII[45] = 4.6410
+VDW_RADII[46] = 4.068122
+VDW_RADII[47] = 4.52594
+VDW_RADII[48] = 4.41127
+VDW_RADII[49] = 4.63541
+VDW_RADII[50] = 4.50173
+VDW_RADII[51] = 4.36929
+VDW_RADII[52] = 4.29265
+VDW_RADII[53] = 4.204918
+VDW_RADII[54] = 4.094343
+VDW_RADII[55] = 6.010321
+VDW_RADII[56] = 5.68630
+VDW_RADII[57] = 5.49873
+VDW_RADII[58] = 5.46176
+VDW_RADII[59] = 5.50273
+VDW_RADII[60] = 5.47275
+VDW_RADII[61] = 5.44278
+VDW_RADII[62] = 5.41081
+VDW_RADII[63] = 5.37783
+VDW_RADII[64] = 5.26295
+VDW_RADII[65] = 5.31789
+VDW_RADII[66] = 5.29469
+VDW_RADII[67] = 5.25248
+VDW_RADII[68] = 5.22375
+VDW_RADII[69] = 5.19277
+VDW_RADII[70] = 5.16632
+VDW_RADII[71] = 5.15538
+VDW_RADII[72] = 4.95041
+VDW_RADII[73] = 4.7218
+VDW_RADII[74] = 4.6615
+VDW_RADII[75] = 4.60332
+VDW_RADII[76] = 4.54834
+VDW_RADII[77] = 4.51384
+VDW_RADII[78] = 4.43853
+VDW_RADII[79] = 4.25951
+VDW_RADII[80] = 4.223071
+VDW_RADII[81] = 4.46426
+VDW_RADII[82] = 4.42540
+VDW_RADII[83] = 4.43853
+VDW_RADII[84] = 4.38357
+VDW_RADII[85] = 4.35459
+VDW_RADII[86] = 4.24235
+VDW_RADII[87] = 5.814452
+VDW_RADII[88] = 5.60513
+VDW_RADII[89] = 5.45346
+VDW_RADII[90] = 5.5120
+VDW_RADII[91] = 5.24297
+VDW_RADII[92] = 5.11196
+VDW_RADII[93] = 5.22899
+VDW_RADII[94] = 5.1311
+VDW_RADII[95] = 5.1214
+VDW_RADII[96] = 5.1913
+VDW_RADII[97] = 5.0915
+VDW_RADII[98] = 5.0712
+VDW_RADII[99] = 5.0512
+VDW_RADII[100] = 5.0213
+VDW_RADII[101] = 4.9913
+VDW_RADII[102] = 4.99639
+VDW_RADII[103] = 5.82052
+VDW_RADII[104] = 5.00964
+VDW_RADII[105] = 4.35459
+VDW_RADII[106] = 4.32462
+VDW_RADII[107] = 4.29265
+VDW_RADII[108] = 4.25968
+VDW_RADII[109] = 4.22553
+VDW_RADII[110] = 4.18856
+VDW_RADII[111] = 4.1911
+VDW_RADII[112] = 4.10942
+VDW_RADII[113] = 4.13041
+VDW_RADII[114] = 4.16977
+VDW_RADII[115] = 4.6919
+VDW_RADII[116] = np.NaN
+VDW_RADII[117] = 4.7413
+VDW_RADII[118] = 4.56067
+
 
 PAULING_ELECTRONEGATIVITY = [0.0] * len(PERIODIC_TABLE)
 PAULING_ELECTRONEGATIVITY[1] = 2.20
@@ -1339,123 +1787,611 @@ SJS_COORDINATES[116] = [1, 8, -1, -1]
 SJS_COORDINATES[117] = [1, 8, -2, 0]
 SJS_COORDINATES[118] = [1, 8, -1, 1]
 
-ATOMIC_IONIZATION_ENERGY=[0.]*len(PERIODIC_TABLE)
-ATOMIC_IONIZATION_ENERGY[1]=1312/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[2]=2372/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[3]=513/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[4]=899/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[5]=801/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[6]=1086/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[7]=1402/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[8]=1314/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[9]=1681/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[10]=2081/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[11]=496/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[12]=738/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[13]=577/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[14]=786/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[15]=1012/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[16]=1000/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[17]=1251/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[18]=1520/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[19]=419/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[20]=590/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[21]=631/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[22]=658/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[23]=650/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[24]=653/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[25]=717/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[26]=759/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[27]=760/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[28]=737/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[29]=745/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[30]=906/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[31]=579/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[32]=762/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[33]=947/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[34]=941/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[35]=1140/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[36]=1351/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[37]=403/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[38]=550/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[39]=616/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[40]=660/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[41]=664/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[42]=685/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[43]=702/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[44]=711/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[45]=720/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[46]=805/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[47]=731/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[48]=868/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[49]=558/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[50]=709/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[51]=834/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[52]=869/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[53]=1008/au.KJPERMOL
-ATOMIC_IONIZATION_ENERGY[54]=1170/au.KJPERMOL
+ATOMIC_IONIZATION_ENERGY = [0.0] * len(PERIODIC_TABLE)
+ATOMIC_IONIZATION_ENERGY[1] = 1312.0
+ATOMIC_IONIZATION_ENERGY[2] = 2372.3
+ATOMIC_IONIZATION_ENERGY[3] = 520.2
+ATOMIC_IONIZATION_ENERGY[4] = 899.5
+ATOMIC_IONIZATION_ENERGY[5] = 800.6
+ATOMIC_IONIZATION_ENERGY[6] = 1086.5
+ATOMIC_IONIZATION_ENERGY[7] = 1402.3
+ATOMIC_IONIZATION_ENERGY[8] = 1313.9
+ATOMIC_IONIZATION_ENERGY[9] = 1681.0
+ATOMIC_IONIZATION_ENERGY[10] = 2080.7
+ATOMIC_IONIZATION_ENERGY[11] = 495.8
+ATOMIC_IONIZATION_ENERGY[12] = 737.7
+ATOMIC_IONIZATION_ENERGY[13] = 577.5
+ATOMIC_IONIZATION_ENERGY[14] = 786.5
+ATOMIC_IONIZATION_ENERGY[15] = 1011.8
+ATOMIC_IONIZATION_ENERGY[16] = 999.6
+ATOMIC_IONIZATION_ENERGY[17] = 1251.2
+ATOMIC_IONIZATION_ENERGY[18] = 1520.6
+ATOMIC_IONIZATION_ENERGY[19] = 418.8
+ATOMIC_IONIZATION_ENERGY[20] = 589.8
+ATOMIC_IONIZATION_ENERGY[21] = 633.1
+ATOMIC_IONIZATION_ENERGY[22] = 658.8
+ATOMIC_IONIZATION_ENERGY[23] = 650.9
+ATOMIC_IONIZATION_ENERGY[24] = 652.9
+ATOMIC_IONIZATION_ENERGY[25] = 717.3
+ATOMIC_IONIZATION_ENERGY[26] = 762.5
+ATOMIC_IONIZATION_ENERGY[27] = 760.4
+ATOMIC_IONIZATION_ENERGY[28] = 737.1
+ATOMIC_IONIZATION_ENERGY[29] = 745.5
+ATOMIC_IONIZATION_ENERGY[30] = 906.4
+ATOMIC_IONIZATION_ENERGY[31] = 578.8
+ATOMIC_IONIZATION_ENERGY[32] = 762.0
+ATOMIC_IONIZATION_ENERGY[33] = 947.0
+ATOMIC_IONIZATION_ENERGY[34] = 941.0
+ATOMIC_IONIZATION_ENERGY[35] = 1139.9
+ATOMIC_IONIZATION_ENERGY[36] = 1350.8
+ATOMIC_IONIZATION_ENERGY[37] = 403.0
+ATOMIC_IONIZATION_ENERGY[38] = 549.5
+ATOMIC_IONIZATION_ENERGY[39] = 600.0
+ATOMIC_IONIZATION_ENERGY[40] = 640.1
+ATOMIC_IONIZATION_ENERGY[41] = 652.1
+ATOMIC_IONIZATION_ENERGY[42] = 684.3
+ATOMIC_IONIZATION_ENERGY[43] = 686.9
+ATOMIC_IONIZATION_ENERGY[44] = 710.2
+ATOMIC_IONIZATION_ENERGY[45] = 719.7
+ATOMIC_IONIZATION_ENERGY[46] = 804.4
+ATOMIC_IONIZATION_ENERGY[47] = 731.0
+ATOMIC_IONIZATION_ENERGY[48] = 867.8
+ATOMIC_IONIZATION_ENERGY[49] = 558.3
+ATOMIC_IONIZATION_ENERGY[50] = 708.6
+ATOMIC_IONIZATION_ENERGY[51] = 834.0
+ATOMIC_IONIZATION_ENERGY[52] = 869.3
+ATOMIC_IONIZATION_ENERGY[53] = 1008.4
+ATOMIC_IONIZATION_ENERGY[54] = 1170.4
+ATOMIC_IONIZATION_ENERGY[55] = 375.7
+ATOMIC_IONIZATION_ENERGY[56] = 502.9
+ATOMIC_IONIZATION_ENERGY[57] = 538.1
+ATOMIC_IONIZATION_ENERGY[58] = 534.6
+ATOMIC_IONIZATION_ENERGY[59] = 527.0
+ATOMIC_IONIZATION_ENERGY[60] = 533.1
+ATOMIC_IONIZATION_ENERGY[61] = 540.0
+ATOMIC_IONIZATION_ENERGY[62] = 545.1
+ATOMIC_IONIZATION_ENERGY[63] = 547.1
+ATOMIC_IONIZATION_ENERGY[64] = 593.4
+ATOMIC_IONIZATION_ENERGY[65] = 565.8
+ATOMIC_IONIZATION_ENERGY[66] = 573.0
+ATOMIC_IONIZATION_ENERGY[67] = 581.0
+ATOMIC_IONIZATION_ENERGY[68] = 589.3
+ATOMIC_IONIZATION_ENERGY[69] = 596.7
+ATOMIC_IONIZATION_ENERGY[70] = 603.4
+ATOMIC_IONIZATION_ENERGY[71] = 523.5
+ATOMIC_IONIZATION_ENERGY[72] = 658.5
+ATOMIC_IONIZATION_ENERGY[73] = 761.0
+ATOMIC_IONIZATION_ENERGY[74] = 770.0
+ATOMIC_IONIZATION_ENERGY[75] = 760.0
+ATOMIC_IONIZATION_ENERGY[76] = 840.0
+ATOMIC_IONIZATION_ENERGY[77] = 880.0
+ATOMIC_IONIZATION_ENERGY[78] = 870.0
+ATOMIC_IONIZATION_ENERGY[79] = 890.1
+ATOMIC_IONIZATION_ENERGY[80] = 1007.1
+ATOMIC_IONIZATION_ENERGY[81] = 589.4
+ATOMIC_IONIZATION_ENERGY[82] = 715.6
+ATOMIC_IONIZATION_ENERGY[83] = 703.0
+ATOMIC_IONIZATION_ENERGY[84] = 812.1
+ATOMIC_IONIZATION_ENERGY[85] = 899.0
+ATOMIC_IONIZATION_ENERGY[86] = 1037.0
+ATOMIC_IONIZATION_ENERGY[87] = 380.0
+ATOMIC_IONIZATION_ENERGY[88] = 509.3
+ATOMIC_IONIZATION_ENERGY[89] = 499.0
+ATOMIC_IONIZATION_ENERGY[90] = 587.0
+ATOMIC_IONIZATION_ENERGY[91] = 568.0
+ATOMIC_IONIZATION_ENERGY[92] = 597.6
+ATOMIC_IONIZATION_ENERGY[93] = 604.5
+ATOMIC_IONIZATION_ENERGY[94] = 584.7
+ATOMIC_IONIZATION_ENERGY[95] = 578.0
+ATOMIC_IONIZATION_ENERGY[96] = 581.0
+ATOMIC_IONIZATION_ENERGY[97] = 601.0
+ATOMIC_IONIZATION_ENERGY[98] = 608.0
+ATOMIC_IONIZATION_ENERGY[99] = 619.0
+ATOMIC_IONIZATION_ENERGY[100] = 627.0
+ATOMIC_IONIZATION_ENERGY[101] = 635.0
+ATOMIC_IONIZATION_ENERGY[102] = 642.0
+ATOMIC_IONIZATION_ENERGY[103] = 470.0
+ATOMIC_IONIZATION_ENERGY[104] = 580.0
 
-ATOMIC_ELECTRON_AFFINITY=[0.]*len(PERIODIC_TABLE)
-ATOMIC_ELECTRON_AFFINITY[1]=72.769/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[2]=-48/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[3]=59.632/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[4]=-48/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[5]=26.989/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[6]=121.776/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[7]=-6.8/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[8]=140.975/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[9]=328.164/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[10]=-116/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[11]=52.867/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[12]=-40/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[13]=41.762/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[14]=134.068/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[15]=72.037/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[16]=200.410/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[17]=348.575/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[18]=-96/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[19]=48.383/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[20]=2.37/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[21]=17.307/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[22]=7.289/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[23]=50.911/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[24]=65.217/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[25]=-50/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[26]=14.785/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[27]=63.897/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[28]=111.65/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[29]=119.235/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[30]=-58/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[31]=29.058/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[32]=118.935/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[33]=77.65/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[34]=194.958/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[35]=324.536/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[36]=-96/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[37]=46.884/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[38]=5.023/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[39]=30.035/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[40]=41.806/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[41]=88.516/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[42]=72.097/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[43]=53/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[44]=100.950/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[45]=110.27/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[46]=54.24/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[47]=125.862/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[48]=-68/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[49]=37.043/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[50]=107.298/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[51]=101.059/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[52]=190.161/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[53]=295.153/au.KJPERMOL
-ATOMIC_ELECTRON_AFFINITY[54]=295.153/au.KJPERMOL
+ATOMIC_IONIZATION_ENERGY = [e / au.KJPERMOL for e in ATOMIC_IONIZATION_ENERGY]
+
+
+ATOMIC_ELECTRON_AFFINITY = [0.0] * len(PERIODIC_TABLE)
+ATOMIC_ELECTRON_AFFINITY[1] = 72.769
+ATOMIC_ELECTRON_AFFINITY[2] = -48
+ATOMIC_ELECTRON_AFFINITY[3] = 59.632
+ATOMIC_ELECTRON_AFFINITY[4] = -48
+ATOMIC_ELECTRON_AFFINITY[5] = 26.989
+ATOMIC_ELECTRON_AFFINITY[6] = 121.776
+ATOMIC_ELECTRON_AFFINITY[7] = -6.8
+ATOMIC_ELECTRON_AFFINITY[8] = 140.975
+ATOMIC_ELECTRON_AFFINITY[9] = 328.164
+ATOMIC_ELECTRON_AFFINITY[10] = -116
+ATOMIC_ELECTRON_AFFINITY[11] = 52.867
+ATOMIC_ELECTRON_AFFINITY[12] = -40
+ATOMIC_ELECTRON_AFFINITY[13] = 41.762
+ATOMIC_ELECTRON_AFFINITY[14] = 134.068
+ATOMIC_ELECTRON_AFFINITY[15] = 72.037
+ATOMIC_ELECTRON_AFFINITY[16] = 200.410
+ATOMIC_ELECTRON_AFFINITY[17] = 348.575
+ATOMIC_ELECTRON_AFFINITY[18] = -96
+ATOMIC_ELECTRON_AFFINITY[19] = 48.383
+ATOMIC_ELECTRON_AFFINITY[20] = 2.37
+ATOMIC_ELECTRON_AFFINITY[21] = 17.307
+ATOMIC_ELECTRON_AFFINITY[22] = 7.289
+ATOMIC_ELECTRON_AFFINITY[23] = 50.911
+ATOMIC_ELECTRON_AFFINITY[24] = 65.217
+ATOMIC_ELECTRON_AFFINITY[25] = -50
+ATOMIC_ELECTRON_AFFINITY[26] = 14.785
+ATOMIC_ELECTRON_AFFINITY[27] = 63.897
+ATOMIC_ELECTRON_AFFINITY[28] = 111.65
+ATOMIC_ELECTRON_AFFINITY[29] = 119.235
+ATOMIC_ELECTRON_AFFINITY[30] = -58
+ATOMIC_ELECTRON_AFFINITY[31] = 29.058
+ATOMIC_ELECTRON_AFFINITY[32] = 118.935
+ATOMIC_ELECTRON_AFFINITY[33] = 77.65
+ATOMIC_ELECTRON_AFFINITY[34] = 194.958
+ATOMIC_ELECTRON_AFFINITY[35] = 324.536
+ATOMIC_ELECTRON_AFFINITY[36] = -96
+ATOMIC_ELECTRON_AFFINITY[37] = 46.884
+ATOMIC_ELECTRON_AFFINITY[38] = 5.023
+ATOMIC_ELECTRON_AFFINITY[39] = 30.035
+ATOMIC_ELECTRON_AFFINITY[40] = 41.806
+ATOMIC_ELECTRON_AFFINITY[41] = 88.516
+ATOMIC_ELECTRON_AFFINITY[42] = 72.097
+ATOMIC_ELECTRON_AFFINITY[43] = 53
+ATOMIC_ELECTRON_AFFINITY[44] = 100.950
+ATOMIC_ELECTRON_AFFINITY[45] = 110.27
+ATOMIC_ELECTRON_AFFINITY[46] = 54.24
+ATOMIC_ELECTRON_AFFINITY[47] = 125.862
+ATOMIC_ELECTRON_AFFINITY[48] = -68
+ATOMIC_ELECTRON_AFFINITY[49] = 37.043
+ATOMIC_ELECTRON_AFFINITY[50] = 107.298
+ATOMIC_ELECTRON_AFFINITY[51] = 101.059
+ATOMIC_ELECTRON_AFFINITY[52] = 190.161
+ATOMIC_ELECTRON_AFFINITY[53] = 295.153
+ATOMIC_ELECTRON_AFFINITY[54] = -77
+ATOMIC_ELECTRON_AFFINITY[55] = 45.5023
+ATOMIC_ELECTRON_AFFINITY[56] = 13.954
+ATOMIC_ELECTRON_AFFINITY[57] = 53.795
+ATOMIC_ELECTRON_AFFINITY[58] = 57.906
+ATOMIC_ELECTRON_AFFINITY[59] = 10.539
+ATOMIC_ELECTRON_AFFINITY[60] = 9.406
+ATOMIC_ELECTRON_AFFINITY[61] = 12.45
+ATOMIC_ELECTRON_AFFINITY[62] = 15.63
+ATOMIC_ELECTRON_AFFINITY[63] = 11.2
+ATOMIC_ELECTRON_AFFINITY[64] = 20.5
+ATOMIC_ELECTRON_AFFINITY[65] = 12.67
+ATOMIC_ELECTRON_AFFINITY[66] = 1.45
+ATOMIC_ELECTRON_AFFINITY[67] = 32.61
+ATOMIC_ELECTRON_AFFINITY[68] = 30.10
+ATOMIC_ELECTRON_AFFINITY[69] = 99.0
+ATOMIC_ELECTRON_AFFINITY[70] = -1.93
+ATOMIC_ELECTRON_AFFINITY[71] = 23.04
+ATOMIC_ELECTRON_AFFINITY[72] = 17.18
+ATOMIC_ELECTRON_AFFINITY[73] = 31.730
+ATOMIC_ELECTRON_AFFINITY[74] = 78.76
+ATOMIC_ELECTRON_AFFINITY[75] = 5.827
+ATOMIC_ELECTRON_AFFINITY[76] = 103.978
+ATOMIC_ELECTRON_AFFINITY[77] = 150.908
+ATOMIC_ELECTRON_AFFINITY[78] = 205.041
+ATOMIC_ELECTRON_AFFINITY[79] = 222.747
+ATOMIC_ELECTRON_AFFINITY[80] = -48.0
+ATOMIC_ELECTRON_AFFINITY[81] = 30.880
+ATOMIC_ELECTRON_AFFINITY[82] = 34.418
+ATOMIC_ELECTRON_AFFINITY[83] = 90.92
+ATOMIC_ELECTRON_AFFINITY[84] = 136.1
+ATOMIC_ELECTRON_AFFINITY[85] = 233.087
+ATOMIC_ELECTRON_AFFINITY[86] = -68
+ATOMIC_ELECTRON_AFFINITY[87] = 46.89
+ATOMIC_ELECTRON_AFFINITY[88] = 9.6485
+ATOMIC_ELECTRON_AFFINITY[89] = 33.77
+ATOMIC_ELECTRON_AFFINITY[90] = 58.633
+ATOMIC_ELECTRON_AFFINITY[91] = 53.03
+ATOMIC_ELECTRON_AFFINITY[92] = 30.39
+ATOMIC_ELECTRON_AFFINITY[93] = 45.85
+ATOMIC_ELECTRON_AFFINITY[94] = -48.33
+ATOMIC_ELECTRON_AFFINITY[95] = 9.93
+ATOMIC_ELECTRON_AFFINITY[96] = 27.17
+ATOMIC_ELECTRON_AFFINITY[97] = -165.24
+ATOMIC_ELECTRON_AFFINITY[98] = -97.31
+ATOMIC_ELECTRON_AFFINITY[99] = -28.6
+ATOMIC_ELECTRON_AFFINITY[100] = 33.96
+ATOMIC_ELECTRON_AFFINITY[101] = 93.91
+ATOMIC_ELECTRON_AFFINITY[102] = -223.22
+ATOMIC_ELECTRON_AFFINITY[103] = -30.04
+ATOMIC_ELECTRON_AFFINITY[104] = 0.0
+ATOMIC_ELECTRON_AFFINITY[105] = 0.0
+ATOMIC_ELECTRON_AFFINITY[106] = 0.0
+ATOMIC_ELECTRON_AFFINITY[107] = 0.0
+ATOMIC_ELECTRON_AFFINITY[108] = 0.0
+ATOMIC_ELECTRON_AFFINITY[109] = 0.0
+ATOMIC_ELECTRON_AFFINITY[110] = 0.0
+ATOMIC_ELECTRON_AFFINITY[111] = 151.0
+ATOMIC_ELECTRON_AFFINITY[112] = 0.0
+ATOMIC_ELECTRON_AFFINITY[113] = 66.6
+ATOMIC_ELECTRON_AFFINITY[114] = 0.0
+ATOMIC_ELECTRON_AFFINITY[115] = 35.3
+ATOMIC_ELECTRON_AFFINITY[116] = 74.9
+ATOMIC_ELECTRON_AFFINITY[117] = 165.9
+ATOMIC_ELECTRON_AFFINITY[118] = 7.72
+
+ATOMIC_ELECTRON_AFFINITY = [e / au.KJPERMOL for e in ATOMIC_ELECTRON_AFFINITY]
+
+# Ground state multiplicities (2S+1) of the elements
+# https://en.wikipedia.org/wiki/Term_symbol
+MULTIPLICITIES = [
+    1,  # Dummy
+    2,  # H
+    1,  # He
+    2,  # Li
+    1,  # Be
+    2,  # B
+    3,  # C
+    4,  # N
+    3,  # O
+    2,  # F
+    1,  # Ne
+    2,  # Na
+    1,  # Mg
+    2,  # Al
+    3,  # Si
+    4,  # P
+    3,  # S
+    2,  # Cl
+    1,  # Ar
+    2,  # K
+    1,  # Ca
+    2,  # Sc
+    3,  # Ti
+    4,  # V
+    7,  # Cr
+    6,  # Mn
+    5,  # Fe
+    4,  # Co
+    3,  # Ni
+    2,  # Cu
+    1,  # Zn
+    2,  # Ga
+    3,  # Ge
+    4,  # As
+    3,  # Se
+    2,  # Br
+    1,  # Kr
+    2,  # Rb
+    1,  # Sr
+    2,  # Y
+    3,  # Zr
+    6,  # Nb
+    7,  # Mo
+    6,  # Tc
+    5,  # Ru
+    4,  # Rh
+    1,  # Pd
+    2,  # Ag
+    1,  # Cd
+    2,  # In
+    3,  # Sn
+    4,  # Sb
+    3,  # Te
+    2,  # I
+    1,  # Xe
+    2,  # Cs
+    1,  # Ba
+    2,  # La
+    1,  # Ce
+    4,  # Pr
+    5,  # Nd
+    6,  # Pm
+    7,  # Sm
+    8,  # Eu
+    9,  # Gd
+    6,  # Tb
+    5,  # Dy
+    4,  # Ho
+    3,  # Er
+    2,  # Tm
+    1,  # Yb
+    2,  # Lu
+    3,  # Hf
+    4,  # Ta
+    5,  # W
+    6,  # Re
+    5,  # Os
+    4,  # Ir
+    3,  # Pt
+    2,  # Au
+    1,  # Hg
+    2,  # Tl
+    3,  # Pb
+    4,  # Bi
+    3,  # Po
+    2,  # At
+    1,  # Rn
+    2,  # Fr
+    1,  # Ra
+    2,  # Ac
+    3,  # Th
+    4,  # Pa
+    5,  # U
+    6,  # Np
+    7,  # Pu
+    8,  # Am
+    9,  # Cm
+    6,  # Bk
+    5,  # Cs
+    4,  # Es
+    3,  # Fm
+    2,  # Md
+    1,  # No
+    2,  # Lr
+    3,  # Rf
+    4,  # Db
+    5,  # Sg
+    6,  # Bh
+    5,  # Hs
+    4,  # Mt
+    3,  # Ds
+    2,  # Rg
+    1,  # Cn
+    2,  # Nh
+    3,  # Fl
+    4,  # Mc
+    3,  # Lv
+    2,  # Ts
+    1,  # Og
+    1,  # Dummy
+]
+
+GTO_EXPONENTS = [1.0] * len(PERIODIC_TABLE)
+GTO_EXPONENTS[1] = 0.534337523756312  # H
+GTO_EXPONENTS[2] = 0.7021159834472296  # He
+GTO_EXPONENTS[3] = 0.166838519142176  # Li
+GTO_EXPONENTS[4] = 0.18912512649376215  # Be
+GTO_EXPONENTS[5] = 0.19595732141600747  # B
+GTO_EXPONENTS[6] = 0.206883838259186  # C
+GTO_EXPONENTS[7] = 0.221439796025873  # N
+GTO_EXPONENTS[8] = 0.223967308625516  # O
+GTO_EXPONENTS[9] = 0.231257590182828  # F
+GTO_EXPONENTS[10] = 0.24453829863755244  # Ne
+GTO_EXPONENTS[11] = 0.095892938712585  # Na
+GTO_EXPONENTS[12] = 0.10079467931059707  # Mg
+GTO_EXPONENTS[13] = 0.10028848072986629  # Al
+GTO_EXPONENTS[14] = 0.105219608142377  # Si
+GTO_EXPONENTS[15] = 0.108476721661715  # P
+GTO_EXPONENTS[16] = 0.115618357843499  # S
+GTO_EXPONENTS[17] = 0.113714050615107  # Cl
+GTO_EXPONENTS[18] = 0.1212883463892641  # Ar
+GTO_EXPONENTS[19] = 0.060223294377778  # K
+GTO_EXPONENTS[20] = 0.059395381582096514  # Ca
+GTO_EXPONENTS[21] = 0.06079192524304038  # Sc
+GTO_EXPONENTS[22] = 0.06203767983760801  # Ti
+GTO_EXPONENTS[23] = 0.06290468817369953  # V
+GTO_EXPONENTS[24] = 0.06388264750522  # Cr
+GTO_EXPONENTS[25] = 0.06552139521612342  # Mn
+GTO_EXPONENTS[26] = 0.06692644492343844  # Fe
+GTO_EXPONENTS[27] = 0.0678792955976895  # Co
+GTO_EXPONENTS[28] = 0.06856122786267473  # Ni
+GTO_EXPONENTS[29] = 0.06958759021503495  # Cu
+GTO_EXPONENTS[30] = 0.07236231041610941  # Zn
+GTO_EXPONENTS[31] = 0.06957555627430864  # Ga
+GTO_EXPONENTS[32] = 0.0725904697228818  # Ge
+GTO_EXPONENTS[33] = 0.0756872561897057  # As
+GTO_EXPONENTS[34] = 0.07656851771723322  # Se
+GTO_EXPONENTS[35] = 0.07990716762113642  # Br
+GTO_EXPONENTS[36] = 0.08346065503143778  # Kr
+GTO_EXPONENTS[37] = 0.04317280857546588  # Rb
+GTO_EXPONENTS[38] = 0.04520583675239638  # Sr
+GTO_EXPONENTS[39] = 0.04653338466628383  # Y
+GTO_EXPONENTS[40] = 0.04767221848599982  # Zr
+GTO_EXPONENTS[41] = 0.04844559221185299  # Nb
+GTO_EXPONENTS[42] = 0.04938434537005703  # Mo
+GTO_EXPONENTS[43] = 0.050291756781459286  # Tc
+GTO_EXPONENTS[44] = 0.05112821282855135  # Ru
+GTO_EXPONENTS[45] = 0.05196978925495233  # Rh
+GTO_EXPONENTS[46] = 0.05356553096002117  # Pd
+GTO_EXPONENTS[47] = 0.053599320010163626  # Ag
+GTO_EXPONENTS[48] = 0.05573994809955866  # Cd
+GTO_EXPONENTS[49] = 0.05341539504249603  # In
+GTO_EXPONENTS[50] = 0.0556907204737427  # Sn
+GTO_EXPONENTS[51] = 0.0577449406299723  # Sb
+GTO_EXPONENTS[52] = 0.05889812625623931  # Te
+GTO_EXPONENTS[53] = 0.0611555894435609  # I
+GTO_EXPONENTS[54] = 0.06370219003886742  # Xe
+GTO_EXPONENTS[55] = 0.03224362451708012  # Cs
+GTO_EXPONENTS[56] = 0.03283206686879559  # Ba
+GTO_EXPONENTS[57] = 0.03342513862348529  # La
+GTO_EXPONENTS[58] = 0.03402285738400748  # Ce
+GTO_EXPONENTS[59] = 0.03462523957847376  # Pr
+GTO_EXPONENTS[60] = 0.03523230055661496  # Nd
+GTO_EXPONENTS[61] = 0.03584405467681633  # Pm
+GTO_EXPONENTS[62] = 0.036460515384859206  # Sm
+GTO_EXPONENTS[63] = 0.03708169528527649  # Eu
+GTO_EXPONENTS[64] = 0.037707606206117524  # Gd
+GTO_EXPONENTS[65] = 0.03833825925782179  # Tb
+GTO_EXPONENTS[66] = 0.038973664886817035  # Dy
+GTO_EXPONENTS[67] = 0.039613832924385146  # Ho
+GTO_EXPONENTS[68] = 0.04025877263127613  # Er
+GTO_EXPONENTS[69] = 0.040908492738495464  # Tm
+GTO_EXPONENTS[70] = 0.041563001484642384  # Yb
+GTO_EXPONENTS[71] = 0.04222230665013448  # Lu
+GTO_EXPONENTS[72] = 0.04288641558861739  # Hf
+GTO_EXPONENTS[73] = 0.043555335255825986  # Ta
+GTO_EXPONENTS[74] = 0.044229072236135106  # W
+GTO_EXPONENTS[75] = 0.04490763276701256  # Re
+GTO_EXPONENTS[76] = 0.045591022761565465  # Os
+GTO_EXPONENTS[77] = 0.04627924782935086  # Ir
+GTO_EXPONENTS[78] = 0.046972313295604785  # Pt
+GTO_EXPONENTS[79] = 0.047670224219027967  # Au
+GTO_EXPONENTS[80] = 0.048372985408253175  # Hg
+GTO_EXPONENTS[81] = 0.04908060143710664  # Tl
+GTO_EXPONENTS[82] = 0.04979307665876563  # Pb
+GTO_EXPONENTS[83] = 0.05051041521890378  # Bi
+GTO_EXPONENTS[84] = 0.05123262106790798  # Po
+GTO_EXPONENTS[85] = 0.05195969797224218  # At
+GTO_EXPONENTS[86] = 0.052691649525027  # Rn
+GTO_EXPONENTS[87] = 0.03578427498778282  # Fr
+GTO_EXPONENTS[88] = 0.036391747269481335  # Ra
+GTO_EXPONENTS[89] = 0.03700414495208116  # Ac
+GTO_EXPONENTS[90] = 0.037621469663581576  # Th
+GTO_EXPONENTS[91] = 0.03824372296172443  # Pa
+GTO_EXPONENTS[92] = 0.038870906337742386  # U
+GTO_EXPONENTS[93] = 0.039503021219869885  # Np
+GTO_EXPONENTS[94] = 0.040140068976634066  # Pu
+GTO_EXPONENTS[95] = 0.04078205091994164  # Am
+GTO_EXPONENTS[96] = 0.0414289683079762  # Cm
+GTO_EXPONENTS[97] = 0.04208082234791952  # Bk
+GTO_EXPONENTS[98] = 0.04273761419850917  # Cf
+GTO_EXPONENTS[99] = 0.04339934497244377  # Es
+GTO_EXPONENTS[100] = 0.04406601573864634  # Fm
+GTO_EXPONENTS[101] = 0.044737627524395585  # Md
+GTO_EXPONENTS[102] = 0.04541418131733376  # No
+GTO_EXPONENTS[103] = 0.04609567806735967  # Lr
+GTO_EXPONENTS[104] = 0.046782118688413976  # Rf
+GTO_EXPONENTS[105] = 0.047473504060164484  # Db
+GTO_EXPONENTS[106] = 0.048169835029597215  # Sg
+GTO_EXPONENTS[107] = 0.04887111241251998  # Bh
+GTO_EXPONENTS[108] = 0.049577336994983415  # Hs
+GTO_EXPONENTS[109] = 0.050288509534625325  # Mt
+GTO_EXPONENTS[110] = 0.05100463076194258  # Ds
+GTO_EXPONENTS[111] = 0.05172570138149545  # Rg
+GTO_EXPONENTS[112] = 0.052451722073048296  # Cn
+GTO_EXPONENTS[113] = 0.05318269349265068  # Nh
+GTO_EXPONENTS[114] = 0.05391861627366232  # Fl
+GTO_EXPONENTS[115] = 0.05465949102772548  # Mc
+GTO_EXPONENTS[116] = 0.055405318345687654  # Lv
+GTO_EXPONENTS[117] = 0.056156098798477695  # Ts
+
+PUBCHEM_IONIZATION_ENERGY = (
+    [0.0]
+    + [
+        0.49971728701446033,
+        0.9035555916917588,
+        0.19815234678496618,
+        0.34261393343402075,
+        0.30494587789719013,
+        0.4137973710680117,
+        0.5341146528510198,
+        0.5004522734639595,
+        0.6402834454811693,
+        0.7924991391724399,
+        0.18885476819880215,
+        0.2809853196435184,
+        0.2199814443350904,
+        0.29958047681584643,
+        0.3853901447948702,
+        0.38072298084055073,
+        0.47656521385523765,
+        0.5791693222053166,
+        0.15952880886378676,
+        0.2246486082894099,
+        0.24111230475819048,
+        0.2509243738590039,
+        0.24791092941605747,
+        0.24868266518803156,
+        0.2731944632788276,
+        0.2903931461971073,
+        0.28962141042513323,
+        0.2807648237086687,
+        0.283925265441515,
+        0.34522313532974264,
+        0.22045918552726484,
+        0.29031964755215744,
+        0.36069460009169935,
+        0.35837939277577713,
+        0.43415649571913767,
+        0.5144905146493929,
+        0.15350191997789384,
+        0.20928739149487804,
+        0.22847053782680538,
+        0.24379500529886233,
+        0.24838867060823192,
+        0.2606261949923924,
+        0.2675350676176843,
+        0.2705117627381558,
+        0.2741131963407015,
+        0.30637910147371344,
+        0.27841286707027146,
+        0.33052340633975996,
+        0.21263157984009906,
+        0.2698870242560815,
+        0.31751414618362533,
+        0.33111139549935925,
+        0.38406716918577183,
+        0.445769281621224,
+        0.14310186171748113,
+        0.19153746873947397,
+        0.20495097144283314,
+        0.2035544971887848,
+        0.20079829800316307,
+        0.2030400066741354,
+        0.2039587397360093,
+        0.20741317604865525,
+        0.20836865843300412,
+        0.22600833322098332,
+        0.2154980269931457,
+        0.21825422617876744,
+        0.22130441994418887,
+        0.2244648616770351,
+        0.22725781018513183,
+        0.22983026275837878,
+        0.1994018237491147,
+        0.25081412589157903,
+        0.28995215432740784,
+        0.29325959335015395,
+        0.2895846611026583,
+        0.3197191055321227,
+        0.33441883452210536,
+        0.3307439022746097,
+        0.33904924915394996,
+        0.38358942799359735,
+        0.2244648616770351,
+        0.27256972479675334,
+        0.2678658115199589,
+        0.30931904727171,
+        0.34911856351208803,
+        0.394871469993409,
+        0.14332235765233087,
+        0.19399967334529608,
+        0.1899939971955258,
+        0.22343588064773634,
+        0.21645350937749455,
+        0.22762530340988138,
+        0.23027125462807826,
+        0.2227008941982372,
+        0.22023868959241513,
+        0.22123092129923894,
+        0.22894827901897985,
+        0.2315207315922268,
+        0.23593065028922158,
+        0.2388705960872181,
+        0.24181054188521467,
+        0.24438299445846162,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    ]
+    + [0.0],
+)
 
 
 CHEMICAL_PROPERTIES = {
     "ATOMIC_NUMBER": [i for i in range(len(PERIODIC_TABLE))],
     "ATOMIC_MASSES": ATOMIC_MASSES,
-    "ELECTRONIC_STRUCTURE": ELECTRONIC_STRUCTURE,
+    "EL_STRUCT": EL_STRUCT,
     "VALENCE_STRUCTURE": VALENCE_STRUCTURE,
     "VALENCE_ELECTRONS": VALENCE_ELECTRONS,
     "D3_ELECTRONEGATIVITIES": D3_ELECTRONEGATIVITIES,
@@ -1468,4 +2404,8 @@ CHEMICAL_PROPERTIES = {
     "POLARIZABILITIES": POLARIZABILITIES,
     "PAULING_ELECTRONEGATIVITY": PAULING_ELECTRONEGATIVITY,
     "SJS_COORDINATES": SJS_COORDINATES,
+    "ATOMIC_IONIZATION_ENERGY": ATOMIC_IONIZATION_ENERGY,
+    "ATOMIC_ELECTRON_AFFINITY": ATOMIC_ELECTRON_AFFINITY,
+    "GTO_EXPONENTS": GTO_EXPONENTS,
+    "MULTIPLICITY": MULTIPLICITIES,
 }
