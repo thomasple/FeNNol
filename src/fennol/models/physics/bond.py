@@ -207,3 +207,63 @@ class CNStore(nn.Module):
 
         output_key = self.name if self.output_key is None else self.output_key
         return {**inputs, output_key: values}
+
+
+class FlatBottom(nn.Module):
+    """Flat bottom potential energy surface.
+    
+    Realized by Côme Cattin, 2024.
+
+    Flat bottom potential energy:
+    E = alpha * (r - req) ** 2 if r >= req
+    E = 0 if r < req
+
+    FID: FLAT_BOTTOM
+    """
+
+    energy_key: Optional[str] = None
+    """Key of the energy in the outputs."""
+    graph_key: str = "graph"
+    """Key of the graph in the inputs."""
+    alpha: float = 400.0
+    """Force constant of the flat bottom potential (in kcal/mol/A^2)."""
+    r_eq_factor: float = 1.3
+    """Factor to multiply the sum of the VDW radii of the two atoms."""
+    _energy_unit: str = "Ha"
+    """The energy unit of the model. **Automatically set by FENNIX**"""
+
+    FID: ClassVar[str] = "FLAT_BOTTOM"
+
+    @nn.compact
+    def __call__(self, inputs):
+
+        species = inputs["species"]
+        graph = inputs[self.graph_key]
+        edge_src, edge_dst = graph["edge_src"], graph["edge_dst"]
+        distances = graph["distances"]
+        rij = distances / au.BOHR
+        training = "training" in inputs.get("flags", {})
+
+        output = {}
+        energy_key = self.energy_key if self.energy_key is not None else self.name
+
+        if training:
+            output[energy_key] =  jnp.zeros(species.shape[0],dtype=distances.dtype)
+            return {**inputs, **output}
+
+        # req is the sum of the covalent radii of the two atoms
+        rcov = jnp.asarray(D3_COV_RADII)[species]
+        req = self.r_eq_factor * (rcov[edge_src] + rcov[edge_dst])
+
+        alpha = inputs.get("alpha", self.alpha)/ au.KCALPERMOL*au.BOHR**2
+
+        flat_bottom_energy = jnp.where(
+            rij > req, alpha  * (rij - req) ** 2, 0.
+        )
+
+        flat_bottom_energy = jax.ops.segment_sum(flat_bottom_energy, edge_src, num_segments=species.shape[0])
+
+        energy_unit = au.get_multiplier(self._energy_unit)
+        output[energy_key] = flat_bottom_energy * energy_unit
+
+        return {**inputs, **output}
