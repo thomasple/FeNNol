@@ -288,7 +288,7 @@ class FENNIX:
                 )
 
                 if "cells" in data:
-                    dvir = jax.vmap(jnp.matmul)(dedcells, cells)
+                    dvir = jax.vmap(jnp.matmul)(dedcells, cells.transpose(0, 2, 1))
                     nsys = data["natoms"].shape[0]
                     if cells.shape[0]==1 and nsys>1:
                         dvir = dvir / nsys
