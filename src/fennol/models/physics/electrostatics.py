@@ -41,7 +41,7 @@ def prepare_reciprocal_space(
     a2 = (jnp.pi / bewald) ** 2
     expfac = jnp.exp(-a2 * m2) / m2  # nsys x nk
 
-    volume = jnp.linalg.det(cells)  # nsys
+    volume = jnp.abs(jnp.linalg.det(cells))  # nsys
     phiscale = (au.BOHR / jnp.pi) / volume
     selfscale = bewald * (2 * au.BOHR / jnp.pi**0.5)
     return batch_index, k_points, phiscale, selfscale, expfac, ks

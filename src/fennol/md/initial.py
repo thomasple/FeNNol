@@ -90,7 +90,7 @@ def load_system_data(simulation_parameters, fprec):
     if cell is not None:
         cell = np.array(cell, dtype=fprec).reshape(3, 3)
         reciprocal_cell = np.linalg.inv(cell)
-        volume = np.linalg.det(cell)
+        volume = np.abs(np.linalg.det(cell))
         print("# cell matrix:")
         for l in cell:
             print("# ", l)
