@@ -1,5 +1,5 @@
 import flax.linen as nn
-from typing import Sequence, Callable, Union, Dict, Any,ClassVar
+from typing import Sequence, Callable, Union, Dict, Any, ClassVar
 import jax.numpy as jnp
 import jax
 import numpy as np
@@ -168,14 +168,17 @@ class GraphGenerator:
                     new_state["num_repeats_pbc"] = tuple(num_repeats_new)
                 ## build all possible shifts
                 cell_shift_pbc = np.array(
-                    np.meshgrid(*[np.arange(-n, n + 1) for n in num_repeats])
-                ,dtype=cells.dtype).T.reshape(-1, 3)
+                    np.meshgrid(*[np.arange(-n, n + 1) for n in num_repeats]),
+                    dtype=cells.dtype,
+                ).T.reshape(-1, 3)
                 ## shift applied to vectors
                 if cells.shape[0] == 1:
                     dvec = np.dot(cell_shift_pbc, cells[0])[None, :, :]
                 else:
                     batch_index_vec = batch_index[p1]
-                    dvec = np.einsum("bj,sji->sbi", cell_shift_pbc, cells)[batch_index_vec]
+                    dvec = np.einsum("bj,sji->sbi", cell_shift_pbc, cells)[
+                        batch_index_vec
+                    ]
                 ## compute vectors
                 vec = (
                     coords_pbc[p2, None, :] - coords_pbc[p1, None, :] + dvec
@@ -321,7 +324,10 @@ class GraphGenerator:
         if natoms.shape[0] == 1:
             max_nat = coords.shape[0]
         else:
-            max_nat = state.get("max_nat", int(round(coords.shape[0] / natoms.shape[0])))
+            max_nat = state.get(
+                "max_nat", int(round(coords.shape[0] / natoms.shape[0]))
+            )
+        cutoff_skin = self.cutoff + state.get("nblist_skin", 0.0)
 
         ### compute indices of all pairs
         p1, p2 = np.triu_indices(max_nat, 1)
@@ -339,6 +345,7 @@ class GraphGenerator:
             p2 = jnp.where(mask_p12, (p2[None, :] + shift[:, None]).flatten(), -1)
 
         ## compute vectors
+        overflow_repeats = jnp.asarray(False, dtype=bool)
         if "cells" not in inputs:
             vec = coords[p2] - coords[p1]
         else:
@@ -369,33 +376,48 @@ class GraphGenerator:
                     )
             else:
                 ### general PBC only for single cell yet
-                if cells.shape[0] > 1:
-                    raise NotImplementedError(
-                        "General PBC not implemented for batches on accelerator."
-                    )
-                cell = cells[0]
-                reciprocal_cell = reciprocal_cells[0]
+                # if cells.shape[0] > 1:
+                #     raise NotImplementedError(
+                #         "General PBC not implemented for batches on accelerator."
+                #     )
+                # cell = cells[0]
+                # reciprocal_cell = reciprocal_cells[0]
 
                 ## put all atoms in central box
-                coords_pbc, at_shifts = compute_pbc(
-                    coords, reciprocal_cell, cell, mode="floor"
-                )
-                num_repeats = state.get("num_repeats_pbc", None)
-                if num_repeats is None:
-                    raise ValueError(
-                        "num_repeats_pbc should be provided for general PBC on accelerator. Call the numpy routine (self.__call__) first."
+                if cells.shape[0] == 1:
+                    coords_pbc, at_shifts = compute_pbc(
+                        coords, reciprocal_cells[0], cells[0], mode="floor"
                     )
+                else:
+                    coords_pbc, at_shifts = jax.vmap(
+                        partial(compute_pbc, mode="floor")
+                    )(coords, reciprocal_cells[batch_index], cells[batch_index])
+                num_repeats = state.get("num_repeats_pbc", (0, 0, 0))
+                # if num_repeats is None:
+                #     raise ValueError(
+                #         "num_repeats_pbc should be provided for general PBC on accelerator. Call the numpy routine (self.__call__) first."
+                #     )
+                # check if num_repeats is larger than previous
+                inv_distances = jnp.linalg.norm(reciprocal_cells, axis=1)
+                cdinv = cutoff_skin * inv_distances
+                num_repeats_new = jnp.max(jnp.ceil(cdinv).astype(jnp.int32), axis=0)
+                overflow_repeats = jnp.any(num_repeats_new > jnp.asarray(num_repeats))
+
                 cell_shift_pbc = jnp.asarray(
                     np.array(
                         np.meshgrid(*[np.arange(-n, n + 1) for n in num_repeats]),
-                        dtype=cell.dtype,
+                        dtype=cells.dtype,
                     ).T.reshape(-1, 3)
                 )
-                vec = (
-                    coords_pbc[p2, None, :]
-                    - coords_pbc[p1, None, :]
-                    + jnp.dot(cell_shift_pbc, cell)[None, :, :]
-                ).reshape(-1, 3)
+                vec = coords_pbc[p2, None, :] - coords_pbc[p1, None, :]
+                if cells.shape[0] == 1:
+                    vec = vec + jnp.dot(cell_shift_pbc, cells[0])[None, :, :]
+                else:
+                    batch_index_vec = batch_index[p1]
+                    vshift = jnp.einsum("bj,sji->sbi", cell_shift_pbc, cells)
+                    vec = vec + vshift[batch_index_vec]
+                vec = vec.reshape(-1, 3)
+
                 pbc_shifts = jnp.broadcast_to(
                     cell_shift_pbc[None, :, :],
                     (p1.shape[0], cell_shift_pbc.shape[0], 3),
@@ -412,7 +434,6 @@ class GraphGenerator:
                     ).flatten()
 
         ## compute distances
-        cutoff_skin = self.cutoff + state.get("nblist_skin", 0.0)
         d12 = (vec**2).sum(axis=-1)
         if natoms.shape[0] > 1:
             d12 = jnp.where(mask_p12, d12, cutoff_skin**2)
@@ -447,7 +468,7 @@ class GraphGenerator:
             true_max_nat = jnp.max(natoms)
         overflow_count = npairs > max_pairs
         overflow_at = true_max_nat > max_nat
-        overflow = overflow_count | overflow_at
+        overflow = overflow_count | overflow_at | overflow_repeats
 
         if "nblist_skin" in state:
             # edge_mask_skin = edge_mask
@@ -613,6 +634,7 @@ class GraphProcessor(nn.Module):
             "switch": switch,
             "edge_mask": edge_mask,
         }
+
         return {**inputs, self.graph_key: graph_out}
 
 
@@ -643,7 +665,6 @@ class GraphFilter:
     """Multiplicative factor for resizing the nblist."""
 
     FPID: ClassVar[str] = "GRAPH_FILTER"
-
 
     def init(self):
         return FrozenDict(
@@ -849,6 +870,7 @@ class GraphFilterProcessor(nn.Module):
             "filter_indices": filter_indices,
             "edge_mask": edge_mask,
         }
+
         return {**inputs, self.graph_key: graph_out}
 
 
@@ -867,7 +889,6 @@ class GraphAngularExtension:
     """Key of the graph in the inputs."""
 
     FPID: ClassVar[str] = "GRAPH_ANGULAR_EXTENSION"
-
 
     def init(self):
         return FrozenDict(
@@ -1148,7 +1169,6 @@ class SpeciesIndexer:
 
     FPID: ClassVar[str] = "SPECIES_INDEXER"
 
-
     def init(self):
         return FrozenDict(
             {
@@ -1240,7 +1260,7 @@ class SpeciesIndexer:
         recompute_species_index = "recompute_species_index" in inputs.get("flags", {})
         if self.output_key in inputs and not recompute_species_index:
             return inputs
-        
+
         if state is None:
             raise ValueError("Species Indexer state must be provided on accelerator.")
 
@@ -1267,8 +1287,8 @@ class SpeciesIndexer:
                 #     species_index[i, : counts_dict[s]] = np.nonzero(species == s)[0]
         else:
             # species_index = {
-                # PERIODIC_TABLE[s]: jnp.nonzero(species == s, size=c, fill_value=nat)[0]
-                # for s, c in sizes.items()
+            # PERIODIC_TABLE[s]: jnp.nonzero(species == s, size=c, fill_value=nat)[0]
+            # for s, c in sizes.items()
             # }
             species_index = {}
             overflow = False
@@ -1277,15 +1297,23 @@ class SpeciesIndexer:
                 mask = species == s
                 new_size = jnp.sum(mask)
                 natcount = natcount + new_size
-                overflow = overflow | (new_size > c) # check if sizes are correct
-                species_index[PERIODIC_TABLE[s]] = jnp.nonzero(species == s, size=c, fill_value=nat)[0]
-            
+                overflow = overflow | (new_size > c)  # check if sizes are correct
+                species_index[PERIODIC_TABLE[s]] = jnp.nonzero(
+                    species == s, size=c, fill_value=nat
+                )[0]
+
             mask = species <= 0
             new_size = jnp.sum(mask)
             natcount = natcount + new_size
-            overflow = overflow | (natcount < species.shape[0]) # check if any species missing
+            overflow = overflow | (
+                natcount < species.shape[0]
+            )  # check if any species missing
 
-        return {**inputs, self.output_key: species_index, self.output_key + "_overflow": overflow,}
+        return {
+            **inputs,
+            self.output_key: species_index,
+            self.output_key + "_overflow": overflow,
+        }
 
     @partial(jax.jit, static_argnums=(0,))
     def update_skin(self, inputs):
@@ -1298,9 +1326,10 @@ class AtomPadding:
 
     mult_size: float = 1.2
     """Multiplicative factor for resizing the atomic arrays."""
+    add_sys: int = 1
 
     def init(self):
-        return {"prev_nat": 0}
+        return {"prev_nat": 0, "prev_nsys": 0}
 
     def __call__(self, state, inputs: Dict) -> Union[dict, jax.Array]:
         species = inputs["species"]
@@ -1312,8 +1341,13 @@ class AtomPadding:
             prev_nat_ = int(self.mult_size * nat) + 1
 
         nsys = len(inputs["natoms"])
+        prev_nsys = state.get("prev_nsys", 0)
+        prev_nsys_ = prev_nsys
+        if nsys > prev_nsys_:
+            prev_nsys_ = nsys + self.add_sys
 
         add_atoms = prev_nat_ - nat
+        add_sys = prev_nsys_ - nsys
         output = {**inputs}
         if add_atoms > 0:
             batch_index = inputs["batch_index"]
@@ -1329,25 +1363,33 @@ class AtomPadding:
                         if k == "cells":
                             output[k] = np.append(
                                 v,
-                                1000*np.eye(3, dtype=v.dtype)[None, :, :],
+                                1000
+                                * np.eye(3, dtype=v.dtype)[None, :, :].repeat(
+                                    add_sys, axis=0
+                                ),
                                 axis=0,
                             )
                         else:
                             output[k] = np.append(
-                                v, np.zeros((1, *v.shape[1:]), dtype=v.dtype), axis=0
+                                v,
+                                np.zeros((add_sys, *v.shape[1:]), dtype=v.dtype),
+                                axis=0,
                             )
-            output["natoms"] = np.append(inputs["natoms"], 0)
+            output["natoms"] = np.append(
+                inputs["natoms"], np.zeros(add_sys, dtype=np.int32)
+            )
             output["species"] = np.append(
                 species, -1 * np.ones(add_atoms, dtype=species.dtype)
-            ) 
+            )
             output["batch_index"] = np.append(
-                batch_index, np.array([nsys] * add_atoms, dtype=batch_index.dtype)
+                batch_index,
+                np.array([prev_nsys_ - 1] * add_atoms, dtype=batch_index.dtype),
             )
 
         output["true_atoms"] = output["species"] > 0
         output["true_sys"] = np.arange(len(output["natoms"])) < nsys
 
-        state = {**state, "prev_nat": prev_nat_}
+        state = {**state, "prev_nat": prev_nat_, "prev_nsys": prev_nsys_}
 
         return FrozenDict(state), output
 
@@ -1500,7 +1542,7 @@ class PreprocessingChain:
     def atom_padding(self, state, inputs):
         if self.use_atom_padding:
             padder_state = state["layers_state"][0]
-            return self.atom_padder(padder_state,inputs)
+            return self.atom_padder(padder_state, inputs)
         return state, inputs
 
     @partial(jax.jit, static_argnums=(0, 1))
