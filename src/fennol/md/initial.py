@@ -50,14 +50,13 @@ def load_system_data(simulation_parameters, fprec):
     ## LOAD SYSTEM CONFORMATION FROM FILES
     system_name = str(simulation_parameters.get("system", "system")).strip()
     indexed = simulation_parameters.get("xyz_input/indexed", True)
-    box_info = simulation_parameters.get("xyz_input/box_info", False) # to be removed
-    box_info = simulation_parameters.get("xyz_input/has_comment_line", box_info)
+    has_comment_line = simulation_parameters.get("xyz_input/has_comment_line", False)
     xyzfile = Path(simulation_parameters.get("xyz_input/file", system_name + ".xyz"))
     if not xyzfile.exists():
         raise FileNotFoundError(f"xyz file {xyzfile} not found")
     system_name = str(simulation_parameters.get("system", xyzfile.stem)).strip()
     symbols, coordinates, _ = last_xyz_frame(
-        xyzfile, indexed=indexed, box_info=box_info
+        xyzfile, indexed=indexed, has_comment_line=has_comment_line
     )
     coordinates = coordinates.astype(fprec)
     species = np.array([PERIODIC_TABLE_REV_IDX[s] for s in symbols], dtype=np.int32)

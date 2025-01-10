@@ -4,7 +4,7 @@ import numpy as np
 
 def xyz_reader(
     filename,
-    box_info=False,
+    has_comment_line=False,
     indexed=False,
     start=1,
     stop=-1,
@@ -24,8 +24,8 @@ def xyz_reader(
     nframes = 0
     if start > 1:
         print(f"skipping {start-1} frames")
-    if not box_info:
-        box = None
+    if not has_comment_line:
+        comment_line = ""
     while True:
         line = pf.readline()
 
@@ -39,22 +39,26 @@ def xyz_reader(
                 break
 
         line = line.strip()
-        if line.startswith("#"):
-            continue
 
         if not inside_frame:
             if not nat_read:
+                if line.startswith("#") or line == "":
+                    continue
                 nat = int(line.split()[0])
                 nat_read = True
                 iat = 0
-                inside_frame = not box_info
+                inside_frame = not has_comment_line
                 xyz = np.zeros((nat, 3))
                 symbols = []
                 continue
 
-            box = np.array(line.split(), dtype="float")
+            # box = np.array(line.split(), dtype="float")
+            comment_line = line
             inside_frame = True
             continue
+
+        if line.startswith("#") or line == "":
+            raise Exception("Error: premature end of frame!")
 
         if not nat_read:
             raise Exception("Error: nat not read!")
@@ -72,7 +76,7 @@ def xyz_reader(
             if stride >= step:
                 nframes += 1
                 stride = 0
-                yield symbols, xyz, box
+                yield symbols, xyz, comment_line
             if (max_frames is not None and nframes >= max_frames) or (
                 stop > 0 and iframe >= stop
             ):
@@ -80,20 +84,20 @@ def xyz_reader(
 
 
 def read_xyz(
-    filename, box_info=False, indexed=False, start=1, stop=-1, step=1, max_frames=None
+    filename, has_comment_line=False, indexed=False, start=1, stop=-1, step=1, max_frames=None
 ):
     return [
         frame
         for frame in xyz_reader(
-            filename, box_info, indexed, start, stop, step, max_frames
+            filename, has_comment_line, indexed, start, stop, step, max_frames
         )
     ]
 
 
-def last_xyz_frame(filename, box_info=False, indexed=False):
+def last_xyz_frame(filename, has_comment_line=False, indexed=False):
     last_frame = None
     for frame in xyz_reader(
-        filename, box_info, indexed, start=-1, stop=-1, step=1, max_frames=1
+        filename, has_comment_line, indexed, start=-1, stop=-1, step=1, max_frames=1
     ):
         last_frame = frame
     return last_frame
