@@ -116,6 +116,7 @@ class ScatterEdges(nn.Module):
     """Whether to apply a switch to the edge values before summing."""
     switch_key: Optional[str] = None
     """The key of the switch array. If None, the switch is taken from the graph."""
+    antisymmetric: bool = False
 
     FID: ClassVar[str] = "SCATTER_EDGES"
 
@@ -135,8 +136,8 @@ class ScatterEdges(nn.Module):
         output = jax.ops.segment_sum(
             x, edge_src, nat
         )  # jnp.zeros((nat, *x.shape[1:])).at[edge_src].add(x,mode="drop")
-        if not self._graphs_properties[self.graph_key]["directed"]:
-            output = output + jax.ops.segment_sum(x, edge_dst, nat)
+        if self.antisymmetric:
+            output = output - jax.ops.segment_sum(x, edge_dst, nat)
 
         output_key = self.key if self.output_key is None else self.output_key
         return {**inputs, output_key: output}
