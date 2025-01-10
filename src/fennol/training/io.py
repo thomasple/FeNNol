@@ -80,6 +80,8 @@ def load_dataset(
     pbc_training = training_parameters.get("pbc_training", False)
     minimum_image = training_parameters.get("minimum_image", False)
 
+    coordinates_ref_key = training_parameters.get("coordinates_ref_key", None)
+
     input_keys = [
         "species",
         "coordinates",
@@ -89,9 +91,11 @@ def load_dataset(
         "flags",
     ]
     if pbc_training:
-        input_keys += ["cells"]
+        input_keys += ["cells", "reciprocal_cells"]
     if atom_padding:
         input_keys += ["true_atoms", "true_sys"]
+    if coordinates_ref_key is not None:
+        input_keys += ["system_index", "system_sign"]
 
     flags = {f: None for f in add_flags}
     if minimum_image and pbc_training:
@@ -117,164 +121,176 @@ def load_dataset(
     random_rotation = training_parameters.get("random_rotation", False)
     if random_rotation:
         assert np_rng is not None, "np_rng must be provided for adding noise."
-        rotated_keys = set(
-            ["coordinates", "cells", "forces", "virial_tensor", "stress_tensor"]
-            + list(training_parameters.get("rotated_keys", []))
+
+        apply_rotation = {
+            1: lambda x,r : x @ r,
+            -1: lambda x,r : np.einsum("...kn,kj->...jn", x,r),
+            2: lambda x,r : np.einsum("li,...lk,kj->...ij", r,x,r),
+        }
+        valid_rotations = tuple(apply_rotation.keys())
+        rotated_keys = {
+            "coordinates":1,
+            "forces":1,
+            "virial_tensor":2,
+            "stress_tensor":2,
+            "virial":2,
+            "stress":2,
+        }
+        if pbc_training:
+            rotated_keys["cells"] = 1
+        user_rotated_keys = dict(training_parameters.get("rotated_keys",{}))
+        for k,v in user_rotated_keys.items():
+            assert v in valid_rotations, f"Invalid rotation type for key {k}. Valid values are {valid_rotations}"
+            rotated_keys[k] = v
+
+        # rotated_vector_keys = set(
+        #     ["coordinates", "forces"]
+        #     + list(training_parameters.get("rotated_vector_keys", []))
+        # )
+        # if pbc_training:
+        #     rotated_vector_keys.add("cells")
+
+        # rotated_tensor_keys = set(
+        #     ["virial_tensor", "stress_tensor", "virial", "stress"]
+        #     + list(training_parameters.get("rotated_tensor_keys", []))
+        # )
+        # assert rotated_vector_keys.isdisjoint(
+        #     rotated_tensor_keys
+        # ), "Rotated vector keys and rotated tensor keys must be disjoint."
+        # rotated_keys = rotated_vector_keys.union(rotated_tensor_keys)
+
+        print(
+            "Applying random rotations to the following keys if present:",
+            list(rotated_keys.keys()),
         )
-        print("Applying random Rotations to the following keys:", rotated_keys)
+
+        def apply_random_rotations(output, nbatch):
+            euler_angles = np_rng.uniform(0.0, 2 * np.pi, (nbatch, 3))
+            r = [
+                Rotation.from_euler("xyz", euler_angles[i]).as_matrix().T
+                for i in range(nbatch)
+            ]
+            for k,l in rotated_keys.items():
+                if k in output:
+                    for i in range(nbatch):
+                        output[k][i] = apply_rotation[l](output[k][i], r[i])
+
+    else:
+
+        def apply_random_rotations(output, nbatch):
+            pass
 
     if pbc_training:
         print("Periodic boundary conditions are active.")
         length_nopbc = training_parameters.get("length_nopbc", 1000.0)
 
-        def collate_fn_(batch):
-            output = defaultdict(list)
-            atom_shift = 0
-
-            for i, d in enumerate(batch):
-                nat = d["species"].shape[0]
-
-                output["natoms"].append(np.asarray([nat]))
-                output["batch_index"].append(np.asarray([i] * nat))
-                if "total_charge" not in d:
-                    total_charge = np.asarray(0.0, dtype=np.float32)
-                else:
-                    total_charge = np.asarray(d["total_charge"], dtype=np.float32)
-                output["total_charge"].append(total_charge)
-                if "cell" not in d:
-                    cell = np.asarray(
-                        [
-                            [length_nopbc, 0.0, 0.0],
-                            [0.0, length_nopbc, 0.0],
-                            [0.0, 0.0, length_nopbc],
-                        ]
-                    )
-                else:
-                    cell = np.asarray(d["cell"])
-                output["cells"].append(cell.reshape(1, 3, 3))
-
-                if extract_all_keys:
-                    for k, v in d.items():
-                        if k in ("cell", "total_charge"):
-                            continue
-                        v_array = np.array(v)
-                        # Shift atom number if necessary
-                        if k.endswith("_atidx"):
-                            v_array = v_array + atom_shift
-                        output[k].append(v_array)
-                else:
-                    output["species"].append(np.asarray(d["species"]))
-                    output["coordinates"].append(np.asarray(d["coordinates"]))
-                    for k in additional_input_keys:
-                        v_array = np.array(d[k])
-                        # Shift atom number if necessary
-                        if k.endswith("_atidx"):
-                            v_array = v_array + atom_shift
-                        output[k].append(v_array)
-                    for k in ref_keys_:
-                        v_array = np.array(d[k])
-                        # Shift atom number if necessary
-                        if k.endswith("_atidx"):
-                            v_array = v_array + atom_shift
-                        output[k].append(v_array)
-                        if k + "_mask" in d:
-                            output[k + "_mask"].append(np.asarray(d[k + "_mask"]))
-                atom_shift += nat
-
-            if random_rotation:
-                euler_angles = np_rng.uniform(0.0, 2 * np.pi, (len(batch), 3))
-                r = [
-                    Rotation.from_euler("xyz", euler_angles[i]).as_matrix().T
-                    for i in range(len(batch))
-                ]
-                for k in rotated_keys:
-                    if k in output:
-                        for i in range(len(batch)):
-                            output[k][i] = output[k][i] @ r[i]
-
-            for k, v in output.items():
-                if v[0].ndim == 0:
-                    output[k] = np.stack(v)
-                else:
-                    output[k] = np.concatenate(v, axis=0)
-            for key in rename_refs:
-                if key in output:
-                    output["true_" + key] = output.pop(key)
-
-            output["flags"] = flags
-            return output
+        def add_cell(d, output):
+            if "cell" not in d:
+                cell = np.asarray(
+                    [
+                        [length_nopbc, 0.0, 0.0],
+                        [0.0, length_nopbc, 0.0],
+                        [0.0, 0.0, length_nopbc],
+                    ]
+                )
+            else:
+                cell = np.asarray(d["cell"])
+            output["cells"].append(cell.reshape(1, 3, 3))
 
     else:
 
-        def collate_fn_(batch):
-            output = defaultdict(list)
-            atom_shift = 0
-            for i, d in enumerate(batch):
-                if "cell" in d:
-                    raise ValueError(
-                        "Activate pbc_training to use periodic boundary conditions."
-                    )
-                nat = d["species"].shape[0]
-                output["natoms"].append(np.asarray([nat]))
-                output["batch_index"].append(np.asarray([i] * nat))
-                if "total_charge" not in d:
-                    total_charge = np.asarray(0.0, dtype=np.float32)
-                else:
-                    total_charge = np.asarray(d["total_charge"], dtype=np.float32)
-                output["total_charge"].append(total_charge)
-                if extract_all_keys:
-                    for k, v in d.items():
-                        if k == "total_charge":
-                            continue
-                        v_array = np.array(v)
-                        # Shift atom number if necessary
-                        if k.endswith("_atidx"):
-                            v_array = v_array + atom_shift
-                        output[k].append(v_array)
-                else:
-                    output["species"].append(np.asarray(d["species"]))
-                    output["coordinates"].append(np.asarray(d["coordinates"]))
-                    for k in additional_input_keys:
-                        v_array = np.array(d[k])
-                        # Shift atom number if necessary
-                        if k.endswith("_atidx"):
-                            v_array = v_array + atom_shift
-                        output[k].append(v_array)
-                    for k in ref_keys_:
-                        v_array = np.array(d[k])
-                        # Shift atom number if necessary
-                        if k.endswith("_atidx"):
-                            v_array = v_array + atom_shift
-                        output[k].append(v_array)
-                        if k + "_mask" in d:
-                            output[k + "_mask"].append(np.asarray(d[k + "_mask"]))
-                atom_shift += nat
+        def add_cell(d, output):
+            if "cell" in d:
+                print(
+                    "Warning: 'cell' found in dataset but not training with pbc. Activate pbc_training to use periodic boundary conditions."
+                )
 
-            if random_rotation:
-                euler_angles = np_rng.uniform(0.0, 2 * np.pi, (len(batch), 3))
-                r = [
-                    Rotation.from_euler("xyz", euler_angles[i]).as_matrix().T
-                    for i in range(len(batch))
-                ]
-                for k in rotated_keys:
-                    if k in output:
-                        for i in range(len(batch)):
-                            output[k][i] = output[k][i] @ r[i]
+    if extract_all_keys:
 
-            for k, v in output.items():
-                try:
-                    if v[0].ndim == 0:
-                        output[k] = np.stack(v)
-                    else:
-                        output[k] = np.concatenate(v, axis=0)
-                except Exception as e:
-                    raise Exception(f"Error in key {k}: {e}")
-            for key in rename_refs:
-                if key in output:
-                    output["true_" + key] = output.pop(key)
+        def add_other_keys(d, output, atom_shift):
+            for k, v in d.items():
+                if k in ("cell", "total_charge"):
+                    continue
+                v_array = np.array(v)
+                # Shift atom number if necessary
+                if k.endswith("_atidx"):
+                    v_array = v_array + atom_shift
+                output[k].append(v_array)
 
-            output["flags"] = flags
-            return output
+    else:
+
+        def add_other_keys(d, output, atom_shift):
+            output["species"].append(np.asarray(d["species"]))
+            output["coordinates"].append(np.asarray(d["coordinates"]))
+            for k in additional_input_keys:
+                v_array = np.array(d[k])
+                # Shift atom number if necessary
+                if k.endswith("_atidx"):
+                    v_array = v_array + atom_shift
+                output[k].append(v_array)
+            for k in ref_keys_:
+                v_array = np.array(d[k])
+                # Shift atom number if necessary
+                if k.endswith("_atidx"):
+                    v_array = v_array + atom_shift
+                output[k].append(v_array)
+                if k + "_mask" in d:
+                    output[k + "_mask"].append(np.asarray(d[k + "_mask"]))
+
+    def add_keys(d, output, atom_shift, batch_index):
+        nat = d["species"].shape[0]
+
+        output["natoms"].append(np.asarray([nat]))
+        output["batch_index"].append(np.asarray([batch_index] * nat))
+        if "total_charge" not in d:
+            total_charge = np.asarray(0.0, dtype=np.float32)
+        else:
+            total_charge = np.asarray(d["total_charge"], dtype=np.float32)
+        output["total_charge"].append(total_charge)
+
+        add_cell(d, output)
+        add_other_keys(d, output, atom_shift)
+
+        return atom_shift + nat
+
+    def collate_fn_(batch):
+        output = defaultdict(list)
+        atom_shift = 0
+        batch_index = 0
+
+        for d in batch:
+            atom_shift = add_keys(d, output, atom_shift, batch_index)
+            batch_index += 1
+
+            if coordinates_ref_key is not None:
+                output["system_index"].append(np.asarray([batch_index - 1]))
+                output["system_sign"].append(np.asarray([1]))
+                if coordinates_ref_key in d:
+                    dref = {**d, "coordinates": d[coordinates_ref_key]}
+                    atom_shift = add_keys(dref, output, atom_shift, batch_index)
+                    output["system_index"].append(np.asarray([batch_index - 1]))
+                    output["system_sign"].append(np.asarray([-1]))
+                    batch_index += 1
+
+        apply_random_rotations(output, len(output["natoms"]))
+
+        # Stack and concatenate the arrays
+        for k, v in output.items():
+            if v[0].ndim == 0:
+                output[k] = np.stack(v)
+            else:
+                output[k] = np.concatenate(v, axis=0)
+
+        if "cells" in output and pbc_training:
+            output["reciprocal_cells"] = np.linalg.inv(output["cells"])
+
+        # Rename necessary keys
+        for key in rename_refs:
+            if key in output:
+                output["true_" + key] = output.pop(key)
+
+        output["flags"] = flags
+        return output
 
     collate_layers_train = [collate_fn_]
     collate_layers_valid = [collate_fn_]
@@ -305,7 +321,7 @@ def load_dataset(
         collate_layers_train.append(collate_with_noise)
 
     if atom_padding:
-        padder = AtomPadding()
+        padder = AtomPadding(add_sys=training_parameters.get("padder_add_sys", 1))
         padder_state = padder.init()
 
         def collate_with_padding(batch):
@@ -320,8 +336,8 @@ def load_dataset(
 
         # input_keys += additional_input_keys
         # input_keys = set(input_keys)
-        print("Input keys:",all_inputs)
-        print("Ref keys:",ref_keys)
+        print("Input keys:", all_inputs)
+        print("Ref keys:", ref_keys)
 
         def collate_split(batch):
             inputs = {}

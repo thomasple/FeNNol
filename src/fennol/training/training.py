@@ -33,6 +33,7 @@ from .utils import (
     linear_schedule,
 )
 from ..utils import deep_update, AtomicUnits as au
+from ..utils.io import human_time_duration
 from ..models.preprocessing import AtomPadding, check_input, convert_to_jax
 
 
@@ -52,14 +53,17 @@ def main():
     parameters = load_configuration(config_file)
 
     ### Set the device
-    device: str = parameters.get("device", "cpu")
+    device: str = parameters.get("device", "cpu").lower()
     if device == "cpu":
-        device = "cpu"
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
-    elif device.startswith("cuda"):
-        num = device.split(":")[-1]
+    elif device.startswith("cuda") or device.startswith("gpu"):
+        dsplit = device.split(":")
+        num = 0 if len(dsplit) == 1 else dsplit[-1]
         os.environ["CUDA_VISIBLE_DEVICES"] = num
-        device = "gpu"
+        jax.config.update("jax_default_device", jax.devices("gpu")[0])
+    else:
+        raise ValueError(f"Unknown device: {device}")
+        
 
     # output directory
     output_directory = parameters.get("output_directory", None)
@@ -99,9 +103,6 @@ def main():
     ], "matmul_prec must be one of 'default','high','highest'"
     jax.config.update("jax_default_matmul_precision", matmul_precision)
 
-    # set device
-    _device = jax.devices(device)[0]
-    jax.config.update("jax_default_device", _device)
 
     # set random seed
     rng_seed = parameters.get("rng_seed", np.random.randint(0, 2**32 - 1))
@@ -202,7 +203,6 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
     if coordinates_ref_key is not None:
         compute_ref_coords = True
         print("Reference coordinates:", coordinates_ref_key)
-        ref_keys.append(coordinates_ref_key)
     else:
         compute_ref_coords = False
 
@@ -352,7 +352,7 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
             def evaluate(model, variables, data):
                 _, _, vir, output = model._energy_and_forces_and_virial(variables, data)
                 cells = output["cells"]
-                volume = jnp.linalg.det(cells)
+                volume = jnp.abs(jnp.linalg.det(cells))
                 stress = -vir / volume[:, None, None]
                 output[stress_key] = stress
                 output[virial_key] = vir
@@ -424,12 +424,32 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
             stnew["add_atoms"] = training_parameters["nblist_add_atoms"]
         layer_state.append(freeze(stnew))
 
-    preproc_state["layers_state"] = layer_state
+    preproc_state["layers_state"] = tuple(layer_state)
     model.preproc_state = freeze(preproc_state)
 
     # inputs,data = next(training_iterator)
     # inputs = model.preprocess(**inputs)
     # print("preproc_state:",model.preproc_state)
+
+    if training_parameters.get("gpu_preprocessing", False):
+        print("GPU preprocessing activated.")
+        def preprocessing(model,inputs):
+            preproc_state = model.preproc_state
+            outputs = model.preprocessing.process(
+                preproc_state,
+                inputs
+            )
+            preproc_state, state_up, outputs, overflow = (
+                model.preprocessing.check_reallocate(preproc_state, outputs)
+            )
+            if overflow:
+                print("GPU preprocessing: nblist overflow => reallocating nblist")
+                print("size updates:", state_up)
+            model.preproc_state = preproc_state
+            return outputs
+
+    else:
+        preprocessing = lambda model,inputs: model.preprocess(**inputs) 
 
     fetch_time = 0.0
     preprocess_time = 0.0
@@ -467,31 +487,26 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
     start = time.time()
     print("Starting training...")
     for epoch in range(max_epochs):
+        s = time.time()
         for _ in range(nbatch_per_epoch):
             # fetch data
-            s = time.time()
             inputs0, data = next(training_iterator)
-            e = time.time()
-            fetch_time += e - s
 
             # preprocess data
-            s = time.time()
-            inputs = model.preprocess(**inputs0)
+            inputs = preprocessing(model,inputs0)
+            # inputs = model.preprocess(**inputs0)
 
             rng_key, subkey = jax.random.split(rng_key)
             inputs["rng_key"] = subkey
-            if compute_ref_coords:
-                inputs_ref = {**inputs0, "coordinates": data[coordinates_ref_key]}
-                inputs_ref = model.preprocess(**inputs_ref)
-            else:
-                inputs_ref = None
+            # if compute_ref_coords:
+            #     inputs_ref = {**inputs0, "coordinates": data[coordinates_ref_key]}
+            #     inputs_ref = model.preprocess(**inputs_ref)
+            # else:
+            #     inputs_ref = None
             # if print_timings:
             #     jax.block_until_ready(inputs["coordinates"])
-            e = time.time()
-            preprocess_time += e - s
 
             # train step
-            s = time.time()
             # opt_st.inner_states["trainable"].inner_state[1].hyperparams[
             #     "learning_rate"
             # ] = schedule(count)
@@ -507,36 +522,43 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
                 variables_ema=model.variables,
                 opt_st=opt_st,
                 ema_st=ema_st,
-                inputs_ref=inputs_ref,
             )
             count += 1
-            # if print_timings:
-            #     jax.block_until_ready(loss)
-            e = time.time()
-            step_time += e - s
 
         rmses_avg = defaultdict(lambda: 0.0)
         maes_avg = defaultdict(lambda: 0.0)
         for _ in range(nbatch_per_validation):
             inputs0, data = next(validation_iterator)
 
-            inputs = model.preprocess(**inputs0)
+            inputs = preprocessing(model,inputs0)
+            # inputs = model.preprocess(**inputs0)
 
-            if compute_ref_coords:
-                inputs_ref = {**inputs0, "coordinates": data[coordinates_ref_key]}
-                inputs_ref = model.preprocess(**inputs_ref)
-            else:
-                inputs_ref = None
+            rng_key, subkey = jax.random.split(rng_key)
+            inputs["rng_key"] = subkey
+
+            # if compute_ref_coords:
+            #     inputs_ref = {**inputs0, "coordinates": data[coordinates_ref_key]}
+            #     inputs_ref = model.preprocess(**inputs_ref)
+            # else:
+            #     inputs_ref = None
             rmses, maes, output_val = validation(
                 data=data,
                 inputs=inputs,
                 variables=model.variables,
-                inputs_ref=inputs_ref,
+                # inputs_ref=inputs_ref,
             )
             for k, v in rmses.items():
                 rmses_avg[k] += v
             for k, v in maes.items():
                 maes_avg[k] += v
+        
+        jax.block_until_ready(output_val)
+        e = time.time()
+        epoch_time = e - s
+        batch_time = human_time_duration(epoch_time / (nbatch_per_epoch+nbatch_per_validation))
+        epoch_time = human_time_duration(epoch_time)
+
+
         for k in rmses_avg.keys():
             rmses_avg[k] /= nbatch_per_validation
         for k in maes_avg.keys():
@@ -547,7 +569,7 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
         preprocess_time /= nbatch_per_epoch
 
         print("")
-        print(f"Epoch {epoch+1}, lr={current_lr:.3e}, loss = {loss:.3e}")
+        print(f"Epoch {epoch+1}, lr={current_lr:.3e}, loss = {loss:.3e}, epoch time = {epoch_time}, batch time = {batch_time}")
         rmse_tot = 0.0
         mae_tot = 0.0
         for k in rmses_avg.keys():
@@ -571,10 +593,10 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
                     f"    rmse_{k}= {rmses_avg[k]/mult:10.3f} ; mae_{k}= {maes_avg[k]/mult:10.3f}   {unit}  {weight_str}"
                 )
 
-        if print_timings:
-            print(
-                f"    fetch time = {fetch_time:.5f}; preprocess time = {preprocess_time:.5f}; train time = {step_time:.5f}"
-            )
+        # if print_timings:
+        #     print(
+        #         f"    Timings per batch: fetch time = {fetch_time:.5f}; preprocess time = {preprocess_time:.5f}; train time = {step_time:.5f}"
+        #     )
         fetch_time = 0.0
         step_time = 0.0
         preprocess_time = 0.0

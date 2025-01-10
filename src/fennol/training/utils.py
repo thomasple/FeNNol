@@ -259,7 +259,6 @@ def get_train_step_function(
         opt_st,
         variables_ema=None,
         ema_st=None,
-        inputs_ref=None,
     ):
 
         def loss_fn(variables):
@@ -268,19 +267,25 @@ def get_train_step_function(
                 # _, _, output_ref = model_ref._energy_and_forces(model_ref.variables, data)
             output = evaluate(model, variables, inputs)
             # _, _, output = model._energy_and_forces(variables, data)
-            if compute_ref_coords:
-                if inputs_ref is None:
-                    raise ValueError(
-                        "train_step was setup with compute_ref_coords=True but inputs_ref was not provided"
-                    )
-                output_data_ref = evaluate(model, variables, inputs_ref)
             loss_tot = 0.0
             for loss_prms in loss_definition.values():
                 use_ref_mask = False
                 predicted = output[loss_prms["key"]]
+                nsys = inputs["natoms"].shape[0]
+                system_mask = inputs["true_sys"]
+                atom_mask = inputs["true_atoms"]
+                if "system_sign" in inputs:
+                    system_sign = inputs["system_sign"] > 0
+                    system_mask = jnp.logical_and(system_mask,system_sign)
+                    atom_mask = jnp.logical_and(atom_mask, system_sign[inputs["batch_index"]])
                 if "remove_ref_sys" in loss_prms and loss_prms["remove_ref_sys"]:
                     assert compute_ref_coords, "compute_ref_coords must be True"
-                    predicted = predicted - output_data_ref[loss_prms["key"]]
+                    # predicted = predicted - output_data_ref[loss_prms["key"]]
+                    assert predicted.shape[0] == nsys, "remove_ref_sys only works with system-level predictions"
+                    shape_mask = [predicted.shape[0]] + [1] * (len(predicted.shape) - 1)
+                    system_sign = inputs["system_sign"].reshape(*shape_mask)
+                    predicted = jax.ops.segment_sum(system_sign*predicted,inputs["system_index"],nsys)
+
                 if "ref" in loss_prms:
                     if loss_prms["ref"].startswith("model_ref/"):
                         assert model_ref is not None, "model_ref must be provided"
@@ -376,7 +381,7 @@ def get_train_step_function(
                 natscale = 1.0
                 if ref.shape[0] == output["batch_index"].shape[0]:
                     ## shape is number of atoms
-                    truth_mask = inputs["true_atoms"]
+                    truth_mask = atom_mask
                     if "ds_weight" in loss_prms:
                         weight_key = loss_prms["ds_weight"]
                         natscale = data[weight_key][output["batch_index"]].reshape(
@@ -384,7 +389,7 @@ def get_train_step_function(
                         )
                 elif ref.shape[0] == natoms.shape[0]:
                     ## shape is number of systems
-                    truth_mask = inputs["true_sys"]
+                    truth_mask = system_mask
                     if loss_prms.get("per_atom", False):
                         per_atom = True
                         ref = ref / natoms.reshape(*shape_mask)
@@ -556,12 +561,7 @@ def get_train_step_function(
 
                 loss_tot = loss_tot + w * loss  # / nel
 
-            if compute_ref_coords:
-                o = (output, output_data_ref)
-            else:
-                o = output
-
-            return loss_tot, o
+            return loss_tot, output
 
         (loss, o), grad = jax.value_and_grad(loss_fn, has_aux=True)(variables)
         updates, opt_st = optimizer.update(grad, opt_st, params=variables)
@@ -597,12 +597,6 @@ def get_validation_function(
             # _, _, output_ref = model_ref._energy_and_forces(model_ref.variables, data)
         output = evaluate(model, variables, inputs)
         # _, _, output = model._energy_and_forces(variables, data)
-        if compute_ref_coords:
-            if inputs_ref is None:
-                raise ValueError(
-                    "validation was setup with compute_ref_coords but inputs_ref was not provided"
-                )
-            output_data_ref = evaluate(model, variables, inputs_ref)
         rmses = {}
         maes = {}
         if return_targets:
@@ -616,9 +610,21 @@ def get_validation_function(
                 continue
             predicted = output[loss_prms["key"]]
             use_ref_mask = False
+            nsys = inputs["natoms"].shape[0]
+            system_mask = inputs["true_sys"]
+            atom_mask = inputs["true_atoms"]
+            if "system_sign" in loss_prms:
+                system_sign = inputs["system_sign"] > 0.0
+                system_mask = system_mask * system_sign
+                atom_mask = atom_mask * system_sign[inputs["batch_index"]]
             if "remove_ref_sys" in loss_prms and loss_prms["remove_ref_sys"]:
                 assert compute_ref_coords, "compute_ref_coords must be True"
-                predicted = predicted - output_data_ref[loss_prms["key"]]
+                # predicted = predicted - output_data_ref[loss_prms["key"]]
+                assert predicted.shape[0] == nsys, "remove_ref_sys only works with system-level predictions"
+                shape_mask = [predicted.shape[0]] + [1] * (len(predicted.shape) - 1)
+                system_sign = inputs["system_sign"].reshape(*shape_mask)
+                predicted = jax.ops.segment_sum(system_sign*predicted,inputs["system_index"],nsys)
+
             if "ref" in loss_prms:
                 if loss_prms["ref"].startswith("model_ref/"):
                     assert model_ref is not None, "model_ref must be provided"
@@ -662,10 +668,10 @@ def get_validation_function(
             shape_mask = [ref.shape[0]] + [1] * (len(predicted.shape) - 1)
             if ref.shape[0] == output["batch_index"].shape[0]:
                 ## shape is number of atoms
-                truth_mask = inputs["true_atoms"]
+                truth_mask = atom_mask
             elif ref.shape[0] == natoms.shape[0]:
                 ## shape is number of systems
-                truth_mask = inputs["true_sys"]
+                truth_mask = system_mask
                 if loss_prms.get("per_atom_validation", False):
                     ref = ref / natoms.reshape(*shape_mask)
                     predicted = predicted / natoms.reshape(*shape_mask)
