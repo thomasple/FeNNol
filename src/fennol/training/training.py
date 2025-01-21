@@ -95,6 +95,13 @@ def main():
         logger.bind_stdout()
 
     # set matmul precision
+    enable_x64 = parameters.get("double_precision", False)
+    jax.config.update("jax_enable_x64", enable_x64)
+    fprec = "float64" if enable_x64 else "float32"
+    parameters["fprec"] = fprec
+    if enable_x64:
+        print("Double precision enabled.")
+
     matmul_precision = parameters.get("matmul_prec", "highest").lower()
     assert matmul_precision in [
         "default",
@@ -176,6 +183,8 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
         rng_key = rng
         np_rng = np.random.Generator(np.random.PCG64(np.random.randint(0, 2**32 - 1)))
     rng_key, model_key = jax.random.split(rng_key)
+
+    
     model = load_model(parameters, model_file, rng_key=model_key)
 
     training_parameters = parameters.get("training", {})
@@ -193,6 +202,12 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
             model.variables = copy_parameters(
                 model.variables, model_ref.variables, ref_parameters
             )
+    fprec = parameters.get("fprec", "float32")
+    def convert_to_fprec(x):
+        if jnp.issubdtype(x.dtype, jnp.floating):
+            return x.astype(fprec)
+        return x
+    model.variables = jax.tree_map(convert_to_fprec, model.variables)
 
     # rename_refs = training_parameters.get("rename_refs", [])
     loss_definition, used_keys, ref_keys = get_loss_definition(
@@ -220,11 +235,13 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
         split_data_inputs=True,
         np_rng=np_rng,
         add_flags=["training"],
+        fprec=fprec,
     )
 
     compute_forces = "forces" in used_keys
     compute_virial = "virial_tensor" in used_keys or "virial" in used_keys
     compute_stress = "stress_tensor" in used_keys or "stress" in used_keys
+    compute_pressure = "pressure" in used_keys or "pressure_tensor" in used_keys
 
     # get optimizer parameters
     lr = training_parameters.get("lr", 1.0e-3)
@@ -342,10 +359,11 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
     print("energy terms:", model.energy_terms)
 
     pbc_training = training_parameters.get("pbc_training", False)
-    if compute_stress or compute_virial:
+    if compute_stress or compute_virial or compute_pressure:
         virial_key = "virial" if "virial" in used_keys else "virial_tensor"
         stress_key = "stress" if "stress" in used_keys else "stress_tensor"
-        if compute_stress:
+        pressure_key = "pressure" if "pressure" in used_keys else "pressure_tensor"
+        if compute_stress or compute_pressure:
             assert pbc_training, "PBC must be enabled for stress or virial training"
             print("Computing forces and stress tensor")
 
@@ -353,9 +371,13 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
                 _, _, vir, output = model._energy_and_forces_and_virial(variables, data)
                 cells = output["cells"]
                 volume = jnp.abs(jnp.linalg.det(cells))
-                stress = -vir / volume[:, None, None]
+                stress = vir / volume[:, None, None]
                 output[stress_key] = stress
                 output[virial_key] = vir
+                if pressure_key == "pressure":
+                    output[pressure_key] = -jnp.trace(stress, axis1=1, axis2=2) / 3.0
+                else:
+                    output[pressure_key] = -stress
                 return output
 
         else:

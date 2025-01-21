@@ -683,7 +683,7 @@ def get_validation_function(
 
             nel = jnp.maximum(
                 (float(np.prod(ref.shape)) / float(truth_mask.shape[0]))
-                * jnp.sum(truth_mask).astype(jnp.float32),
+                * jnp.sum(truth_mask).astype(predicted.dtype),
                 1.0,
             )
 
