@@ -5,6 +5,7 @@ from typing import Optional, Union, List, Sequence, ClassVar, Dict
 import math
 import dataclasses
 import numpy as np
+from .nets import FullyConnectedNet
 from ...utils import AtomicUnits as au
 from functools import partial
 from ...utils.periodic_table import (
@@ -19,6 +20,7 @@ from ...utils.periodic_table import (
     POLARIZABILITIES,
     D3_COV_RADII,
     VDW_RADII,
+    OXIDATION_STATES,
 )
 
 
@@ -93,13 +95,13 @@ class SpeciesEncoding(nn.Module):
             Z = np.arange(1, zmax + 1).reshape(-1, 1)
             Zref = [zmax]
             e_struct = np.array(EL_STRUCT[1 : zmax + 1])
-            eref = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 10,6] 
+            eref = [2, 2, 6, 2, 6, 2, 10, 6, 2, 10, 6, 2, 14, 10, 6, 2, 14, 10, 6]
             v_struct = np.array(VALENCE_STRUCTURE[1 : zmax + 1])
             vref = [2, 6, 10, 14]
             if zmax <= 86:
-                e_struct = e_struct[:,:15]
+                e_struct = e_struct[:, :15]
                 eref = eref[:15]
-            ref = np.array(Zref+eref+vref)
+            ref = np.array(Zref + eref + vref)
             conv_tensor = np.concatenate([Z, e_struct, v_struct], axis=1)
             conv_tensor = conv_tensor / ref[None, :]
             dim = conv_tensor.shape[1]
@@ -111,7 +113,9 @@ class SpeciesEncoding(nn.Module):
 
         if "properties" in encodings:
             props = np.array(XENONPY_PROPS)[1:-1]
-            assert self.zmax <= props.shape[0], f"zmax > {props.shape[0]} not supported for xenonpy properties"
+            assert (
+                self.zmax <= props.shape[0]
+            ), f"zmax > {props.shape[0]} not supported for xenonpy properties"
             conv_tensor = props[1 : zmax + 1]
             mean = np.mean(props, axis=0)
             std = np.std(props, axis=0)
@@ -121,7 +125,7 @@ class SpeciesEncoding(nn.Module):
                 [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
             )
             conv_tensors.append(conv_tensor)
-        
+
         if "valence_properties" in encodings:
             assert zmax <= 86, "Valence properties only available for zmax <= 86"
             Z = np.arange(1, zmax + 1).reshape(-1, 1)
@@ -132,7 +136,7 @@ class SpeciesEncoding(nn.Module):
             vref = [2, 6, 10, 14]
             ionization = np.array(ATOMIC_IONIZATION_ENERGY[1 : zmax + 1]).reshape(-1, 1)
             ionizationref = [0.5]
-            polariz = np.array(POLARIZABILITIES[1 : zmax + 1]).reshape(-1, 1)**(1./3.)
+            polariz = np.array(POLARIZABILITIES[1 : zmax + 1]).reshape(-1, 1)
             polarizref = [np.median(polariz)]
 
             cov = np.array(D3_COV_RADII[1 : zmax + 1]).reshape(-1, 1)
@@ -141,9 +145,12 @@ class SpeciesEncoding(nn.Module):
             vdw = np.array(VDW_RADII[1 : zmax + 1]).reshape(-1, 1)
             vdwref = [np.median(vdw)]
 
-
-            ref = np.array(Zref+Zinvref+ionizationref+polarizref+covref+vdwref+vref)
-            conv_tensor = np.concatenate([Z, Zinv, ionization, polariz, cov, vdw, v_struct], axis=1)
+            ref = np.array(
+                Zref + Zinvref + ionizationref + polarizref + covref + vdwref + vref
+            )
+            conv_tensor = np.concatenate(
+                [Z, Zinv, ionization, polariz, cov, vdw, v_struct], axis=1
+            )
 
             conv_tensor = conv_tensor / ref[None, :]
             dim = conv_tensor.shape[1]
@@ -151,7 +158,6 @@ class SpeciesEncoding(nn.Module):
                 [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
             )
             conv_tensors.append(conv_tensor)
-
 
         if "sjs_coordinates" in encodings:
             coords = np.array(SJS_COORDINATES)[1:-1]
@@ -164,14 +170,14 @@ class SpeciesEncoding(nn.Module):
                 [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
             )
             conv_tensors.append(conv_tensor)
-        
+
         if "positional" in encodings:
-            coords = np.array(PERIODIC_COORDINATES)[1:zmax+1]
-            row,col = coords[:,0], coords[:,1]
+            coords = np.array(PERIODIC_COORDINATES)[1 : zmax + 1]
+            row, col = coords[:, 0], coords[:, 1]
             drow = self.extra_params.get("drow", default=5)
             dcol = self.dim - drow
-            nrow = self.extra_params.get("nrow", default=100.)
-            ncol = self.extra_params.get("ncol", default=1000.)
+            nrow = self.extra_params.get("nrow", default=100.0)
+            ncol = self.extra_params.get("ncol", default=1000.0)
 
             erow = positional_encoding_static(row, drow, nrow)
             ecol = positional_encoding_static(col, dcol, ncol)
@@ -180,6 +186,16 @@ class SpeciesEncoding(nn.Module):
             conv_tensor = np.concatenate(
                 [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
             )
+            conv_tensors.append(conv_tensor)
+
+        if "oxidation" in encodings:
+            states_set = sorted(set(sum(OXIDATION_STATES, [])))
+            nstates = len(states_set)
+            state_dict = {s: i for i, s in enumerate(states_set)}
+            conv_tensor = np.zeros((zmaxpad, nstates))
+            for i, states in enumerate(OXIDATION_STATES[1 : zmax + 1]):
+                for s in states:
+                    conv_tensor[i, state_dict[s]] = 1
             conv_tensors.append(conv_tensor)
 
         if len(conv_tensors) > 0:
@@ -225,10 +241,9 @@ class SpeciesEncoding(nn.Module):
             )
             conv_tensors.append(rand_encoding)
 
-        assert len(conv_tensors)>0, f"No encoding recognized in '{self.encoding}'"
+        assert len(conv_tensors) > 0, f"No encoding recognized in '{self.encoding}'"
 
         conv_tensor = jnp.concatenate(conv_tensors, axis=1)
-
 
         species = inputs["species"] if isinstance(inputs, dict) else inputs
         out = conv_tensor[species]
@@ -236,6 +251,7 @@ class SpeciesEncoding(nn.Module):
 
         if isinstance(inputs, dict):
             output_key = self.name if self.output_key is None else self.output_key
+            out = out.astype(inputs["coordinates"].dtype)
             return {**inputs, output_key: out} if output_key is not None else out
         return out
 
@@ -312,6 +328,7 @@ class RadialBasis(nn.Module):
             if self.alt_bessel_norm:
                 norm = (2.0 / c) ** 0.5
             out = norm * jnp.sin(x * bessel_roots) / x
+
             if self.enforce_positive:
                 out = jnp.where(x > 0, out * (1.0 - jnp.exp(-(x**2))), 0.0)
 
@@ -500,7 +517,7 @@ class RadialBasis(nn.Module):
             v1 = levels[ilevel]
             v2 = levels[ilevel1]
             out = v1 * w + v2 * (1 - w)
-        elif basis ==  "finite_support":
+        elif basis == "finite_support":
             flevel = (x - self.start) / (self.end - self.start) * (self.dim + 1)
             ilevel = jnp.floor(flevel).astype(jnp.int32)
             ilevel1 = jnp.clip(ilevel + 1, 0, self.dim + 1)
@@ -509,29 +526,82 @@ class RadialBasis(nn.Module):
             dx = flevel - ilevel
             w = 0.5 * (1 + jnp.cos(jnp.pi * dx))
 
-            ilevelflat = ilevel + jnp.arange(x.shape[0]) * (self.dim+2)
-            ilevel1flat = ilevel1 + jnp.arange(x.shape[0]) * (self.dim+2)
+            ilevelflat = ilevel + jnp.arange(x.shape[0]) * (self.dim + 2)
+            ilevel1flat = ilevel1 + jnp.arange(x.shape[0]) * (self.dim + 2)
 
-            out = jnp.zeros((x.shape[0]*(self.dim+2)), dtype=x.dtype).at[ilevelflat].set(w).at[ilevel1flat].set(1-w).reshape(-1, self.dim+2)[:,1:-1]
+            out = (
+                jnp.zeros((x.shape[0] * (self.dim + 2)), dtype=x.dtype)
+                .at[ilevelflat]
+                .set(w)
+                .at[ilevel1flat]
+                .set(1 - w)
+                .reshape(-1, self.dim + 2)[:, 1:-1]
+            )
 
         elif basis == "exp_lr" or basis == "exp":
             zeta = self.extra_params.get("zeta", default=2.0)
             s = self.extra_params.get("s", default=0.5)
             n = np.arange(self.dim)
             # if self.trainable:
-                # zeta = jnp.abs(
-                #     self.param("zeta", lambda key: jnp.asarray(zeta, dtype=x.dtype))
-                # )
-                # s = jnp.abs(self.param("s", lambda key: jnp.asarray(s, dtype=x.dtype)))
+            # zeta = jnp.abs(
+            #     self.param("zeta", lambda key: jnp.asarray(zeta, dtype=x.dtype))
+            # )
+            # s = jnp.abs(self.param("s", lambda key: jnp.asarray(s, dtype=x.dtype)))
 
             a = zeta * s**n
-            xx = np.linspace(self.start, self.end, 10000)
-            norm = 1./np.trapz(np.exp(-a[None, :] * xx[:, None]), xx, axis=0)
+            xx = np.linspace(0, self.end, 10000)
+
+            if self.start > 0:
+                a1 = np.minimum(1.0 / a, 1.0)
+                switchstart = jnp.where(
+                    x[:, None] < self.end,
+                    1
+                    - (
+                        0.5
+                        + 0.5
+                        * jnp.cos(
+                            np.pi * (x[:, None] - self.start) / (self.end - self.start)
+                        )
+                    )
+                    ** a1[None, :],
+                    1,
+                ) * (x[:, None] > self.start)
+                switchstartxx = (
+                    1
+                    - (
+                        0.5
+                        + 0.5
+                        * np.cos(
+                            np.pi * (xx[:, None] - self.start) / (self.end - self.start)
+                        )
+                    )
+                    ** a1[None, :]
+                ) * (xx[:, None] > self.start)
+
+            else:
+                switchstart = 1.0
+                switchstartxx = 1.0
+
+            norm = 1.0 / np.trapz(
+                switchstartxx * np.exp(-a[None, :] * xx[:, None]), xx, axis=0
+            )
+            # norm = 1./np.max(switchstartxx*np.exp(-a[None, :] * xx[:, None]), axis=0)
 
             if self.trainable:
-                a=jnp.abs(self.param("exponent",lambda key: jnp.asarray(a)))
+                a = jnp.abs(self.param("exponent", lambda key: jnp.asarray(a)))
 
-            out = jnp.exp(-a[None, :] * x[:, None])*norm[None, :]
+            out = switchstart * jnp.exp(-a[None, :] * x[:, None]) * norm[None, :]
+
+        elif basis == "neural_net" or basis == "nn":
+            neurons = self.extra_params.get(
+                "hidden_neurons", default=[2 * self.dim]
+            ) + [self.dim]
+            activation = self.extra_params.get("activation", default="swish")
+            use_bias = self.extra_params.get("use_bias", default=True)
+
+            out = FullyConnectedNet(
+                neurons, activation=activation, use_bias=use_bias, squeeze=False
+            )(x[:, None])
 
         else:
             raise NotImplementedError(f"Unknown radial basis {basis}.")
@@ -556,6 +626,7 @@ def positional_encoding_static(t, d: int, n: float = 10000.0):
     if d % 2 == 1:
         out = out[:, :-1]
     return out
+
 
 @partial(jax.jit, static_argnums=(1, 2), inline=True)
 def positional_encoding(t, d: int, n: float = 10000.0):
