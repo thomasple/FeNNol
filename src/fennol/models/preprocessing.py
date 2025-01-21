@@ -85,6 +85,9 @@ class GraphGenerator:
         new_state = {**state}
         state_up = {}
 
+        mult_size = state.get("nblist_mult_size", self.mult_size)
+        assert mult_size >= 1.0, "mult_size should be larger or equal than 1.0"
+
         if natoms.shape[0] == 1:
             max_nat = coords.shape[0]
             true_max_nat = max_nat
@@ -92,8 +95,10 @@ class GraphGenerator:
             max_nat = state.get("max_nat", round(coords.shape[0] / natoms.shape[0]))
             true_max_nat = np.max(natoms)
             if true_max_nat > max_nat:
-                state_up["max_nat"] = (true_max_nat, max_nat)
-                new_state["max_nat"] = true_max_nat
+                add_atoms = state.get("add_atoms", 0)
+                new_maxnat = true_max_nat + add_atoms
+                state_up["max_nat"] = (new_maxnat, max_nat)
+                new_state["max_nat"] = new_maxnat
 
         cutoff_skin = self.cutoff + state.get("nblist_skin", 0.0)
 
@@ -151,11 +156,14 @@ class GraphGenerator:
                     coords_pbc = coords + np.einsum(
                         "aj,aji->ai", at_shifts, cells[batch_index]
                     )
+                vec = coords_pbc[p2] - coords_pbc[p1]
 
                 ## compute maximum number of repeats
                 inv_distances = (np.sum(reciprocal_cells**2, axis=1)) ** 0.5
                 cdinv = cutoff_skin * inv_distances
                 num_repeats_all = np.ceil(cdinv).astype(np.int32)
+                if "true_sys" in inputs:
+                    num_repeats_all = np.where(np.array(inputs["true_sys"],dtype=bool)[:, None], num_repeats_all, 0)
                 # num_repeats_all = np.where(cdinv < 0.5, 0, num_repeats_all)
                 num_repeats = np.max(num_repeats_all, axis=0)
                 num_repeats_prev = np.array(state.get("num_repeats_pbc", (0, 0, 0)))
@@ -174,29 +182,79 @@ class GraphGenerator:
                 ## shift applied to vectors
                 if cells.shape[0] == 1:
                     dvec = np.dot(cell_shift_pbc, cells[0])[None, :, :]
-                else:
-                    batch_index_vec = batch_index[p1]
-                    dvec = np.einsum("bj,sji->sbi", cell_shift_pbc, cells)[
-                        batch_index_vec
-                    ]
-                ## compute vectors
-                vec = (
-                    coords_pbc[p2, None, :] - coords_pbc[p1, None, :] + dvec
-                ).reshape(-1, 3)
-                pbc_shifts = np.broadcast_to(
-                    cell_shift_pbc[None, :, :],
-                    (p1.shape[0], cell_shift_pbc.shape[0], 3),
-                ).reshape(-1, 3)
-                p1 = np.broadcast_to(
-                    p1[:, None], (p1.shape[0], cell_shift_pbc.shape[0])
-                ).flatten()
-                p2 = np.broadcast_to(
-                    p2[:, None], (p2.shape[0], cell_shift_pbc.shape[0])
-                ).flatten()
-                if natoms.shape[0] > 1:
-                    mask_p12 = np.broadcast_to(
-                        mask_p12[:, None], (mask_p12.shape[0], cell_shift_pbc.shape[0])
+                    vec = (vec[:, None, :] + dvec).reshape(-1, 3)
+                    pbc_shifts = np.broadcast_to(
+                        cell_shift_pbc[None, :, :],
+                        (p1.shape[0], cell_shift_pbc.shape[0], 3),
+                    ).reshape(-1, 3)
+                    p1 = np.broadcast_to(
+                        p1[:, None], (p1.shape[0], cell_shift_pbc.shape[0])
                     ).flatten()
+                    p2 = np.broadcast_to(
+                        p2[:, None], (p2.shape[0], cell_shift_pbc.shape[0])
+                    ).flatten()
+                    if natoms.shape[0] > 1:
+                        mask_p12 = np.broadcast_to(
+                            mask_p12[:, None],
+                            (mask_p12.shape[0], cell_shift_pbc.shape[0]),
+                        ).flatten()
+                else:
+                    dvec = np.einsum("bj,sji->sbi", cell_shift_pbc, cells)
+
+                    ## get pbc shifts specific to each box
+                    cell_shift_pbc = np.broadcast_to(
+                        cell_shift_pbc[None, :, :],
+                        (num_repeats_all.shape[0], cell_shift_pbc.shape[0], 3),
+                    )
+                    mask = np.all(
+                        np.abs(cell_shift_pbc) <= num_repeats_all[:, None, :], axis=-1
+                    ).flatten()
+                    idx = np.nonzero(mask)[0]
+                    nshifts = idx.shape[0]
+                    nshifts_prev = state.get("nshifts_pbc", 0)
+                    if nshifts > nshifts_prev or add_margin:
+                        nshifts_new = int(mult_size * max(nshifts, nshifts_prev)) + 1
+                        state_up["nshifts_pbc"] = (nshifts_new, nshifts_prev)
+                        new_state["nshifts_pbc"] = nshifts_new
+
+                    dvec_filter = dvec.reshape(-1, 3)[idx, :]
+                    cell_shift_pbc_filter = cell_shift_pbc.reshape(-1, 3)[idx, :]
+
+                    ## get batch shift in the dvec_filter array
+                    nrep = np.prod(2 * num_repeats_all + 1, axis=1)
+                    bshift = np.concatenate((np.array([0]), np.cumsum(nrep)[:-1]))
+
+                    ## compute vectors
+                    batch_index_vec = batch_index[p1]
+                    nrep_vec = np.where(mask_p12,nrep[batch_index_vec],0)
+                    vec = vec.repeat(nrep_vec, axis=0)
+                    nvec_pbc = nrep_vec.sum() #vec.shape[0]
+                    nvec_pbc_prev = state.get("nvec_pbc", 0)
+                    if nvec_pbc > nvec_pbc_prev or add_margin:
+                        nvec_pbc_new = int(mult_size * max(nvec_pbc, nvec_pbc_prev)) + 1
+                        state_up["nvec_pbc"] = (nvec_pbc_new, nvec_pbc_prev)
+                        new_state["nvec_pbc"] = nvec_pbc_new
+
+                    # print("cpu: ", nvec_pbc, nvec_pbc_prev, nshifts, nshifts_prev)
+                    ## get shift index
+                    dshift = np.concatenate(
+                        (np.array([0]), np.cumsum(nrep_vec)[:-1])
+                    ).repeat(nrep_vec)
+                    # ishift = np.arange(dshift.shape[0])-dshift
+                    # bshift_vec_rep = bshift[batch_index_vec].repeat(nrep_vec)
+                    icellshift = (
+                        np.arange(dshift.shape[0])
+                        - dshift
+                        + bshift[batch_index_vec].repeat(nrep_vec)
+                    )
+                    # shift vectors
+                    vec = vec + dvec_filter[icellshift]
+                    pbc_shifts = cell_shift_pbc_filter[icellshift]
+
+                    p1 = np.repeat(p1, nrep_vec)
+                    p2 = np.repeat(p2, nrep_vec)
+                    if natoms.shape[0] > 1:
+                        mask_p12 = np.repeat(mask_p12, nrep_vec)
 
         ## compute distances
         d12 = (vec**2).sum(axis=-1)
@@ -209,7 +267,6 @@ class GraphGenerator:
         idx = np.nonzero(mask)[0]
         npairs = idx.shape[0]
         if npairs > max_pairs or add_margin:
-            mult_size = state.get("nblist_mult_size", self.mult_size)
             prev_max_pairs = max_pairs
             max_pairs = int(mult_size * max(npairs, max_pairs)) + 1
             state_up["npairs"] = (max_pairs, prev_max_pairs)
@@ -245,7 +302,6 @@ class GraphGenerator:
             idx = np.nonzero(mask)[0]
             npairs_skin = idx.shape[0]
             if npairs_skin > max_pairs_skin or add_margin:
-                mult_size = state.get("nblist_mult_size", self.mult_size)
                 prev_max_pairs_skin = max_pairs_skin
                 max_pairs_skin = int(mult_size * max(npairs_skin, max_pairs_skin)) + 1
                 state_up["npairs_skin"] = (max_pairs_skin, prev_max_pairs_skin)
@@ -392,6 +448,7 @@ class GraphGenerator:
                     coords_pbc, at_shifts = jax.vmap(
                         partial(compute_pbc, mode="floor")
                     )(coords, reciprocal_cells[batch_index], cells[batch_index])
+                vec = coords_pbc[p2] - coords_pbc[p1]
                 num_repeats = state.get("num_repeats_pbc", (0, 0, 0))
                 # if num_repeats is None:
                 #     raise ValueError(
@@ -400,7 +457,10 @@ class GraphGenerator:
                 # check if num_repeats is larger than previous
                 inv_distances = jnp.linalg.norm(reciprocal_cells, axis=1)
                 cdinv = cutoff_skin * inv_distances
-                num_repeats_new = jnp.max(jnp.ceil(cdinv).astype(jnp.int32), axis=0)
+                num_repeats_all = jnp.ceil(cdinv).astype(jnp.int32)
+                if "true_sys" in inputs:
+                    num_repeats_all = jnp.where(inputs["true_sys"][:,None], num_repeats_all, 0)
+                num_repeats_new = jnp.max(num_repeats_all, axis=0)
                 overflow_repeats = jnp.any(num_repeats_new > jnp.asarray(num_repeats))
 
                 cell_shift_pbc = jnp.asarray(
@@ -409,29 +469,82 @@ class GraphGenerator:
                         dtype=cells.dtype,
                     ).T.reshape(-1, 3)
                 )
-                vec = coords_pbc[p2, None, :] - coords_pbc[p1, None, :]
-                if cells.shape[0] == 1:
-                    vec = vec + jnp.dot(cell_shift_pbc, cells[0])[None, :, :]
-                else:
-                    batch_index_vec = batch_index[p1]
-                    vshift = jnp.einsum("bj,sji->sbi", cell_shift_pbc, cells)
-                    vec = vec + vshift[batch_index_vec]
-                vec = vec.reshape(-1, 3)
 
-                pbc_shifts = jnp.broadcast_to(
-                    cell_shift_pbc[None, :, :],
-                    (p1.shape[0], cell_shift_pbc.shape[0], 3),
-                ).reshape(-1, 3)
-                p1 = jnp.broadcast_to(
-                    p1[:, None], (p1.shape[0], cell_shift_pbc.shape[0])
-                ).flatten()
-                p2 = jnp.broadcast_to(
-                    p2[:, None], (p2.shape[0], cell_shift_pbc.shape[0])
-                ).flatten()
-                if natoms.shape[0] > 1:
-                    mask_p12 = jnp.broadcast_to(
-                        mask_p12[:, None], (mask_p12.shape[0], cell_shift_pbc.shape[0])
+                if cells.shape[0] == 1:
+                    vec = (vec[:,None,:] + jnp.dot(cell_shift_pbc, cells[0])[None, :, :]).reshape(-1, 3)    
+                    pbc_shifts = jnp.broadcast_to(
+                        cell_shift_pbc[None, :, :],
+                        (p1.shape[0], cell_shift_pbc.shape[0], 3),
+                    ).reshape(-1, 3)
+                    p1 = jnp.broadcast_to(
+                        p1[:, None], (p1.shape[0], cell_shift_pbc.shape[0])
                     ).flatten()
+                    p2 = jnp.broadcast_to(
+                        p2[:, None], (p2.shape[0], cell_shift_pbc.shape[0])
+                    ).flatten()
+                    if natoms.shape[0] > 1:
+                        mask_p12 = jnp.broadcast_to(
+                            mask_p12[:, None], (mask_p12.shape[0], cell_shift_pbc.shape[0])
+                        ).flatten()
+                else:
+                    dvec = jnp.einsum("bj,sji->sbi", cell_shift_pbc, cells).reshape(-1, 3)
+
+                    ## get pbc shifts specific to each box
+                    cell_shift_pbc = jnp.broadcast_to(
+                        cell_shift_pbc[None, :, :],
+                        (num_repeats_all.shape[0], cell_shift_pbc.shape[0], 3),
+                    )
+                    mask = jnp.all(
+                        jnp.abs(cell_shift_pbc) <= num_repeats_all[:, None, :], axis=-1
+                    ).flatten()
+                    max_shifts  = state.get("nshifts_pbc", 1)
+
+                    cell_shift_pbc = cell_shift_pbc.reshape(-1,3)
+                    shiftx,shifty,shiftz = cell_shift_pbc[:,0],cell_shift_pbc[:,1],cell_shift_pbc[:,2]
+                    dvecx,dvecy,dvecz = dvec[:,0],dvec[:,1],dvec[:,2]
+                    (dvecx, dvecy,dvecz,shiftx,shifty,shiftz), scatter_idx, nshifts = mask_filter_1d(
+                        mask,
+                        max_shifts,
+                        (dvecx, 0.),
+                        (dvecy, 0.),
+                        (dvecz, 0.),
+                        (shiftx, 0),
+                        (shifty, 0),
+                        (shiftz, 0),
+                    )
+                    dvec = jnp.stack((dvecx,dvecy,dvecz),axis=-1)
+                    cell_shift_pbc = jnp.stack((shiftx,shifty,shiftz),axis=-1)
+                    overflow_repeats = overflow_repeats | (nshifts > max_shifts)
+
+                    ## get batch shift in the dvec_filter array
+                    nrep = jnp.prod(2 * num_repeats_all + 1, axis=1)
+                    bshift = jnp.concatenate((jnp.array([0],dtype=jnp.int32), jnp.cumsum(nrep)[:-1]))
+
+                    ## repeat vectors
+                    nvec_max = state.get("nvec_pbc", 1)
+                    batch_index_vec = batch_index[p1]
+                    nrep_vec = jnp.where(mask_p12,nrep[batch_index_vec],0)
+                    nvec = nrep_vec.sum()
+                    overflow_repeats = overflow_repeats | (nvec > nvec_max)
+                    vec = jnp.repeat(vec,nrep_vec,axis=0,total_repeat_length=nvec_max)
+                    # jax.debug.print("{nvec} {nvec_max} {nshifts} {max_shifts}",nvec=nvec,nvec_max=jnp.asarray(nvec_max),nshifts=nshifts,max_shifts=jnp.asarray(max_shifts))
+
+                    ## get shift index
+                    dshift = jnp.concatenate(
+                        (jnp.array([0],dtype=jnp.int32), jnp.cumsum(nrep_vec)[:-1])
+                    )
+                    if nrep_vec.size == 0:
+                        dshift = jnp.array([],dtype=jnp.int32)
+                    dshift = jnp.repeat(dshift,nrep_vec, total_repeat_length=nvec_max)
+                    bshift = jnp.repeat(bshift[batch_index_vec],nrep_vec, total_repeat_length=nvec_max)
+                    icellshift = jnp.arange(dshift.shape[0]) - dshift + bshift
+                    vec = vec + dvec[icellshift]
+                    pbc_shifts = cell_shift_pbc[icellshift]
+                    p1 = jnp.repeat(p1,nrep_vec, total_repeat_length=nvec_max)
+                    p2 = jnp.repeat(p2,nrep_vec, total_repeat_length=nvec_max)
+                    if natoms.shape[0] > 1:
+                        mask_p12 = jnp.repeat(mask_p12,nrep_vec, total_repeat_length=nvec_max)
+                
 
         ## compute distances
         d12 = (vec**2).sum(axis=-1)
@@ -699,6 +812,8 @@ class GraphFilter:
 
         new_state = {**state}
         state_up = {}
+        mult_size = state.get("nblist_mult_size", self.mult_size)
+        assert mult_size >= 1., "nblist_mult_size should be >= 1."
 
         edge_src = np.array(graph_in["edge_src"], dtype=np.int32)
         d12 = np.array(graph_in["d12"], dtype=np.float32)
@@ -714,7 +829,6 @@ class GraphFilter:
         idx = np.nonzero(mask)[0]
         npairs = idx.shape[0]
         if npairs > max_pairs or add_margin:
-            mult_size = state.get("nblist_mult_size", self.mult_size)
             prev_max_pairs = max_pairs
             max_pairs = int(mult_size * max(npairs, max_pairs)) + 1
             state_up["npairs"] = (max_pairs, prev_max_pairs)
@@ -920,6 +1034,8 @@ class GraphAngularExtension:
 
         new_state = {**state}
         state_up = {}
+        mult_size = state.get("nblist_mult_size", self.mult_size)
+        assert mult_size >= 1., "nblist_mult_size should be >= 1."
 
         ### count number of neighbors
         nat = inputs["species"].shape[0]
@@ -977,7 +1093,6 @@ class GraphAngularExtension:
         idx = np.nonzero(angle_mask)[0]
         nangles = idx.shape[0]
         if nangles > max_angles or add_margin:
-            mult_size = state.get("nblist_mult_size", self.mult_size)
             max_angles_prev = max_angles
             max_angles = int(mult_size * max(nangles, max_angles)) + 1
             state_up["nangles"] = (max_angles, max_angles_prev)
