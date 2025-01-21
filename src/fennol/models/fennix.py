@@ -34,7 +34,7 @@ class FENNIX:
     in the wrapper. If only `rng_key` is provided, the model is initialized with a dummy system and the resulting.
     """
 
-    cutoff: Union[float,None]
+    cutoff: Union[float, None]
     modules: FENNIXModules
     variables: Dict
     preprocessing: PreprocessingChain
@@ -62,8 +62,8 @@ class FENNIX:
         energy_unit: str = "Ha",
         **kwargs,
     ) -> None:
-        """ Initialize the FENNIX model
-        
+        """Initialize the FENNIX model
+
         Arguments:
         ----------
         cutoff: float
@@ -77,17 +77,17 @@ class FENNIX:
         rng_key: jax.random.PRNGKey
             The random key to initialize the model. If not provided, jax.random.PRNGKey(0) is used (should be avoided).
         variables: dict
-            The variables of the model (i.e. weights, biases and all other tunable parameters). 
+            The variables of the model (i.e. weights, biases and all other tunable parameters).
             If not provided, the variables are initialized (usually at random)
         energy_terms: Sequence[str]
             The energy terms in the model output that will be summed to compute the total energy.
             If None, the total energy is always zero (useful for non-PES models).
         use_atom_padding: bool
-            If True, the model will use atom padding for the input data. 
+            If True, the model will use atom padding for the input data.
             This is useful when one plans to frequently change the number of atoms in the system (for example during training).
         graph_config: dict
             Edit the graph configuration. Mostly used to change a long-range cutoff as a function of a simulation box size.
-        
+
         """
         self._input_args = {
             "cutoff": cutoff,
@@ -174,33 +174,39 @@ class FENNIX:
 
         self._initializing = False
 
-    def set_energy_terms(self, energy_terms: Union[Sequence[str],None], jit:bool=True) -> None:
-        """ Set the energy terms to be computed by the model and prepare the energy and force functions."""
+    def set_energy_terms(
+        self, energy_terms: Union[Sequence[str], None], jit: bool = True
+    ) -> None:
+        """Set the energy terms to be computed by the model and prepare the energy and force functions."""
         object.__setattr__(self, "energy_terms", energy_terms)
         if energy_terms is None:
+
             def total_energy(variables, data):
                 out = self.__apply(variables, data)
                 coords = out["coordinates"]
                 nsys = out["natoms"].shape[0]
                 nat = coords.shape[0]
                 dtype = coords.dtype
-                e=jnp.zeros(nsys,dtype=dtype)
-                eat = jnp.zeros(nat,dtype=dtype)
+                e = jnp.zeros(nsys, dtype=dtype)
+                eat = jnp.zeros(nat, dtype=dtype)
                 out["total_energy"] = e
                 out["atomic_energies"] = eat
                 return e, out
-            
+
             def energy_and_forces(variables, data):
-                e,out = total_energy(variables, data)
-                f=jnp.zeros_like(out["coordinates"])
+                e, out = total_energy(variables, data)
+                f = jnp.zeros_like(out["coordinates"])
                 out["forces"] = f
-                return e,f, out
-            
+                return e, f, out
+
             def energy_and_forces_and_virial(variables, data):
-                e,f,out = energy_and_forces(variables, data)
-                v=jnp.zeros((out["natoms"].shape[0],3,3),dtype=out["coordinates"].dtype)
+                e, f, out = energy_and_forces(variables, data)
+                v = jnp.zeros(
+                    (out["natoms"].shape[0], 3, 3), dtype=out["coordinates"].dtype
+                )
                 out["virial_tensor"] = v
-                return e,f,v, out
+                return e, f, v, out
+
         else:
             # build the energy and force functions
             def total_energy(variables, data):
@@ -221,7 +227,9 @@ class FENNIX:
                 # atomic_energies = jnp.squeeze(atomic_energies, axis=-1)
                 if isinstance(atomic_energies, jnp.ndarray):
                     if "true_atoms" in out:
-                        atomic_energies = jnp.where(out["true_atoms"], atomic_energies, 0.0)
+                        atomic_energies = jnp.where(
+                            out["true_atoms"], atomic_energies, 0.0
+                        )
                     out["atomic_energies"] = atomic_energies
                     energies = jax.ops.segment_sum(
                         atomic_energies,
@@ -233,7 +241,9 @@ class FENNIX:
 
                 if isinstance(system_energies, jnp.ndarray):
                     if "true_sys" in out:
-                        system_energies = jnp.where(out["true_sys"], system_energies, 0.0)
+                        system_energies = jnp.where(
+                            out["true_sys"], system_energies, 0.0
+                        )
                     out["system_energies"] = system_energies
 
                 out["total_energy"] = energies + system_energies
@@ -253,51 +263,80 @@ class FENNIX:
 
                 return out["total_energy"], out["forces"], out
 
+            # def energy_and_forces_and_virial(variables, data):
+            #     x = data["coordinates"]
+            #     batch_index = data["batch_index"]
+            #     if "cells" in data:
+            #         cells = data["cells"]
+            #         ## cells is a nbatchx3x3 matrix which lines are cell vectors (i.e. cells[0,0,:] is the first cell vector of the first system)
+
+            #         def _etot(variables, coordinates, cells):
+            #             reciprocal_cells = jnp.linalg.inv(cells)
+            #             energy, out = total_energy(
+            #                 variables,
+            #                 {
+            #                     **data,
+            #                     "coordinates": coordinates,
+            #                     "cells": cells,
+            #                     "reciprocal_cells": reciprocal_cells,
+            #                 },
+            #             )
+            #             return energy.sum(), out
+
+            #         (dedx, dedcells), out = jax.grad(_etot, argnums=(1, 2), has_aux=True)(
+            #             variables, x, cells
+            #         )
+            #         f= -dedx
+            #         out["forces"] = f
+            #     else:
+            #         _,f,out = energy_and_forces(variables, data)
+
+            #     vir = -jax.ops.segment_sum(
+            #         f[:, :, None] * x[:, None, :],
+            #         batch_index,
+            #         num_segments=len(data["natoms"]),
+            #     )
+
+            #     if "cells" in data:
+            #         # dvir = jax.vmap(jnp.matmul)(dedcells, cells.transpose(0, 2, 1))
+            #         dvir = jnp.einsum("...ki,...kj->...ij", dedcells, cells)
+            #         nsys = data["natoms"].shape[0]
+            #         if cells.shape[0]==1 and nsys>1:
+            #             dvir = dvir / nsys
+            #         vir = vir + dvir
+
+            #     out["virial_tensor"] = vir
+
+            #     return out["total_energy"], f, vir, out
+
             def energy_and_forces_and_virial(variables, data):
                 x = data["coordinates"]
-                batch_index = data["batch_index"]
-                if "cells" in data:
-                    cells = data["cells"]
-                    ## cells is a nbatchx3x3 matrix which lines are cell vectors (i.e. cells[0,0,:] is the first cell vector of the first system)
-
-                    def _etot(variables, coordinates, cells):
-                        reciprocal_cells = jnp.linalg.inv(cells)
-                        energy, out = total_energy(
-                            variables,
-                            {
-                                **data,
-                                "coordinates": coordinates,
-                                "cells": cells,
-                                "reciprocal_cells": reciprocal_cells,
-                            },
-                        )
-                        return energy.sum(), out
-
-                    (dedx, dedcells), out = jax.grad(_etot, argnums=(1, 2), has_aux=True)(
-                        variables, x, cells
-                    )
-                    f= -dedx
-                    out["forces"] = f
-                else:
-                    _,f,out = energy_and_forces(variables, data)
-
-                vir = -jax.ops.segment_sum(
-                    f[:, :, None] * x[:, None, :],
-                    batch_index,
-                    num_segments=len(data["natoms"]),
+                scaling = jnp.asarray(
+                    np.eye(3)[None, :, :].repeat(data["natoms"].shape[0], axis=0)
                 )
+                def _etot(variables, coordinates, scaling):
+                    batch_index = data["batch_index"]
+                    coordinates = jax.vmap(jnp.matmul)(
+                        coordinates, scaling[batch_index]
+                    )
+                    inputs = {**data, "coordinates": coordinates}
+                    if "cells" in data:
+                        ## cells is a nbatchx3x3 matrix which lines are cell vectors (i.e. cells[0,0,:] is the first cell vector of the first system)
+                        cells = jax.vmap(jnp.matmul)(data["cells"], scaling)
+                        reciprocal_cells = jnp.linalg.inv(cells)
+                        inputs["cells"] = cells
+                        inputs["reciprocal_cells"] = reciprocal_cells
+                    energy, out = total_energy(variables, inputs)
+                    return energy.sum(), out
 
-                if "cells" in data:
-                    dvir = jax.vmap(jnp.matmul)(dedcells, cells.transpose(0, 2, 1))
-                    nsys = data["natoms"].shape[0]
-                    if cells.shape[0]==1 and nsys>1:
-                        dvir = dvir / nsys
-                    vir = vir + dvir
-                
+                (dedx, vir), out = jax.grad(_etot, argnums=(1, 2), has_aux=True)(
+                    variables, x, scaling
+                )
+                f = -dedx
+                out["forces"] = f
                 out["virial_tensor"] = vir
 
                 return out["total_energy"], f, vir, out
-        
 
         object.__setattr__(self, "_total_energy_raw", total_energy)
         if jit:
@@ -314,29 +353,36 @@ class FENNIX:
             object.__setattr__(
                 self, "_energy_and_forces_and_virial", energy_and_forces_and_virial
             )
-    
-    def get_gradient_function(self, *gradient_keys: Sequence[str], jit:bool=True, variables_as_input:bool=False):
-        """ Return a function that computes the energy and the gradient of the energy with respect to the keys in gradient_keys"""
-        def _energy_gradient(variables,data):
+
+    def get_gradient_function(
+        self,
+        *gradient_keys: Sequence[str],
+        jit: bool = True,
+        variables_as_input: bool = False,
+    ):
+        """Return a function that computes the energy and the gradient of the energy with respect to the keys in gradient_keys"""
+
+        def _energy_gradient(variables, data):
             def _etot(variables, inputs):
                 if "cells" in inputs:
                     reciprocal_cells = jnp.linalg.inv(inputs["cells"])
                     inputs = {**inputs, "reciprocal_cells": reciprocal_cells}
-                energy, out = self._total_energy_raw(
-                    variables, {**data, **inputs}
-                )
+                energy, out = self._total_energy_raw(variables, {**data, **inputs})
                 return energy.sum(), out
 
             inputs = {k: data[k] for k in gradient_keys}
-            de, out = jax.grad(_etot, argnums=1, has_aux=True)(
-                variables, inputs
+            de, out = jax.grad(_etot, argnums=1, has_aux=True)(variables, inputs)
+
+            return (
+                out["total_energy"],
+                de,
+                {**out, **{"dEd_" + k: de[k] for k in gradient_keys}},
             )
 
-            return out["total_energy"],de, {**out, **{"dEd_"+k: de[k] for k in gradient_keys}}
-    
         if variables_as_input:
             energy_gradient = _energy_gradient
         else:
+
             def energy_gradient(data):
                 return _energy_gradient(self.variables, data)
 
@@ -388,7 +434,7 @@ class FENNIX:
         return output
 
     def total_energy(
-        self, variables: Optional[dict] = None, unit:Union[float,str] = None,**inputs
+        self, variables: Optional[dict] = None, unit: Union[float, str] = None, **inputs
     ) -> Tuple[jnp.ndarray, Dict]:
         """compute the total energy of the system
 
@@ -406,11 +452,11 @@ class FENNIX:
             model_energy_unit = self.Ha_to_model_energy
             if isinstance(unit, str):
                 unit = au.get_multiplier(unit)
-            e = e * (unit/model_energy_unit)
+            e = e * (unit / model_energy_unit)
         return e, output
 
     def energy_and_forces(
-        self, variables: Optional[dict] = None, unit: Union[float,str]=None,**inputs
+        self, variables: Optional[dict] = None, unit: Union[float, str] = None, **inputs
     ) -> Tuple[jnp.ndarray, jnp.ndarray, Dict]:
         """compute the total energy and forces of the system
 
@@ -429,12 +475,12 @@ class FENNIX:
             model_energy_unit = self.Ha_to_model_energy
             if isinstance(unit, str):
                 unit = au.get_multiplier(unit)
-            e = e * (unit/model_energy_unit)
-            f = f * (unit/model_energy_unit)
-        return e,f, output
+            e = e * (unit / model_energy_unit)
+            f = f * (unit / model_energy_unit)
+        return e, f, output
 
     def energy_and_forces_and_virial(
-        self, variables: Optional[dict] = None, unit: Union[float,str]=None, **inputs
+        self, variables: Optional[dict] = None, unit: Union[float, str] = None, **inputs
     ) -> Tuple[jnp.ndarray, jnp.ndarray, Dict]:
         """compute the total energy and forces of the system
 
@@ -454,21 +500,21 @@ class FENNIX:
             model_energy_unit = self.Ha_to_model_energy
             if isinstance(unit, str):
                 unit = au.get_multiplier(unit)
-            e = e * (unit/model_energy_unit)
-            f = f * (unit/model_energy_unit)
-            v = v * (unit/model_energy_unit)
-        return e,f,v, output
+            e = e * (unit / model_energy_unit)
+            f = f * (unit / model_energy_unit)
+            v = v * (unit / model_energy_unit)
+        return e, f, v, output
 
     def remove_atom_padding(self, output):
-        """ remove atom padding from the output """
+        """remove atom padding from the output"""
         return atom_unpadding(output)
 
     def get_model(self) -> Tuple[FENNIXModules, Dict]:
-        """ return the model and its variables"""
+        """return the model and its variables"""
         return self.modules, self.variables
 
     def get_preprocessing(self) -> Tuple[PreprocessingChain, Dict]:
-        """ return the preprocessing chain and its state"""
+        """return the preprocessing chain and its state"""
         return self.preprocessing, self.preproc_state
 
     def __setattr__(self, __name: str, __value: Any) -> None:
@@ -513,7 +559,7 @@ class FENNIX:
                 if cutoff is not None:
                     box_size = min(box_size, 2 * g["cutoff"])
         coordinates = np.array(
-            jax.random.uniform(rng_key, (n_atoms, 3), maxval=box_size)
+            jax.random.uniform(rng_key, (n_atoms, 3), maxval=box_size), dtype=np.float64
         )
         species = np.ones((n_atoms,), dtype=np.int32)
         batch_index = np.zeros((n_atoms,), dtype=np.int32)
@@ -529,7 +575,7 @@ class FENNIX:
     def summarize(
         self, rng_key: jax.random.PRNGKey = None, example_data=None, **kwargs
     ) -> str:
-        """ Summarize the model architecture and parameters """
+        """Summarize the model architecture and parameters"""
         if rng_key is None:
             head = "Summarizing with example data:\n"
             rng_key = jax.random.PRNGKey(0)
@@ -542,7 +588,7 @@ class FENNIX:
         return head + nn.tabulate(self.modules, rng_key, **kwargs)(inputs)
 
     def to_dict(self):
-        """ return a dictionary representation of the model"""
+        """return a dictionary representation of the model"""
         return {
             **self._input_args,
             "energy_terms": self.energy_terms,
@@ -550,7 +596,7 @@ class FENNIX:
         }
 
     def save(self, filename):
-        """ save the model to a file"""
+        """save the model to a file"""
         state_dict = self.to_dict()
         state_dict["preprocessing"] = [
             [k, v] for k, v in state_dict["preprocessing"].items()
@@ -566,7 +612,7 @@ class FENNIX:
         use_atom_padding=False,
         graph_config={},
     ):
-        """ load a model from a file"""
+        """load a model from a file"""
         with open(filename, "rb") as f:
             state_dict = serialization.msgpack_restore(f.read())
         state_dict["preprocessing"] = {k: v for k, v in state_dict["preprocessing"]}

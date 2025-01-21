@@ -85,7 +85,7 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
                 self.model.variables, inputs
             )
             volume = self.atoms.get_volume()
-            stress = -np.asarray(virial[0]) * self.energy_conv / volume
+            stress = np.asarray(virial[0]) * self.energy_conv / volume
             results["stress"] = full_3x3_to_voigt_6_stress(stress)
             results["forces"] = np.asarray(f) * self.energy_conv
         elif "forces" in properties:
