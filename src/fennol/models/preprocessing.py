@@ -1441,7 +1441,7 @@ class AtomPadding:
 
     mult_size: float = 1.2
     """Multiplicative factor for resizing the atomic arrays."""
-    add_sys: int = 1
+    add_sys: int = 0
 
     def init(self):
         return {"prev_nat": 0, "prev_nsys": 0}
@@ -1462,10 +1462,9 @@ class AtomPadding:
             prev_nsys_ = nsys + self.add_sys
 
         add_atoms = prev_nat_ - nat
-        add_sys = prev_nsys_ - nsys
+        add_sys = prev_nsys_ - nsys  + 1
         output = {**inputs}
         if add_atoms > 0:
-            batch_index = inputs["batch_index"]
             for k, v in inputs.items():
                 if isinstance(v, np.ndarray) or isinstance(v, jax.Array):
                     if v.shape[0] == nat:
@@ -1497,9 +1496,14 @@ class AtomPadding:
                 species, -1 * np.ones(add_atoms, dtype=species.dtype)
             )
             output["batch_index"] = np.append(
-                batch_index,
-                np.array([prev_nsys_ - 1] * add_atoms, dtype=batch_index.dtype),
+                inputs["batch_index"],
+                np.array([output["natoms"].shape[0] - 1] * add_atoms, dtype=inputs["batch_index"].dtype),
             )
+            if "system_index" in inputs:
+                output["system_index"] = np.append(
+                    inputs["system_index"],
+                    np.array([output["natoms"].shape[0] - 1] * add_sys, dtype=inputs["system_index"].dtype),
+                )
 
         output["true_atoms"] = output["species"] > 0
         output["true_sys"] = np.arange(len(output["natoms"])) < nsys

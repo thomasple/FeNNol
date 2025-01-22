@@ -267,17 +267,19 @@ def get_train_step_function(
                 # _, _, output_ref = model_ref._energy_and_forces(model_ref.variables, data)
             output = evaluate(model, variables, inputs)
             # _, _, output = model._energy_and_forces(variables, data)
+            natoms = jnp.where(inputs["true_sys"], inputs["natoms"], 1)
+            nsys = inputs["natoms"].shape[0]
+            system_mask = inputs["true_sys"]
+            atom_mask = inputs["true_atoms"]
+            if "system_sign" in inputs:
+                system_sign = inputs["system_sign"] > 0
+                system_mask = jnp.logical_and(system_mask,system_sign)
+                atom_mask = jnp.logical_and(atom_mask, system_sign[inputs["batch_index"]])
+
             loss_tot = 0.0
             for loss_prms in loss_definition.values():
                 use_ref_mask = False
                 predicted = output[loss_prms["key"]]
-                nsys = inputs["natoms"].shape[0]
-                system_mask = inputs["true_sys"]
-                atom_mask = inputs["true_atoms"]
-                if "system_sign" in inputs:
-                    system_sign = inputs["system_sign"] > 0
-                    system_mask = jnp.logical_and(system_mask,system_sign)
-                    atom_mask = jnp.logical_and(atom_mask, system_sign[inputs["batch_index"]])
                 if "remove_ref_sys" in loss_prms and loss_prms["remove_ref_sys"]:
                     assert compute_ref_coords, "compute_ref_coords must be True"
                     # predicted = predicted - output_data_ref[loss_prms["key"]]
@@ -374,7 +376,6 @@ def get_train_step_function(
                 if ref.ndim > 1 and ref.shape[-1] == 1:
                     ref = jnp.squeeze(ref, axis=-1)
 
-                natoms = jnp.where(inputs["true_sys"], inputs["natoms"], 1)
                 per_atom = False
                 shape_mask = [ref.shape[0]] + [1] * (len(ref.shape) - 1)
                 # print(loss_prms["key"],predicted.shape,loss_prms["ref"],ref.shape)
@@ -559,7 +560,7 @@ def get_train_step_function(
                 else:
                     w = loss_prms["weight"]
 
-                loss_tot = loss_tot + w * loss  # / nel
+                loss_tot = loss_tot + w * loss
 
             return loss_tot, output
 
@@ -603,6 +604,13 @@ def get_validation_function(
             targets = {}
 
         natoms = jnp.where(inputs["true_sys"], inputs["natoms"], 1)
+        nsys = inputs["natoms"].shape[0]
+        system_mask = inputs["true_sys"]
+        atom_mask = inputs["true_atoms"]
+        if "system_sign" in inputs:
+            system_sign = inputs["system_sign"] > 0
+            system_mask = jnp.logical_and(system_mask,system_sign)
+            atom_mask = jnp.logical_and(atom_mask, system_sign[inputs["batch_index"]])
 
         for name, loss_prms in loss_definition.items():
             do_validation = loss_prms.get("validate", True)
@@ -610,13 +618,7 @@ def get_validation_function(
                 continue
             predicted = output[loss_prms["key"]]
             use_ref_mask = False
-            nsys = inputs["natoms"].shape[0]
-            system_mask = inputs["true_sys"]
-            atom_mask = inputs["true_atoms"]
-            if "system_sign" in loss_prms:
-                system_sign = inputs["system_sign"] > 0.0
-                system_mask = system_mask * system_sign
-                atom_mask = atom_mask * system_sign[inputs["batch_index"]]
+            
             if "remove_ref_sys" in loss_prms and loss_prms["remove_ref_sys"]:
                 assert compute_ref_coords, "compute_ref_coords must be True"
                 # predicted = predicted - output_data_ref[loss_prms["key"]]
@@ -638,6 +640,13 @@ def get_validation_function(
                         ref_mask = data[loss_prms["ref"] + "_mask"]
             else:
                 ref = jnp.zeros_like(predicted)
+            
+            if "norm_axis" in loss_prms and loss_prms["norm_axis"] is not None:
+                norm_axis = loss_prms["norm_axis"]
+                predicted = jnp.linalg.norm(
+                    predicted, axis=norm_axis, keepdims=True
+                )
+                ref = jnp.linalg.norm(ref, axis=norm_axis, keepdims=True)
 
             if loss_prms["type"].startswith("ensemble"):
                 axis = loss_prms.get("ensemble_axis", -1)

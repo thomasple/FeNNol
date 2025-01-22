@@ -327,7 +327,7 @@ def load_dataset(
         collate_layers_train.append(collate_with_noise)
 
     if atom_padding:
-        padder = AtomPadding(add_sys=training_parameters.get("padder_add_sys", 1))
+        padder = AtomPadding(add_sys=training_parameters.get("padder_add_sys", 0))
         padder_state = padder.init()
 
         def collate_with_padding(batch):
