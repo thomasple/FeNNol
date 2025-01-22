@@ -1,11 +1,8 @@
 ## FeNNol: Force-field-enhanced Neural Networks optimized library
 FeNNol is a library for building, training and running neural network potentials for molecular simulations. It is based on the JAX library and is designed to be fast and flexible.
 
-FeNNol's documentation is available [here](https://thomasple.github.io/FeNNol/).
+FeNNol's documentation is available [here](https://thomasple.github.io/FeNNol/) and the article describing the library at https://doi.org/10.1063/5.0217688
 
-### Warning
-FeNNol is in early stages of development: some APIs are subject to change and documentation is still minimal (but should improve soon !). 
-This is also a temporary repository for the preprint https://arxiv.org/abs/2405.01491 The library will soon be moved to a more permanent location.
 
 ## Installation
 You can start with a fresh environment using conda:
@@ -56,16 +53,23 @@ To learn how to run molecular dynamics simulations with FeNNol models, you can c
 
 Please cite this paper if you use the library.
 ```
-T. Plé, O. Adjoua, L. Lagardère and J-P. Piquemal. FeNNol: an Efficient and Flexible Library for Building Force-field-enhanced Neural Network Potentials. arXiv preprint arXiv:2405.01491 (2024)
+T. Plé, O. Adjoua, L. Lagardère and J-P. Piquemal. FeNNol: an Efficient and Flexible Library for Building Force-field-enhanced Neural Network Potentials. J. Chem. Phys. 161, 042502 (2024)
 ```
 
 ```
 @article{ple2024fennol,
-  title={FeNNol: an Efficient and Flexible Library for Building Force-field-enhanced Neural Network Potentials},
-  author={Pl{\'e}, Thomas and Adjoua, Olivier and Lagard{\`e}re, Louis and Piquemal, Jean-Philip},
-  journal={arXiv preprint arXiv:2405.01491},
-  year={2024}
+    author = {Plé, Thomas and Adjoua, Olivier and Lagardère, Louis and Piquemal, Jean-Philip},
+    title = {FeNNol: An efficient and flexible library for building force-field-enhanced neural network potentials},
+    journal = {The Journal of Chemical Physics},
+    volume = {161},
+    number = {4},
+    pages = {042502},
+    year = {2024},
+    month = {07},
+    doi = {10.1063/5.0217688},
+    url = {https://doi.org/10.1063/5.0217688},
 }
+
 ```
 
 ## License
