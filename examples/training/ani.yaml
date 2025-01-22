@@ -15,7 +15,7 @@ training:
 
   #weight_decay: 1.e-4 # weight decay for the optimizer (L2 regularization)
   #decay_targets: [energy] # list of modules and/or paramters for which the weight decay is applied
-  energy_terms: [energy] # output keys used to form the total energy
+  energy_terms: [energy,repulsion] # output keys used to form the total energy
 
   ## learning rate schedule (default is a cosine one-cycle schedule)
   init_lr: 1.e-3 # initial learning rate
@@ -76,3 +76,7 @@ model:
       hidden_neurons: [256, 192, 160]
       input_key: embedding
       squeeze: True
+
+    repulsion:
+      module_name: REPULSION_ZBL
+      trainable: True
