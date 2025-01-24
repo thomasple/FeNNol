@@ -1,10 +1,14 @@
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+version_file = "src/fennol/version.py"
 
 [project]
 name = "FeNNol"
-version = "0.1.0"
+# version = "0.1.0"
+dynamic = ["version"]
 description = "FeNNol: Force-field-enhanced Neural Network optimized library"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -41,3 +45,4 @@ Homepage = "https://github.com/thomasple/FeNNol"
 fennol_md = "fennol.md.dynamic:main"
 fennol_train = "fennol.training.training:main"
 fennol_inspect = "fennol.models.inspect:main"
+fennol_analyze = "fennol.analyze:main"
