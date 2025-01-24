@@ -38,7 +38,7 @@ from ..models.preprocessing import AtomPadding, check_input, convert_to_jax
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(prog="fennol_train")
     parser.add_argument("config_file", type=str)
     parser.add_argument("--model_file", type=str, default=None)
     args = parser.parse_args()
@@ -57,12 +57,15 @@ def main():
     if device == "cpu":
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
     elif device.startswith("cuda") or device.startswith("gpu"):
-        dsplit = device.split(":")
-        num = 0 if len(dsplit) == 1 else dsplit[-1]
-        os.environ["CUDA_VISIBLE_DEVICES"] = num
-        jax.config.update("jax_default_device", jax.devices("gpu")[0])
-    else:
-        raise ValueError(f"Unknown device: {device}")
+        if ":" in device:
+            num = device.split(":")[-1]
+            os.environ["CUDA_VISIBLE_DEVICES"] = num
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+        device = "gpu"
+
+    _device = jax.devices(device)[0]
+    jax.config.update("jax_default_device", _device)
         
 
     # output directory

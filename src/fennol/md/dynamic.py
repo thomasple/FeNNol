@@ -50,13 +50,13 @@ def main():
         open(sys.stdout.fileno(), "wb", 0), write_through=True
     )
     ### Read the parameter file
-    parser = argparse.ArgumentParser(prog="TinkerIO")
+    parser = argparse.ArgumentParser(prog="fennol_md")
     parser.add_argument("param_file", type=Path, help="Parameter file")
     args = parser.parse_args()
     simulation_parameters = parse_input(args.param_file)
 
     ### Set the device
-    device: str = simulation_parameters.get("device", "cpu")
+    device: str = simulation_parameters.get("device", "cpu").lower()
     if device == "cpu":
         device = "cpu"
         os.environ["CUDA_VISIBLE_DEVICES"] = ""

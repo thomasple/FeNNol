@@ -16,7 +16,7 @@ import json
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="fennol_md")
+    parser = argparse.ArgumentParser(prog="fennol_analyze")
     parser.add_argument(
         "input_file", type=Path, help="file containing the geometries to analyze"
     )
@@ -59,7 +59,9 @@ def main():
         else:
             os.environ["CUDA_VISIBLE_DEVICES"] = "0"
         device = "gpu"
-    jax.config.update("jax_default_device", jax.devices(device)[0])
+
+    _device = jax.devices(device)[0]
+    jax.config.update("jax_default_device", _device)
 
     # set the precision
     if args.f64:
