@@ -3,6 +3,7 @@ FeNNol is a library for building, training and running neural network potentials
 
 FeNNol's documentation is available [here](https://thomasple.github.io/FeNNol/) and the article describing the library at https://doi.org/10.1063/5.0217688
 
+Active Learning tutorial in this [Colab notebook](https://colab.research.google.com/drive/1Z3G_jVSF60_nbDdJwbgyLdJBHTYuQ5nL?usp=sharing)
 
 ## Installation
 You can start with a fresh environment using conda:
