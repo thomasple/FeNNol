@@ -73,6 +73,7 @@ def load_system_data(simulation_parameters, fprec):
     ### GET TEMPERATURE
     temperature = np.clip(simulation_parameters.get("temperature", 300.0), 1.0e-6, None)
     kT = temperature / au.KELVIN
+    totmass_amu = mass_amu.sum()/6.02214129e-1
 
     ## SYSTEM DATA
     system_data = {
@@ -83,6 +84,7 @@ def load_system_data(simulation_parameters, fprec):
         "mass": mass,
         "temperature": temperature,
         "kT": kT,
+        "totmass_amu": totmass_amu,
     }
 
     ### Set boundary conditions
@@ -95,10 +97,8 @@ def load_system_data(simulation_parameters, fprec):
         for l in cell:
             print("# ", l)
         # print(cell)
-        totmass_amu = mass_amu.sum()
-        dens = totmass_amu / 6.02214129e-1 / volume
+        dens = totmass_amu  / volume
         print("# density: ", dens.item(), " g/cm^3")
-        pscale = 1. / (3.0 * volume)
         minimum_image = simulation_parameters.get("minimum_image", True)
         estimate_pressure = simulation_parameters.get("estimate_pressure", False)
         print("# minimum_image: ", minimum_image)
@@ -111,7 +111,6 @@ def load_system_data(simulation_parameters, fprec):
             "cell": cell,
             "reciprocal_cell": reciprocal_cell,
             "volume": volume,
-            "pscale": pscale,
             "minimum_image": minimum_image,
             "estimate_pressure": estimate_pressure,
         }
@@ -158,8 +157,13 @@ def load_system_data(simulation_parameters, fprec):
         "natoms": natoms,
     }
     if cell is not None:
-        conformation["cells"] = cell[None, :, :]
-        conformation["reciprocal_cells"] = reciprocal_cell[None, :, :]
+        cell = cell[None, :, :]
+        reciprocal_cell = reciprocal_cell[None, :, :]
+        if nbeads is not None:
+            cell = np.repeat(cell, nbeads, axis=0)
+            reciprocal_cell = np.repeat(reciprocal_cell, nbeads, axis=0)
+        conformation["cells"] = cell
+        conformation["reciprocal_cells"] = reciprocal_cell
     
     additional_keys = simulation_parameters.get("additional_keys", {})
     for key, value in additional_keys.items():
@@ -211,10 +215,11 @@ def initialize_preprocessing(simulation_parameters, model, conformation, system_
 def initialize_system(conformation, vel, model, system_data, fprec):
     ## initial energy and forces
     print("# Computing initial energy and forces")
-    e, f, _ = model._energy_and_forces(model.variables, conformation)
+    e, f, vir,_ = model._energy_and_forces_and_virial(model.variables, conformation)
     model_energy_unit = model.Ha_to_model_energy
     f = np.array(f) / model_energy_unit
     epot = np.mean(e) / model_energy_unit
+    vir = np.mean(vir, axis=0) / model_energy_unit
     ek = 0.5 * jnp.sum(system_data["mass"][:, None] * vel**2)
 
     ## build system
@@ -222,6 +227,9 @@ def initialize_system(conformation, vel, model, system_data, fprec):
     system["ek"] = ek
     system["epot"] = epot
     system["vel"] = vel.astype(fprec)
+    if "cells" in conformation:
+        system["virial"] = vir
+        system["cell"] = conformation["cells"][0]
     if "nbeads" in system_data:
         nbeads = system_data["nbeads"]
         coordinates = conformation["coordinates"].reshape(nbeads, -1, 3)

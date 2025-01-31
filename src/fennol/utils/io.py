@@ -84,7 +84,13 @@ def xyz_reader(
 
 
 def read_xyz(
-    filename, has_comment_line=False, indexed=False, start=1, stop=-1, step=1, max_frames=None
+    filename,
+    has_comment_line=False,
+    indexed=False,
+    start=1,
+    stop=-1,
+    step=1,
+    max_frames=None,
 ):
     return [
         frame
@@ -103,17 +109,28 @@ def last_xyz_frame(filename, has_comment_line=False, indexed=False):
     return last_frame
 
 
-def write_arc_frame(f, symbols, coordinates, types=None, nbonds=None,connectivity=None,**kwargs):
+def write_arc_frame(
+    f,
+    symbols,
+    coordinates,
+    types=None,
+    nbonds=None,
+    connectivity=None,
+    cell=None,
+    **kwargs,
+):
     nat = len(symbols)
     f.write(f"{nat}\n")
+    if cell is not None:
+        f.write(" ".join([f"{x: 15.5f}" for x in cell.flatten()]) + "\n")
     # f.write(f'{axis} {axis} {axis} 90.0 90.0 90.0 \n')
     for i in range(nat):
-        line=f"{i+1} {symbols[i]:3} {coordinates[i,0]: 15.3f} {coordinates[i,1]: 15.3f} {coordinates[i,2]: 15.3f}"
+        line = f"{i+1} {symbols[i]:3} {coordinates[i,0]: 15.3f} {coordinates[i,1]: 15.3f} {coordinates[i,2]: 15.3f}"
         if types is not None:
-            line+=f"   {types[i]}"
+            line += f"   {types[i]}"
         if connectivity is not None and nbonds is not None:
-            line+="  "+ " ".join([str(x+1) for x in connectivity[i,:nbonds[i]]])
-        f.write(line+"\n")
+            line += "  " + " ".join([str(x + 1) for x in connectivity[i, : nbonds[i]]])
+        f.write(line + "\n")
     f.flush()
 
 
@@ -142,9 +159,12 @@ def write_extxyz_frame(
     f.flush()
 
 
-def write_xyz_frame(f, symbols, coordinates, **kwargs):
+def write_xyz_frame(f, symbols, coordinates,cell=None, **kwargs):
     nat = len(symbols)
-    f.write(f"{nat}\n\n")
+    f.write(f"{nat}\n")
+    if cell is not None:
+        f.write(" ".join([f"{x:.3f}" for x in cell.flatten()]))
+    f.write("\n")
     for i in range(nat):
         f.write(
             f"{symbols[i]:3} {coordinates[i,0]: 15.5e} {coordinates[i,1]: 15.5e} {coordinates[i,2]: 15.5e}\n"
@@ -152,23 +172,23 @@ def write_xyz_frame(f, symbols, coordinates, **kwargs):
     f.flush()
 
 
-def human_time_duration(seconds:float):
-    ''' Convert seconds (duration) to human readable string 
-    
+def human_time_duration(seconds: float):
+    """Convert seconds (duration) to human readable string
+
     from https://gist.github.com/borgstrom/936ca741e885a1438c374824efb038b3
-    '''
-    
-    if seconds<1.:
-        return f'{seconds*1000:.3g} ms'
-    if seconds<10.:
-        return f'{seconds:.3g} s'
-        
+    """
+
+    if seconds < 1.0:
+        return f"{seconds*1000:.3g} ms"
+    if seconds < 10.0:
+        return f"{seconds:.3g} s"
+
     TIME_DURATION_UNITS = (
-      ("week","s", 60 * 60 * 24 * 7),
-      ("day","s", 60 * 60 * 24),
-      ("h","", 60 * 60),
-      ("min","", 60),
-      ("s","", 1),
+        ("week", "s", 60 * 60 * 24 * 7),
+        ("day", "s", 60 * 60 * 24),
+        ("h", "", 60 * 60),
+        ("min", "", 60),
+        ("s", "", 1),
     )
     parts = []
     for unit, plur, div in TIME_DURATION_UNITS:

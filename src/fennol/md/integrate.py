@@ -22,6 +22,7 @@ from ..utils.periodic_table import PERIODIC_TABLE_REV_IDX, ATOMIC_MASSES
 from ..utils.atomic_units import AtomicUnits as au
 from ..utils.input_parser import parse_input
 from .thermostats import get_thermostat
+from .barostats import get_barostat
 
 from copy import deepcopy
 from .initial import initialize_system
@@ -30,7 +31,7 @@ from .initial import initialize_system
 def initialize_dynamics(
     simulation_parameters, system_data, conformation, model, fprec, rng_key
 ):
-    step, update_conformation, dyn_state, thermostat_state, vel = initialize_integrator(
+    step, update_conformation, dyn_state, thermo_state, vel = initialize_integrator(
         simulation_parameters, system_data, model, fprec, rng_key
     )
     ### initialize system
@@ -41,8 +42,7 @@ def initialize_dynamics(
         system_data,
         fprec,
     )
-    system["thermostat"] = thermostat_state
-    return step, update_conformation, dyn_state, system
+    return step, update_conformation, dyn_state, {**system, **thermo_state}
 
 
 def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_key):
@@ -51,6 +51,7 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
     nbeads = system_data.get("nbeads", None)
 
     mass = system_data["mass"]
+    totmass_amu = system_data["totmass_amu"]
     nat = system_data["nat"]
     dt2m = jnp.asarray(dt2 / mass[:, None], dtype=fprec)
     if nbeads is not None:
@@ -65,8 +66,9 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
     model_energy_unit = au.get_multiplier(model.energy_unit)
 
     # initialize thermostat
+    thermostat_rng, rng_key = jax.random.split(rng_key)
     thermostat, thermostat_post, thermostat_state, vel, dyn_state["thermostat_name"] = (
-        get_thermostat(simulation_parameters, dt, system_data, fprec, rng_key)
+        get_thermostat(simulation_parameters, dt, system_data, fprec, thermostat_rng)
     )
 
     do_thermostat_post = thermostat_post is not None
@@ -76,15 +78,26 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
 
     pbc_data = system_data.get("pbc", None)
     if pbc_data is not None:
-        pscale = pbc_data["pscale"]
-        estimate_pressure = pbc_data["estimate_pressure"]
+        thermo_update, variable_cell, barostat_state = get_barostat(
+            thermostat, simulation_parameters, dt, system_data, fprec, rng_key
+        )
+        estimate_pressure = variable_cell or pbc_data["estimate_pressure"]
+        thermo_state = {"thermostat": thermostat_state, "barostat": barostat_state}
+
     else:
-        pscale = 1.0
         estimate_pressure = False
+        variable_cell = False
+
+        def thermo_update(x, v, system):
+            v, thermostat_state = thermostat(v, system["thermostat"])
+            return x, v, {**system, "thermostat": thermostat_state}
+
+        thermo_state = {"thermostat": thermostat_state}
 
     print("# Estimate pressure: ", estimate_pressure)
 
     dyn_state["estimate_pressure"] = estimate_pressure
+    dyn_state["variable_cell"] = variable_cell
 
     dyn_state["print_timings"] = simulation_parameters.get("print_timings", False)
     if dyn_state["print_timings"]:
@@ -134,11 +147,19 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
             avx = jnp.asarray(-omk[1:, None, None] * np.sin(omk[1:, None, None] * dt2))
 
         @jax.jit
-        def update_conformation(eigx):
+        def update_conformation(conformation, system):
+            eigx = system["coordinates"]
             """update bead coordinates from ring polymer normal modes"""
-            return jnp.einsum("in,n...->i...", eigmat, eigx).reshape(
-                nbeads * nat, 3
-            ) * (nbeads**0.5)
+            x = jnp.einsum("in,n...->i...", eigmat, eigx).reshape(nbeads * nat, 3) * (
+                nbeads**0.5
+            )
+            conformation = {**conformation, "coordinates": x}
+            if variable_cell:
+                conformation["cells"] = system["cell"][None, :, :].repeat(nbeads, axis=0)
+                conformation["reciprocal_cells"] = jnp.linalg.inv(system["cell"])[
+                    None, :, :
+                ].repeat(nbeads, axis=0)
+            return conformation
 
         @jax.jit
         def coords_to_eig(x):
@@ -164,14 +185,13 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
             eigx = system["coordinates"]
             eigv = system["vel"] + dt2m * system["forces"]
             eigx, eigv = halfstep_free_polymer(eigx, eigv)
-            eigv, thermosat_state = thermostat(eigv, system["thermostat"])
+            eigx, eigv, system = thermo_update(eigx, eigv, system)
             eigx, eigv = halfstep_free_polymer(eigx, eigv)
 
             return {
                 **system,
                 "coordinates": eigx,
                 "vel": eigv,
-                "thermostat": thermosat_state,
             }
 
         @jax.jit
@@ -188,7 +208,7 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
                     **system,
                     "forces": coords_to_eig(f),
                     "epot": jnp.mean(epot),
-                    "virial": jnp.trace(jnp.mean(vir_t, axis=0)),
+                    "virial": jnp.mean(vir_t, axis=0),
                 }
             else:
                 epot, f, out = model._energy_and_forces(model.variables, conformation)
@@ -197,7 +217,10 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
                 new_sys = {**system, "forces": coords_to_eig(f), "epot": jnp.mean(epot)}
             if ensemble_key is not None:
                 kT = system_data["kT"]
-                dE = jnp.mean(out[ensemble_key], axis=0)/ model_energy_unit - new_sys["epot"]
+                dE = (
+                    jnp.mean(out[ensemble_key], axis=0) / model_energy_unit
+                    - new_sys["epot"]
+                )
                 new_sys["ensemble_weights"] = -dE / kT
             return new_sys
 
@@ -205,23 +228,46 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
         def stepB(system):
             eigv = system["vel"] + dt2m * system["forces"]
 
-            ek_c = 0.5 * jnp.sum(mass[:, None] * eigv[0] ** 2)
-            ek = ek_c - 0.5 * jnp.sum(system["coordinates"][1:] * system["forces"][1:])
-            system = {**system, "vel": eigv, "ek": ek, "ek_c": ek_c}
+            ek_c = 0.5 * jnp.sum(
+                mass[:, None, None] * eigv[0, :, :, None] * eigv[0, :, None, :], axis=0
+            )
+            ek = ek_c - 0.5 * jnp.sum(
+                system["coordinates"][1:, :, :, None]
+                * system["forces"][1:, :, None, :],
+                axis=(0, 1),
+            )
+            system = {
+                **system,
+                "vel": eigv,
+                "ek_tensor": ek,
+                "ek_c": jnp.trace(ek_c),
+                "ek": jnp.trace(ek),
+            }
 
             if estimate_pressure:
                 vir = system["virial"]
-                Pkin = (2 * pscale) * ek
-                Pvir = (-pscale) * vir
-                system["pressure"] = Pkin + Pvir
+                volume = jnp.abs(jnp.linalg.det(system["cell"]))
+                Pres = (2 * ek - vir) / volume
+                system["pressure_tensor"] = Pres
+                system["pressure"] = jnp.trace(Pres) * (1.0 / 3.0)
+                if variable_cell:
+                    density = totmass_amu / volume
+                    system["density"] = density
+                    system["volume"] = volume
 
             return system
 
     else:
         ### CLASSICAL MD INTEGRATOR
         @jax.jit
-        def update_conformation(coordinates):
-            return coordinates
+        def update_conformation(conformation, system):
+            conformation = {**conformation, "coordinates": system["coordinates"]}
+            if variable_cell:
+                conformation["cells"] = system["cell"][None, :, :]
+                conformation["reciprocal_cells"] = jnp.linalg.inv(system["cell"])[
+                    None, :, :
+                ]
+            return conformation
 
         @jax.jit
         def stepA(system):
@@ -231,10 +277,10 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
 
             v = v + f * dt2m
             x = x + dt2 * v
-            v, state_th = thermostat(v, system["thermostat"])
+            x, v, system = thermo_update(x, v, system)
             x = x + dt2 * v
 
-            return {**system, "coordinates": x, "vel": v, "thermostat": state_th}
+            return {**system, "coordinates": x, "vel": v}
 
         @jax.jit
         def update_forces(system, conformation):
@@ -249,7 +295,7 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
                     **system,
                     "forces": f,
                     "epot": epot[0],
-                    "virial": jnp.trace(vir_t[0]),
+                    "virial": vir_t[0],
                 }
             else:
                 epot, f, out = model._energy_and_forces(model.variables, conformation)
@@ -259,7 +305,7 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
 
             if ensemble_key is not None:
                 kT = system_data["kT"]
-                dE = out[ensemble_key][0, :]/ model_energy_unit - new_sys["epot"]
+                dE = out[ensemble_key][0, :] / model_energy_unit - new_sys["epot"]
                 new_sys["ensemble_weights"] = -dE / kT
             return new_sys
 
@@ -270,18 +316,29 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
             state_th = system["thermostat"]
 
             v = v + f * dt2m
-            ek = 0.5 * jnp.sum(mass[:, None] * v**2) / state_th.get("corr_kin", 1.0)
+            # ek = 0.5 * jnp.sum(mass[:, None] * v**2) / state_th.get("corr_kin", 1.0)
+            ek_tensor = (
+                0.5
+                * jnp.sum(mass[:, None, None] * v[:, :, None] * v[:, None, :], axis=0)
+                / state_th.get("corr_kin", 1.0)
+            )
             system = {
                 **system,
                 "vel": v,
-                "ek": ek,
+                "ek": jnp.trace(ek_tensor),
+                "ek_tensor": ek_tensor,
             }
 
             if estimate_pressure:
                 vir = system["virial"]
-                Pkin = (2 * pscale) * ek
-                Pvir = (-pscale) * vir
-                system["pressure"] = Pkin + Pvir
+                volume = jnp.abs(jnp.linalg.det(system["cell"]))
+                Pres = (2 * ek_tensor - vir) / volume
+                system["pressure_tensor"] = Pres
+                system["pressure"] = jnp.trace(Pres) * (1.0 / 3.0)
+                if variable_cell:
+                    density = totmass_amu / volume
+                    system["density"] = density
+                    system["volume"] = volume
 
             return system
 
@@ -315,11 +372,7 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
             ### full nblist update
             dyn_state["nblist_countdown"] = nblist_stride - 1
             conformation = model.preprocessing.process(
-                preproc_state,
-                {
-                    **conformation,
-                    "coordinates": update_conformation(system["coordinates"]),
-                },
+                preproc_state, update_conformation(conformation, system)
             )
             preproc_state, state_up, conformation, overflow = (
                 model.preprocessing.check_reallocate(preproc_state, conformation)
@@ -346,10 +399,7 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
 
             dyn_state["nblist_countdown"] = nblist_countdown - 1
             conformation = model.preprocessing.update_skin(
-                {
-                    **conformation,
-                    "coordinates": update_conformation(system["coordinates"]),
-                }
+                update_conformation(conformation, system)
             )
 
             if print_timings:
@@ -383,4 +433,4 @@ def initialize_integrator(simulation_parameters, system_data, model, fprec, rng_
 
         return dyn_state, system, conformation, preproc_state
 
-    return step, update_conformation, dyn_state, thermostat_state, vel
+    return step, update_conformation, dyn_state, thermo_state, vel

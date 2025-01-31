@@ -219,6 +219,7 @@ def dynamic(simulation_parameters, device, fprec):
     include_thermostat_energy = "thermostat_energy" in system["thermostat"]
     thermostat_name = dyn_state["thermostat_name"]
     pimd = dyn_state["pimd"]
+    variable_cell = dyn_state["variable_cell"]
     nbeads = system_data.get("nbeads", 1)
     dyn_name = "PIMD" if pimd else "MD"
     print("#" * 84)
@@ -234,6 +235,8 @@ def dynamic(simulation_parameters, device, fprec):
         pressure_unit_str = simulation_parameters.get("pressure_unit", "atm")
         pressure_unit = au.get_multiplier(pressure_unit_str)*au.BOHR**3
         header += f"  Press[{pressure_unit_str}]"
+    if variable_cell:
+        header += "   Density"
     print(header)
 
     ### Open trajectory file
@@ -328,12 +331,22 @@ def dynamic(simulation_parameters, device, fprec):
                 pres = system["pressure"]*pressure_unit
                 properties_traj[f"Pressure[{pressure_unit_str}]"].append(pres)
                 line += f" {pres:10.3f}"
+            if variable_cell:
+                density = system["density"]
+                properties_traj["Density[g/cm^3]"].append(density)
+                line += f" {density:10.4f}"
+                if "piston_temperature" in system["barostat"]:
+                    piston_temperature = system["barostat"]["piston_temperature"]
+                    properties_traj["T_piston[Kelvin]"].append(piston_temperature)
 
             print(line)
 
         ### save frame
         if istep % ndump == 0:
             line = "# Write XYZ frame"
+            if variable_cell:
+                cell = np.array(system["cell"])
+                reciprocal_cell = np.linalg.inv(cell)
             if do_wrap_box:
                 if pimd:
                     centroid = wrapbox(system["coordinates"][0], cell, reciprocal_cell)
@@ -342,7 +355,7 @@ def dynamic(simulation_parameters, device, fprec):
                     system["coordinates"] = wrapbox(
                         system["coordinates"], cell, reciprocal_cell
                     )
-                conformation["coordinates"] = update_conformation(system["coordinates"])
+                conformation = update_conformation(conformation,system)
                 line += " (atoms have been wrapped into the box)"
                 force_preprocess = True
             print(line)
