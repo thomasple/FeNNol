@@ -220,11 +220,16 @@ def initialize_system(conformation, vel, model, system_data, fprec):
     f = np.array(f) / model_energy_unit
     epot = np.mean(e) / model_energy_unit
     vir = np.mean(vir, axis=0) / model_energy_unit
-    ek = 0.5 * jnp.sum(system_data["mass"][:, None] * vel**2)
+    
+    if "nbeads" in system_data:
+        ek = 0.5 * jnp.sum(system_data["mass"][:, None,None] * vel[0,:,:,None]*vel[0,:,None,:],axis=0)
+    else:
+        ek = 0.5 * jnp.sum(system_data["mass"][:, None,None] * vel[:,:,None]*vel[:,None,:],axis=0)
 
     ## build system
     system = {}
-    system["ek"] = ek
+    system["ek_tensor"] = ek
+    system["ek"] = jnp.trace(ek)
     system["epot"] = epot
     system["vel"] = vel.astype(fprec)
     if "cells" in conformation:

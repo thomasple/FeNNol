@@ -232,6 +232,7 @@ def dynamic(simulation_parameters, device, fprec):
     if include_thermostat_energy:
         header += "      Etherm"
     if estimate_pressure:
+        print_aniso_pressure = simulation_parameters.get("print_aniso_pressure", False)
         pressure_unit_str = simulation_parameters.get("pressure_unit", "atm")
         pressure_unit = au.get_multiplier(pressure_unit_str)*au.BOHR**3
         header += f"  Press[{pressure_unit_str}]"
@@ -330,10 +331,30 @@ def dynamic(simulation_parameters, device, fprec):
             if estimate_pressure:
                 pres = system["pressure"]*pressure_unit
                 properties_traj[f"Pressure[{pressure_unit_str}]"].append(pres)
+                if print_aniso_pressure:
+                    pres_tensor = system["pressure_tensor"]*pressure_unit
+                    pres_tensor = 0.5*(pres_tensor + pres_tensor.T)
+                    properties_traj[f"Pressure_xx[{pressure_unit_str}]"].append(pres_tensor[0,0])
+                    properties_traj[f"Pressure_yy[{pressure_unit_str}]"].append(pres_tensor[1,1])
+                    properties_traj[f"Pressure_zz[{pressure_unit_str}]"].append(pres_tensor[2,2])
+                    properties_traj[f"Pressure_xy[{pressure_unit_str}]"].append(pres_tensor[0,1])
+                    properties_traj[f"Pressure_xz[{pressure_unit_str}]"].append(pres_tensor[0,2])
+                    properties_traj[f"Pressure_yz[{pressure_unit_str}]"].append(pres_tensor[1,2])
                 line += f" {pres:10.3f}"
             if variable_cell:
                 density = system["density"]
                 properties_traj["Density[g/cm^3]"].append(density)
+                if print_aniso_pressure:
+                    cell = system["cell"]
+                    properties_traj[f"Cell_Ax[Angstrom]"].append(cell[0,0])
+                    properties_traj[f"Cell_Ay[Angstrom]"].append(cell[0,1])
+                    properties_traj[f"Cell_Az[Angstrom]"].append(cell[0,2])
+                    properties_traj[f"Cell_Bx[Angstrom]"].append(cell[1,0])
+                    properties_traj[f"Cell_By[Angstrom]"].append(cell[1,1])
+                    properties_traj[f"Cell_Bz[Angstrom]"].append(cell[1,2])
+                    properties_traj[f"Cell_Cx[Angstrom]"].append(cell[2,0])
+                    properties_traj[f"Cell_Cy[Angstrom]"].append(cell[2,1])
+                    properties_traj[f"Cell_Cz[Angstrom]"].append(cell[2,2])
                 line += f" {density:10.4f}"
                 if "piston_temperature" in system["barostat"]:
                     piston_temperature = system["barostat"]["piston_temperature"]
