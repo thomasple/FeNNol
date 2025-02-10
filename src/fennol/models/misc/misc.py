@@ -625,7 +625,9 @@ class SwitchFunction(nn.Module):
             r2 = x**2
             c2 = end**2
             switch = jnp.exp(-p * r2 / (c2 - r2))
-
+        
+        elif switch_type == "hard":
+            switch = jnp.where(distances < cutoff, 1.0, 0.0)
         else:
             raise ValueError(f"Unknown switch function {switch_type}")
 
