@@ -602,7 +602,22 @@ class RadialBasis(nn.Module):
             out = FullyConnectedNet(
                 neurons, activation=activation, use_bias=use_bias, squeeze=False
             )(x[:, None])
+        elif basis == "damped_coulomb":
+            l = np.arange(self.dim)[None, :]
+            a2 = self.extra_params.get("a", default=1.0)**2
+            x = x[:, None] - self.start
+            end = self.end - self.start
+            x21 = a2 + x**2
+            R21 = a2 + end**2
+            out = (
+                1.0 / x21 ** (0.5 * (l + 1))
+                - 1.0 / (R21 ** (0.5 * (l + 1)))
+                + (x - end) * ((l + 1) * end / (R21 ** (0.5 * (l + 3))))
+            ) * (x < end)
 
+        elif basis.startswith("spherical_bessel_"):
+            l = int(basis.split("_")[-1])
+            out = generate_spherical_jn_basis([l], self.dim, self.end)(x)
         else:
             raise NotImplementedError(f"Unknown radial basis {basis}.")
         ############################
@@ -640,3 +655,48 @@ def positional_encoding(t, d: int, n: float = 10000.0):
     if d % 2 == 1:
         out = out[:, :-1]
     return out
+
+
+def generate_spherical_jn_basis(dim:int, rc:float, ls:Union[int,Sequence[int]]=[0], print_code:bool=False, jit:bool=False):
+    from sympy import Symbol, jn, expand_func
+    from scipy.special import spherical_jn
+    from sympy import jn_zeros
+    import scipy.integrate as integrate
+
+    if isinstance(ls, int):
+        ls = list(range(ls + 1))
+    zl = [Symbol(f"xz[...,{l}]") for l in ls]
+    zn = np.array([jn_zeros(l, dim) for l in ls], dtype=float).T
+    znrc = zn / rc
+    norms = np.zeros((dim, len(ls)), dtype=float)
+    for l in ls:
+        for i in range(dim):
+            norms[i, l] = (
+                integrate.quad(lambda x: (spherical_jn(l, x) * x) ** 2, 0, zn[i, l])[0]
+                / znrc[i, l] ** 3
+            ) ** (-0.5)
+
+    fn_str = f"""def spherical_jn_basis_(x):
+    from jax.numpy import cos,sin
+    
+    znrc = jnp.array({znrc.tolist()},dtype=x.dtype)
+    norms = jnp.array({norms.tolist()},dtype=x.dtype)
+    xshape = x.shape
+    x = x.reshape(-1)
+    xz = x[:,None,None]*znrc[None,:,:]
+
+    jns = jnp.stack([
+  """
+    for l in ls:
+        fn_str += f"      {expand_func(jn(l, zl[l]))},\n"
+    fn_str += f"""    ],axis=-1)
+    return (norms[None,:,:]*jns).reshape(*xshape,{dim},{len(ls)})
+  """
+
+    if print_code:
+        print(fn_str)
+    exec(fn_str)
+    jn_basis = locals()["spherical_jn_basis_"]
+    if jit:
+        jn_basis = jax.jit(jn_basis)
+    return jn_basis
