@@ -35,6 +35,7 @@ def main():
         "--device", type=str, default="cpu", help="device to use for the model"
     )
     parser.add_argument("-f64", action="store_true", help="use double precision")
+    parser.add_argument("--periodic", action="store_true", help="use PBC")
     parser.add_argument(
         "--format", type=str, default="xyz", help="format of the input file"
     )
@@ -75,8 +76,10 @@ def main():
     # check the input file
     input_file = args.input_file.resolve()
     assert input_file.exists(), f"Input file {input_file} does not exist"
-    assert args.format == "xyz", f"Only xyz format is supported for now"
+    # assert args.format == "xyz", f"Only xyz format is supported for now"
+    assert args.format in ["xyz","arc"], f"Only xyz and arc format is supported for now"
     output_keys = args.output_keys
+    xyz_indexed = args.format == "arc"
 
     # load the model
     model_file: Path = args.model_file.resolve()
@@ -110,13 +113,22 @@ def main():
         batch_index = np.concatenate([frame[3] for frame in batch])
         species = np.concatenate([frame[0] for frame in batch])
         xyz = np.concatenate([frame[1] for frame in batch], axis=0)
+        inputs = {
+            "species": species,
+            "coordinates": xyz,
+            "batch_index": batch_index,
+            "natoms": natoms,}
+        if args.periodic:
+            cells = np.array([[float(x) for x in frame[4].split()] for frame in batch]).reshape(-1,3,3)
+            inputs["cells"] = cells
+
         if "forces" in output_keys:
             e, f, output = model.energy_and_forces(
-                species=species, natoms=natoms, coordinates=xyz, batch_index=batch_index
+                **inputs
             )
         else:
             e, output = model.total_energy(
-                species=species, natoms=natoms, coordinates=xyz, batch_index=batch_index
+                **inputs
             )
         return output
 
@@ -124,6 +136,8 @@ def main():
     def process_batch(batch):
         output = model_predict(batch)
         natoms = np.array([frame[2] for frame in batch])
+        if args.periodic:
+            cells = np.array(output["cells"])
         species = np.array(output["species"])
         coordinates = np.array(output["coordinates"])
         natshift = np.concatenate([np.array([0], dtype=np.int32), np.cumsum(natoms)])
@@ -133,6 +147,9 @@ def main():
                 "species": species[natshift[i] : natshift[i + 1]].tolist(),
                 "coordinates": coordinates[natshift[i] : natshift[i + 1]].tolist(),
             }
+            if args.periodic:
+                frame_data["cell"] = cells[i].tolist()
+
             for k in output_keys:
                 if k not in output:
                     raise ValueError(f"Output key {k} not found")
@@ -148,7 +165,7 @@ def main():
         return frames_data
 
     ### start processing the input file
-    reader = xyz_reader(input_file, has_comment_line=True, indexed=False)
+    reader = xyz_reader(input_file, has_comment_line=True, indexed=xyz_indexed)
     batch = []
     output_data = []
     ibatch = 0
