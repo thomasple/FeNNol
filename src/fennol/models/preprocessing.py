@@ -93,7 +93,7 @@ class GraphGenerator:
             true_max_nat = max_nat
         else:
             max_nat = state.get("max_nat", round(coords.shape[0] / natoms.shape[0]))
-            true_max_nat = np.max(natoms)
+            true_max_nat = int(np.max(natoms))
             if true_max_nat > max_nat:
                 add_atoms = state.get("add_atoms", 0)
                 new_maxnat = true_max_nat + add_atoms
@@ -1041,7 +1041,7 @@ class GraphAngularExtension:
         nat = inputs["species"].shape[0]
         count = np.zeros(nat + 1, dtype=np.int32)
         np.add.at(count, edge_src, 1)
-        max_count = np.max(count[:-1])
+        max_count = int(np.max(count[:-1]))
 
         ### get sizes
         max_neigh = state.get("max_neigh", self.add_neigh)

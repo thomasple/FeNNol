@@ -5,7 +5,7 @@ from collections import defaultdict
 import pickle
 import glob
 from flax import traverse_util
-from typing import Dict, List, Tuple, Union, Optional, Callable
+from typing import Dict, List, Tuple, Union, Optional, Callable, Sequence
 from .databases import DBDataset, H5Dataset
 from ..models.preprocessing import AtomPadding
 
@@ -47,16 +47,16 @@ def load_configuration(config_file: str) -> Dict[str, any]:
 def load_dataset(
     dspath: str,
     batch_size: int,
-    rename_refs=[],
-    infinite_iterator=False,
-    atom_padding=False,
-    ref_keys=None,
-    split_data_inputs=False,
+    rename_refs: dict = {},
+    infinite_iterator: bool = False,
+    atom_padding: bool = False,
+    ref_keys: Optional[Sequence[str]] = None,
+    split_data_inputs: bool = False,
     np_rng: Optional[np.random.Generator] = None,
-    train_val_split=True,
-    training_parameters={},
-    add_flags=["training"],
-    fprec="float32",
+    train_val_split: bool = True,
+    training_parameters: dict = {},
+    add_flags: Sequence[str] = ["training"],
+    fprec: str = "float32",
 ):
     """
     Load a dataset from a pickle file and return two iterators for training and validation batches.
@@ -76,8 +76,13 @@ def load_dataset(
             if the keys "forces", "total_energy", "atomic_energies" or any of the elements in rename_refs are present, the keys are renamed by prepending "true_" to the key name.
     """
 
-    # rename_refs = set(["forces", "total_energy", "atomic_energies"] + list(rename_refs))
-    rename_refs = set(list(rename_refs))
+    assert isinstance(
+        training_parameters, dict
+    ), "training_parameters must be a dictionary."
+    assert isinstance(
+        rename_refs, dict
+    ), "rename_refs must be a dictionary with the keys to rename."
+
     pbc_training = training_parameters.get("pbc_training", False)
     minimum_image = training_parameters.get("minimum_image", False)
 
@@ -124,24 +129,26 @@ def load_dataset(
         assert np_rng is not None, "np_rng must be provided for adding noise."
 
         apply_rotation = {
-            1: lambda x,r : x @ r,
-            -1: lambda x,r : np.einsum("...kn,kj->...jn", x,r),
-            2: lambda x,r : np.einsum("li,...lk,kj->...ij", r,x,r),
+            1: lambda x, r: x @ r,
+            -1: lambda x, r: np.einsum("...kn,kj->...jn", x, r),
+            2: lambda x, r: np.einsum("li,...lk,kj->...ij", r, x, r),
         }
         valid_rotations = tuple(apply_rotation.keys())
         rotated_keys = {
-            "coordinates":1,
-            "forces":1,
-            "virial_tensor":2,
-            "stress_tensor":2,
-            "virial":2,
-            "stress":2,
+            "coordinates": 1,
+            "forces": 1,
+            "virial_tensor": 2,
+            "stress_tensor": 2,
+            "virial": 2,
+            "stress": 2,
         }
         if pbc_training:
             rotated_keys["cells"] = 1
-        user_rotated_keys = dict(training_parameters.get("rotated_keys",{}))
-        for k,v in user_rotated_keys.items():
-            assert v in valid_rotations, f"Invalid rotation type for key {k}. Valid values are {valid_rotations}"
+        user_rotated_keys = dict(training_parameters.get("rotated_keys", {}))
+        for k, v in user_rotated_keys.items():
+            assert (
+                v in valid_rotations
+            ), f"Invalid rotation type for key {k}. Valid values are {valid_rotations}"
             rotated_keys[k] = v
 
         # rotated_vector_keys = set(
@@ -171,7 +178,7 @@ def load_dataset(
                 Rotation.from_euler("xyz", euler_angles[i]).as_matrix().T
                 for i in range(nbatch)
             ]
-            for k,l in rotated_keys.items():
+            for k, l in rotated_keys.items():
                 if k in output:
                     for i in range(nbatch):
                         output[k][i] = apply_rotation[l](output[k][i], r[i])
@@ -192,8 +199,8 @@ def load_dataset(
                         [length_nopbc, 0.0, 0.0],
                         [0.0, length_nopbc, 0.0],
                         [0.0, 0.0, length_nopbc],
-                    ]
-                    ,dtype=fprec
+                    ],
+                    dtype=fprec,
                 )
             else:
                 cell = np.asarray(d["cell"], dtype=fprec)
@@ -274,11 +281,11 @@ def load_dataset(
                     output["system_sign"].append(np.asarray([-1]))
                     batch_index += 1
 
-        apply_random_rotations(output, len(output["natoms"]))
+        nbatch_ = len(output["natoms"])
+        apply_random_rotations(output,nbatch_)
 
         # Stack and concatenate the arrays
         for k, v in output.items():
-            
             if v[0].ndim == 0:
                 v = np.stack(v)
             else:
@@ -291,9 +298,15 @@ def load_dataset(
             output["reciprocal_cells"] = np.linalg.inv(output["cells"])
 
         # Rename necessary keys
-        for key in rename_refs:
-            if key in output:
-                output["true_" + key] = output.pop(key)
+        # for key in rename_refs:
+        #     if key in output:
+        #         output["true_" + key] = output.pop(key)
+        for kold, knew in rename_refs.items():
+            assert (
+                knew not in output
+            ), f"Cannot rename key {kold} to {knew}. Key {knew} already present."
+            if kold in output:
+                output[knew] = output.pop(kold)
 
         output["flags"] = flags
         return output

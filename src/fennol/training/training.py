@@ -16,6 +16,8 @@ import torch
 import random
 from flax import traverse_util
 import json
+import shutil
+import pickle
 
 from flax.core import freeze, unfreeze
 from .io import (
@@ -50,6 +52,27 @@ def main():
         open(sys.stdout.fileno(), "wb", 0), write_through=True
     )
 
+    restart_training = False
+    if os.path.isdir(config_file):
+        output_directory = Path(config_file).absolute().as_posix()
+        config_file = output_directory + "/config.yaml"
+        restart_training = True
+        training_state_file = output_directory + "/train_state"
+        if not os.path.exists(training_state_file):
+            raise FileNotFoundError(
+                f"Training state file not found: {training_state_file}"
+            )
+        while output_directory.endswith("/"):
+            output_directory = output_directory[:-1]
+        backup_dir = output_directory + f"_backup_{time.strftime('%Y-%m-%d-%H-%M-%S')}"
+        shutil.copytree(output_directory, backup_dir)
+
+        with open(training_state_file, "rb") as f:
+            training_state = pickle.load(f)
+        print("Restarting training from", output_directory)
+    else:
+        training_state = None
+
     parameters = load_configuration(config_file)
 
     ### Set the device
@@ -66,22 +89,23 @@ def main():
 
     _device = jax.devices(device)[0]
     jax.config.update("jax_default_device", _device)
-        
 
     # output directory
-    output_directory = parameters.get("output_directory", None)
-    if output_directory is not None:
-        if "{now}" in output_directory:
-            output_directory = output_directory.replace(
-                "{now}", time.strftime("%Y-%m-%d-%H-%M-%S")
-            )
-        output_directory = Path(output_directory).absolute()
-        if not output_directory.exists():
-            output_directory.mkdir(parents=True)
-        output_directory = str(output_directory) + "/"
-        print("Output directory:", output_directory)
-    else:
-        output_directory = ""
+    if not restart_training:
+        output_directory = parameters.get("output_directory", None)
+        if output_directory is not None:
+            if "{now}" in output_directory:
+                output_directory = output_directory.replace(
+                    "{now}", time.strftime("%Y-%m-%d-%H-%M-%S")
+                )
+            output_directory = Path(output_directory).absolute()
+            if not output_directory.exists():
+                output_directory.mkdir(parents=True)
+            print("Output directory:", output_directory)
+        else:
+            output_directory = "."
+
+    output_directory = str(output_directory) + "/"
 
     # copy config_file to output directory
     # config_name = Path(config_file).name
@@ -92,10 +116,9 @@ def main():
         f_out.write(config_data)
 
     # set log file
-    log_file = parameters.get("log_file", None)
-    if log_file is not None:
-        logger = TeeLogger(output_directory + log_file)
-        logger.bind_stdout()
+    log_file = "train.log"  # parameters.get("log_file", None)
+    logger = TeeLogger(output_directory + log_file)
+    logger.bind_stdout()
 
     # set matmul precision
     enable_x64 = parameters.get("double_precision", False)
@@ -112,7 +135,6 @@ def main():
         "highest",
     ], "matmul_prec must be one of 'default','high','highest'"
     jax.config.update("jax_default_matmul_precision", matmul_precision)
-
 
     # set random seed
     rng_seed = parameters.get("rng_seed", np.random.randint(0, 2**32 - 1))
@@ -146,6 +168,10 @@ def main():
                     ## load model from previous stage ##
                     params["model_file"] = model_file_stage
 
+                if restart_training and training_state["stage"] != i + 1:
+                    print(f"Skipping stage {i+1} (already completed)")
+                    continue
+
                 if print_stages_params:
                     print("stage parameters:")
                     print(json.dumps(params, indent=2, sort_keys=False))
@@ -156,6 +182,7 @@ def main():
                     params,
                     stage=i + 1,
                     output_directory=output_directory,
+                    training_state=training_state,
                 )
         else:
             ## single training stage ##
@@ -164,6 +191,7 @@ def main():
                 parameters,
                 model_file=model_file,
                 output_directory=output_directory,
+                training_state=training_state,
             )
     except KeyboardInterrupt:
         print("Training interrupted by user.")
@@ -173,7 +201,14 @@ def main():
             logger.close()
 
 
-def train(rng, parameters, model_file=None, stage=None, output_directory=None):
+def train(
+    rng,
+    parameters,
+    model_file=None,
+    stage=None,
+    output_directory=None,
+    training_state=None,
+):
     if output_directory is None:
         output_directory = "./"
     elif not output_directory.endswith("/"):
@@ -185,9 +220,12 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
     else:
         rng_key = rng
         np_rng = np.random.Generator(np.random.PCG64(np.random.randint(0, 2**32 - 1)))
-    rng_key, model_key = jax.random.split(rng_key)
 
-    
+    if training_state is not None:
+        model_key = None
+        model_file = output_directory + "latest_model.fnx"
+    else:
+        rng_key, model_key = jax.random.split(rng_key)
     model = load_model(parameters, model_file, rng_key=model_key)
 
     training_parameters = parameters.get("training", {})
@@ -206,13 +244,14 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
                 model.variables, model_ref.variables, ref_parameters
             )
     fprec = parameters.get("fprec", "float32")
+
     def convert_to_fprec(x):
         if jnp.issubdtype(x.dtype, jnp.floating):
             return x.astype(fprec)
         return x
+
     model.variables = jax.tree_map(convert_to_fprec, model.variables)
 
-    # rename_refs = training_parameters.get("rename_refs", [])
     loss_definition, used_keys, ref_keys = get_loss_definition(
         training_parameters, model_energy_unit=model.energy_unit
     )
@@ -228,6 +267,7 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
     if dspath is None:
         raise ValueError("Dataset path 'training/dspath' should be specified.")
     batch_size = training_parameters.get("batch_size", 16)
+    rename_refs = training_parameters.get("rename_refs", {})
     training_iterator, validation_iterator = load_dataset(
         dspath=dspath,
         batch_size=batch_size,
@@ -239,6 +279,7 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
         np_rng=np_rng,
         add_flags=["training"],
         fprec=fprec,
+        rename_refs=rename_refs,
     )
 
     compute_forces = "forces" in used_keys
@@ -253,19 +294,22 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
     nbatch_per_validation = training_parameters.get("nbatch_per_validation", 20)
     init_lr = training_parameters.get("init_lr", lr / 25)
     final_lr = training_parameters.get("final_lr", lr / 10000)
-    peak_epoch = training_parameters.get("peak_epoch", 0.3 * max_epochs)
 
     schedule_type = training_parameters.get("schedule_type", "cosine_onecycle").lower()
     schedule_type = training_parameters.get("scheduler", schedule_type).lower()
     schedule_metrics = training_parameters.get("schedule_metrics", "rmse_tot")
+
+    adaptive_scheduler = False
     print("Schedule type:", schedule_type)
     if schedule_type == "cosine_onecycle":
+        transition_epochs = training_parameters.get("onecycle_epochs", max_epochs)
+        peak_epoch = training_parameters.get("peak_epoch", 0.3 * transition_epochs)
         schedule_ = optax.cosine_onecycle_schedule(
             peak_value=lr,
             div_factor=lr / init_lr,
             final_div_factor=init_lr / final_lr,
-            transition_steps=max_epochs * nbatch_per_epoch,
-            pct_start=peak_epoch / max_epochs,
+            transition_steps=transition_epochs * nbatch_per_epoch,
+            pct_start=peak_epoch / transition_epochs,
         )
         sch_state = {"count": 0, "best": np.inf, "lr": init_lr}
 
@@ -292,6 +336,7 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
         factor = training_parameters.get("lr_factor", 0.5)
         patience_thr = training_parameters.get("patience_thr", 0.0)
         sch_state = {"count": 0, "best": np.inf, "lr": lr, "patience": patience}
+        adaptive_scheduler = True
 
         def schedule(state, rmse=None):
             new_state = {**state}
@@ -458,12 +503,10 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
 
     if training_parameters.get("gpu_preprocessing", False):
         print("GPU preprocessing activated.")
-        def preprocessing(model,inputs):
+
+        def preprocessing(model, inputs):
             preproc_state = model.preproc_state
-            outputs = model.preprocessing.process(
-                preproc_state,
-                inputs
-            )
+            outputs = model.preprocessing.process(preproc_state, inputs)
             preproc_state, state_up, outputs, overflow = (
                 model.preprocessing.check_reallocate(preproc_state, outputs)
             )
@@ -474,7 +517,7 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
             return outputs
 
     else:
-        preprocessing = lambda model,inputs: model.preprocess(**inputs) 
+        preprocessing = lambda model, inputs: model.preprocess(**inputs)
 
     fetch_time = 0.0
     preprocess_time = 0.0
@@ -497,7 +540,10 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
     variables_save = deepcopy(variables)
     variables_ema_save = deepcopy(model.variables)
 
-    fmetrics = open(output_directory + f"metrics{stage_prefix}.traj", "w")
+    fmetrics = open(
+        output_directory + f"metrics{stage_prefix}.traj",
+        "w" if training_state is None else "a",
+    )
 
     keep_all_bests = training_parameters.get("keep_all_bests", False)
     previous_best_name = None
@@ -508,17 +554,60 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
     #     authorized_metrics+= ["mae_smooth", "rmse_smooth"]
     # assert metric_use_best in authorized_metrics, f"metric_best must be one of {authorized_metrics}"
 
+    if training_state is not None:
+        preproc_state = training_state["preproc_state"]
+        model.preproc_state = freeze(preproc_state)
+        opt_st = training_state["opt_state"]
+        ema_st = training_state["ema_state"]
+        sch_state = training_state["sch_state"]
+        variables = training_state["variables"]
+        model.variables = training_state["variables_ema"]
+        count = training_state["count"]
+        restore_count = training_state["restore_count"]
+        epoch_start = training_state["epoch"]
+        rng_key = training_state["rng_key"]
+        best_metric = training_state["best_metric"]
+        if smoothen_metrics:
+            rmses_smooth = training_state["rmses_smooth"]
+            maes_smooth = training_state["maes_smooth"]
+            rmse_tot_smooth = training_state["rmse_tot_smooth"]
+            mae_tot_smooth = training_state["mae_tot_smooth"]
+            nsmooth = training_state["nsmooth"]
+        print("Restored training state")
+    else:
+        epoch_start = 0
+        training_state = {
+            "preproc_state": preproc_state,
+            "rng_key": rng_key,
+            "opt_state": opt_st,
+            "ema_state": ema_st,
+            "sch_state": sch_state,
+            "variables": variables,
+            "variables_ema": model.variables,
+            "count": count,
+            "restore_count": restore_count,
+            "epoch": 0,
+            "stage": stage,
+            "best_metric": np.inf,
+        }
+        if smoothen_metrics:
+            training_state["rmses_smooth"] = dict(rmses_smooth)
+            training_state["maes_smooth"] = dict(maes_smooth)
+            training_state["rmse_tot_smooth"] = rmse_tot_smooth
+            training_state["mae_tot_smooth"] = mae_tot_smooth
+            training_state["nsmooth"] = nsmooth
+
     ### Training loop ###
     start = time.time()
     print("Starting training...")
-    for epoch in range(max_epochs):
+    for epoch in range(epoch_start, max_epochs):
         s = time.time()
         for _ in range(nbatch_per_epoch):
             # fetch data
             inputs0, data = next(training_iterator)
 
             # preprocess data
-            inputs = preprocessing(model,inputs0)
+            inputs = preprocessing(model, inputs0)
             # inputs = model.preprocess(**inputs0)
 
             rng_key, subkey = jax.random.split(rng_key)
@@ -555,7 +644,7 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
         for _ in range(nbatch_per_validation):
             inputs0, data = next(validation_iterator)
 
-            inputs = preprocessing(model,inputs0)
+            inputs = preprocessing(model, inputs0)
             # inputs = model.preprocess(**inputs0)
 
             rng_key, subkey = jax.random.split(rng_key)
@@ -576,13 +665,25 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
                 rmses_avg[k] += v
             for k, v in maes.items():
                 maes_avg[k] += v
-        
+
         jax.block_until_ready(output_val)
         e = time.time()
         epoch_time = e - s
-        batch_time = human_time_duration(epoch_time / (nbatch_per_epoch+nbatch_per_validation))
-        epoch_time = human_time_duration(epoch_time)
 
+        elapsed_time = e - start
+        if not adaptive_scheduler:
+            remain_glob = elapsed_time * (max_epochs - epoch) / (epoch + 1)
+            remain_last = epoch_time * (max_epochs - epoch)
+            # estimate remaining time via weighted average (put more weight on last at the beginning)
+            wremain = np.sin(0.5 * np.pi * (epoch + 1) / max_epochs)
+            remaining_time = human_time_duration(
+                remain_glob * wremain + remain_last * (1 - wremain)
+            )
+        elapsed_time = human_time_duration(elapsed_time)
+        batch_time = human_time_duration(
+            epoch_time / (nbatch_per_epoch + nbatch_per_validation)
+        )
+        epoch_time = human_time_duration(epoch_time)
 
         for k in rmses_avg.keys():
             rmses_avg[k] /= nbatch_per_validation
@@ -594,7 +695,12 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
         preprocess_time /= nbatch_per_epoch
 
         print("")
-        print(f"Epoch {epoch+1}, lr={current_lr:.3e}, loss = {loss:.3e}, epoch time = {epoch_time}, batch time = {batch_time}")
+        line = f"Epoch {epoch+1}, lr={current_lr:.3e}, loss = {loss:.3e}"
+        line += f", epoch time = {epoch_time}, batch time = {batch_time}"
+        line += f", elapsed time = {elapsed_time}"
+        if not adaptive_scheduler:
+            line += f", est. remaining time = {remaining_time}"
+        print(line)
         rmse_tot = 0.0
         mae_tot = 0.0
         for k in rmses_avg.keys():
@@ -729,6 +835,8 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
             best_name = output_directory + f"best_model{stage_prefix}.fnx"
             model.save(best_name)
             print("New best model saved to:", best_name)
+        else:
+            metrics["best_metric"] = best_metric
 
         if epoch == 0:
             headers = [f"{i+1}:{k}" for i, k in enumerate(metrics.keys())]
@@ -742,12 +850,34 @@ def train(rng, parameters, model_file=None, stage=None, output_directory=None):
         ), f"Error: cannot update lr, '{schedule_metrics}' not in metrics"
         current_lr, sch_state = schedule(sch_state, metrics[schedule_metrics])
 
+        # update and save training state
+        training_state["preproc_state"] = model.preproc_state
+        training_state["opt_state"] = opt_st
+        training_state["ema_state"] = ema_st
+        training_state["sch_state"] = sch_state
+        training_state["variables"] = variables
+        training_state["variables_ema"] = model.variables
+        training_state["count"] = count
+        training_state["restore_count"] = restore_count
+        training_state["epoch"] = epoch
+        training_state["best_metric"] = best_metric
+        if smoothen_metrics:
+            training_state["rmses_smooth"] = dict(rmses_smooth)
+            training_state["maes_smooth"] = dict(maes_smooth)
+            training_state["rmse_tot_smooth"] = rmse_tot_smooth
+            training_state["mae_tot_smooth"] = mae_tot_smooth
+            training_state["nsmooth"] = nsmooth
+
+        with open(output_directory + "train_state", "wb") as f:
+            pickle.dump(training_state, f)
+
         if is_end(metrics):
             print("Stage finished.")
             break
 
     end = time.time()
-    print(f"Training time: {end-start} s")
+
+    print(f"Training time: {human_time_duration(end-start)}")
     print("")
 
     fmetrics.close()
