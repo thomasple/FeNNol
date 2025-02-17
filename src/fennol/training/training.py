@@ -184,6 +184,8 @@ def main():
                     output_directory=output_directory,
                     training_state=training_state,
                 )
+                training_state = None
+                restart_training = False
         else:
             ## single training stage ##
             train(
