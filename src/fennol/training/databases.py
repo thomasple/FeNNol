@@ -1,29 +1,38 @@
-import sqlite3
+
 import numpy as np
 from collections.abc import Iterable
 import h5py
 
 import io
-def adapt_array(arr):
-    """
-    http://stackoverflow.com/a/31312102/190597 (SoulNibbler)
-    """
-    out = io.BytesIO()
-    np.save(out, arr)
-    out.seek(0)
-    return sqlite3.Binary(out.read())
+
+try:
+    import sqlite3
+
+    def convert_array(text):
+        out = io.BytesIO(text)
+        out.seek(0)
+        return np.load(out)
+    def adapt_array(arr):
+        """
+        http://stackoverflow.com/a/31312102/190597 (SoulNibbler)
+        """
+        out = io.BytesIO()
+        np.save(out, arr)
+        out.seek(0)
+        return sqlite3.Binary(out.read())
+
+    sqlite3.register_adapter(np.ndarray, adapt_array)
+    sqlite3.register_converter("array", convert_array)
+except ImportError:
+    sqlite3 = None
 
 
-def convert_array(text):
-    out = io.BytesIO(text)
-    out.seek(0)
-    return np.load(out)
 
-sqlite3.register_adapter(np.ndarray, adapt_array)
-sqlite3.register_converter("array", convert_array)
 
 class DBDataset:
     def __init__(self,dbfile,table="training",select_keys=None):
+        if sqlite3 is None:
+            raise ImportError("sqlite3 is not available")
         self.con = sqlite3.connect(dbfile, detect_types=sqlite3.PARSE_DECLTYPES)
         self.cur = self.con.cursor()
         self.table = table
