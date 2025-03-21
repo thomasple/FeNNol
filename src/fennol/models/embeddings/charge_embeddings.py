@@ -53,6 +53,39 @@ class ChargeHypothesis(nn.Module):
         qtot = jax.ops.segment_sum(qtilde, batch_index, nsys)
         dq = Qtot[:, None] - qtot
         f = (dq / wtot)[batch_index]
+
+        if "alch_group" in inputs:
+            alch_group = inputs["alch_group"]
+            lambda_e = inputs["alch_elambda"]
+            Qligand = inputs.get("alch_ligand_charge", jnp.zeros(nsys))
+            if Qligand.ndim == 0:
+                Qligand = Qligand * jnp.ones(nsys, dtype=wi.dtype)
+
+            alch_index = alch_group + 2 * batch_index
+            qtot = jax.ops.segment_sum(qtilde, alch_index, 2 * nsys).reshape(
+                nsys, 2, self.ncharges
+            )
+            wtot = jax.ops.segment_sum(wi, alch_index, 2 * nsys).reshape(
+                nsys, 2, self.ncharges
+            )
+            # compute ligand alone
+            dq = Qligand[:, None] - qtot[:, 1, :]
+            f1 = (dq / wtot[:, 1, :])[batch_index]
+            # q1 = alch_group*(qtilde + wi * f1[batch_index])
+
+            # qtot = jax.ops.segment_sum(qtilde*(1-alch_group), batch_index, nsys)
+            # wtot = jax.ops.segment_sum(wi*(1-alch_group), batch_index, nsys)
+            # compute solvent alone
+            dq = (Qtot - Qligand)[:, None] - qtot[:, 0, :]
+            f0 = (dq / wtot[:, 0, :])[batch_index]
+            # q0 = (1-alch_group)*(qtilde + wi * f0[batch_index])
+
+            # alch_q = alch_group*q1 + (1-alch_group)*q0
+            # q = lambda_e*q + (1-lambda_e)*alch_q
+
+            alch_f = (1 - alch_group[:, None]) * f0 + alch_group[:, None] * f1
+            f = lambda_e * f + (1 - lambda_e) * alch_f
+
         q = qtilde + wi * f
 
         if self.squeeze and self.ncharges == 1:

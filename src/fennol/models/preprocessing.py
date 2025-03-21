@@ -15,7 +15,7 @@ from ..utils.activations import chain
 from ..utils import deep_update, mask_filter_1d
 from ..utils.kspace import get_reciprocal_space_parameters
 from .misc.misc import SwitchFunction
-from ..utils.periodic_table import PERIODIC_TABLE, PERIODIC_TABLE_REV_IDX
+from ..utils.periodic_table import PERIODIC_TABLE, PERIODIC_TABLE_REV_IDX,CHEMICAL_BLOCKS,CHEMICAL_BLOCKS_NAMES
 
 
 @dataclasses.dataclass(frozen=True)
@@ -748,6 +748,19 @@ class GraphProcessor(nn.Module):
             "edge_mask": edge_mask,
         }
 
+        if "alch_group" in inputs:
+            alch_group = inputs["alch_group"]
+            lambda_e = inputs["alch_elambda"]
+            lambda_e = 0.5*(1.-jnp.cos(jnp.pi*lambda_e))
+            mask = alch_group[edge_src] == alch_group[edge_dst]
+            graph_out["switch_raw"] = switch
+            graph_out["switch"] = jnp.where(
+                mask,
+                switch,
+                lambda_e * switch ,
+            )
+
+
         return {**inputs, self.graph_key: graph_out}
 
 
@@ -984,6 +997,20 @@ class GraphFilterProcessor(nn.Module):
             "filter_indices": filter_indices,
             "edge_mask": edge_mask,
         }
+
+        if "alch_group" in inputs:
+            edge_src=graph["edge_src"]
+            edge_dst=graph["edge_dst"]
+            alch_group = inputs["alch_group"]
+            lambda_e = inputs["alch_elambda"]
+            lambda_e = 0.5*(1.-jnp.cos(jnp.pi*lambda_e))
+            mask = alch_group[edge_src] == alch_group[edge_dst]
+            graph_out["switch_raw"] = switch
+            graph_out["switch"] = jnp.where(
+                mask,
+                switch,
+                lambda_e * switch ,
+            )
 
         return {**inputs, self.graph_key: graph_out}
 
@@ -1427,6 +1454,167 @@ class SpeciesIndexer:
         return {
             **inputs,
             self.output_key: species_index,
+            self.output_key + "_overflow": overflow,
+        }
+
+    @partial(jax.jit, static_argnums=(0,))
+    def update_skin(self, inputs):
+        return self.process(None, inputs)
+
+@dataclasses.dataclass(frozen=True)
+class BlockIndexer:
+    """Build an index that splits atomic arrays by chemical blocks.
+
+    FPID: BLOCK_INDEXER
+
+    If `species_order` is specified, the output will be a dense array with size (len(species_order), max_size) that can directly index atomic arrays.
+    If `species_order` is None, the output will be a dictionary with species as keys and an index to filter atomic arrays for that species as values.
+
+    """
+
+    output_key: str = "block_index"
+    """Key for the output dictionary."""
+    add_atoms: int = 0
+    """Additional atoms to add to the sizes."""
+    add_atoms_margin: int = 10
+    """Additional atoms to add to the sizes when adding margin."""
+    split_CNOPSSe: bool = False
+
+    FPID: ClassVar[str] = "BLOCK_INDEXER"
+
+    def init(self):
+        return FrozenDict(
+            {
+                "sizes": {},
+            }
+        )
+
+    def build_chemical_blocks(self):
+        _CHEMICAL_BLOCKS_NAMES = CHEMICAL_BLOCKS_NAMES.copy()
+        if self.split_CNOPSSe:
+            _CHEMICAL_BLOCKS_NAMES[1] = "C"
+            _CHEMICAL_BLOCKS_NAMES.extend(["N","O","P","S","Se"])
+        _CHEMICAL_BLOCKS = CHEMICAL_BLOCKS.copy()
+        if self.split_CNOPSSe:
+            _CHEMICAL_BLOCKS[6] = 1
+            _CHEMICAL_BLOCKS[7] = len(CHEMICAL_BLOCKS_NAMES)
+            _CHEMICAL_BLOCKS[8] = len(CHEMICAL_BLOCKS_NAMES)+1
+            _CHEMICAL_BLOCKS[15] = len(CHEMICAL_BLOCKS_NAMES)+2
+            _CHEMICAL_BLOCKS[16] = len(CHEMICAL_BLOCKS_NAMES)+3
+            _CHEMICAL_BLOCKS[34] = len(CHEMICAL_BLOCKS_NAMES)+4
+        return _CHEMICAL_BLOCKS_NAMES, _CHEMICAL_BLOCKS
+
+    def __call__(self, state, inputs, return_state_update=False, add_margin=False):
+        _CHEMICAL_BLOCKS_NAMES, _CHEMICAL_BLOCKS = self.build_chemical_blocks()
+
+        species = np.array(inputs["species"], dtype=np.int32)
+        blocks = _CHEMICAL_BLOCKS[species]
+        nat = species.shape[0]
+        set_blocks, counts = np.unique(blocks, return_counts=True)
+
+        new_state = {**state}
+        state_up = {}
+
+        sizes = state.get("sizes", FrozenDict({}))
+        new_sizes = {**sizes}
+        up_sizes = False
+        for s, c in zip(set_blocks, counts):
+            if s < 0:
+                continue
+            key = (s, _CHEMICAL_BLOCKS_NAMES[s])
+            if c > sizes.get(key, 0):
+                up_sizes = True
+                add_atoms = state.get("add_atoms", self.add_atoms)
+                if add_margin:
+                    add_atoms += state.get("add_atoms_margin", self.add_atoms_margin)
+                new_sizes[key] = c + add_atoms
+
+        new_sizes = FrozenDict(new_sizes)
+        if up_sizes:
+            state_up["sizes"] = (new_sizes, sizes)
+            new_state["sizes"] = new_sizes
+
+        block_index = {n:None for n in _CHEMICAL_BLOCKS_NAMES}
+        for (_,n), c in new_sizes.items():
+            block_index[n] = np.full(c, nat, dtype=np.int32)
+        # block_index = {
+            # n: np.full(c, nat, dtype=np.int32)
+            # for (_,n), c in new_sizes.items()
+        # }
+        for s, c in zip(set_blocks, counts):
+            if s < 0:
+                continue
+            block_index[_CHEMICAL_BLOCKS_NAMES[s]][:c] = np.nonzero(blocks == s)[0]
+
+        output = {
+            **inputs,
+            self.output_key: block_index,
+            self.output_key + "_overflow": False,
+        }
+
+        if return_state_update:
+            return FrozenDict(new_state), output, state_up
+        return FrozenDict(new_state), output
+
+    def check_reallocate(self, state, inputs, parent_overflow=False):
+        """check for overflow and reallocate nblist if necessary"""
+        overflow = parent_overflow or inputs[self.output_key + "_overflow"]
+        if not overflow:
+            return state, {}, inputs, False
+
+        add_margin = inputs[self.output_key + "_overflow"]
+        state, inputs, state_up = self(
+            state, inputs, return_state_update=True, add_margin=add_margin
+        )
+        return state, state_up, inputs, True
+        # return state, {}, inputs, parent_overflow
+
+    @partial(jax.jit, static_argnums=(0, 1))
+    def process(self, state, inputs):
+        _CHEMICAL_BLOCKS_NAMES, _CHEMICAL_BLOCKS = self.build_chemical_blocks()
+        # assert (
+        #     self.output_key in inputs
+        # ), f"Species Index {self.output_key} must be provided on accelerator. Call the numpy routine (self.__call__) first."
+
+        recompute_species_index = "recompute_species_index" in inputs.get("flags", {})
+        if self.output_key in inputs and not recompute_species_index:
+            return inputs
+
+        if state is None:
+            raise ValueError("Block Indexer state must be provided on accelerator.")
+
+        species = inputs["species"]
+        blocks = jnp.asarray(_CHEMICAL_BLOCKS)[species]
+        nat = species.shape[0]
+
+        sizes = state["sizes"]
+
+        # species_index = {
+        # PERIODIC_TABLE[s]: jnp.nonzero(species == s, size=c, fill_value=nat)[0]
+        # for s, c in sizes.items()
+        # }
+        block_index = {n: None for n in _CHEMICAL_BLOCKS_NAMES}
+        overflow = False
+        natcount = 0
+        for (s,name), c in sizes.items():
+            mask = blocks == s
+            new_size = jnp.sum(mask)
+            natcount = natcount + new_size
+            overflow = overflow | (new_size > c)  # check if sizes are correct
+            block_index[name] = jnp.nonzero(
+                mask, size=c, fill_value=nat
+            )[0]
+
+        mask = blocks < 0
+        new_size = jnp.sum(mask)
+        natcount = natcount + new_size
+        overflow = overflow | (
+            natcount < species.shape[0]
+        )  # check if any species missing
+
+        return {
+            **inputs,
+            self.output_key: block_index,
             self.output_key + "_overflow": overflow,
         }
 

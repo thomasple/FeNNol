@@ -318,6 +318,7 @@ class SpeciesIndexNet(nn.Module):
     """Whether to remove the last axis of the output tensor if it is of dimension 1."""
     kernel_init: Union[str, Callable] = "lecun_normal()"
     """The kernel initialization method for the fully connected networks."""
+    check_unhandled: bool = True
 
     FID: ClassVar[str] = "SPECIES_INDEX_NET"
 
@@ -375,6 +376,11 @@ class SpeciesIndexNet(nn.Module):
         if self.is_initializing():
             x = jnp.zeros((1, embedding.shape[-1]), dtype=embedding.dtype)
             [net(x) for net in self.networks.values()]
+
+        if self.check_unhandled:
+            for b in species_index.keys():
+                if b not in self.networks.keys():
+                    raise ValueError(f"Species {b} not found in networks. Handled species are {self.networks.keys()}")
 
         ############################
         outputs = []
@@ -881,3 +887,156 @@ class ZLoRANet(nn.Module):
             output_key = self.name if self.output_key is None else self.output_key
             return {**inputs, output_key: x} if output_key is not None else x
         return x
+
+
+class BlockIndexNet(nn.Module):
+    """Chemical-species-specific neural network using precomputed species index.
+
+    FID: BLOCK_INDEX_NET
+
+    A neural network that applies a species-specific fully connected network to each atom embedding.
+    A species index must be provided to filter the embeddings for each species and apply the corresponding network.
+    This index can be obtained using the SPECIES_INDEXER preprocessing module from `fennol.models.preprocessing.SpeciesIndexer`
+
+    """
+
+    output_dim: int
+    """The dimension of the output of the fully connected networks."""
+    hidden_neurons: Sequence[int]
+    """The hidden dimensions of the fully connected networks.
+        If a dictionary is provided, it should map species names to dimensions.
+        If a sequence is provided, the same dimensions will be used for all species."""
+    used_blocks: Optional[Sequence[str]] = None
+    """The blocks to use. If None, all blocks will be used."""
+    activation: Union[Callable, str] = "silu"
+    """The activation function to use in the fully connected networks."""
+    use_bias: bool = True
+    """Whether to include bias terms in the fully connected networks."""
+    input_key: Optional[str] = None
+    """The key in the input dictionary that corresponds to the embeddings of the atoms."""
+    block_index_key: str = "block_index"
+    """The key in the input dictionary that corresponds to the block index of the atoms. See `fennol.models.preprocessing.BlockIndexer`"""
+    output_key: Optional[str] = None
+    """The key in the output dictionary that corresponds to the network's output."""
+
+    squeeze: bool = False
+    """Whether to remove the last axis of the output tensor if it is of dimension 1."""
+    kernel_init: Union[str, Callable] = "lecun_normal()"
+    """The kernel initialization method for the fully connected networks."""
+    # check_unhandled: bool = True
+
+    FID: ClassVar[str] = "BLOCK_INDEX_NET"
+
+    # def setup(self):
+    #     all_blocks = CHEMICAL_BLOCKS_NAMES
+    #     if self.used_blocks is None:
+    #         used_blocks = all_blocks
+    #     else:
+    #         used_blocks = []
+    #         for b in self.used_blocks:
+    #             b_=str(b).strip().upper()
+    #             if b_ not in all_blocks:
+    #                 raise ValueError(f"Block {b} not found in {all_blocks}")
+    #             used_blocks.append(b_)
+    #     used_blocks = set(used_blocks)
+    #     self._used_blocks = used_blocks
+
+    #     if not (
+    #         isinstance(self.hidden_neurons, dict)
+    #         or isinstance(self.hidden_neurons, FrozenDict)
+    #     ):
+    #         neurons = {k: self.hidden_neurons for k in used_blocks}
+    #     else:
+    #         neurons = {}
+    #         for b in self.hidden_neurons.keys():
+    #             b_=str(b).strip().upper()
+    #             if b_ not in all_blocks:
+    #                 raise ValueError(f"Block {b} does not exist.  Available blocks are {all_blocks}")
+    #             neurons[b_] = self.hidden_neurons[b]
+    #         used_blocks = set(neurons.keys())
+    #         if used_blocks != self._used_blocks and self.used_blocks is not None:
+    #             print(
+    #                 f"Warning: hidden neurons definitions do not match specified used_blocks {self.used_blocks}. Using blocks defined in hidden_neurons.")
+    #         self._used_blocks = used_blocks
+
+    #     self.networks = {
+    #         k: FullyConnectedNet(
+    #             [*neurons[k], self.output_dim],
+    #             self.activation,
+    #             self.use_bias,
+    #             name=k,
+    #             kernel_init=self.kernel_init,
+    #         )
+    #         for k in self._used_blocks
+    #     }
+
+    @nn.compact
+    def __call__(
+        self, inputs: Union[dict, Tuple[jax.Array, jax.Array]]
+    ) -> Union[dict, jax.Array]:
+
+        if self.input_key is None:
+            assert not isinstance(
+                inputs, dict
+            ), "input key must be provided if inputs is a dictionary"
+            species, embedding, block_index = inputs
+        else:
+            species, embedding = inputs["species"], inputs[self.input_key]
+            block_index = inputs[self.block_index_key]
+
+        assert isinstance(
+            block_index, dict
+        ), "block_index must be a dictionary for BlockIndexNet"
+
+        networks = {
+            k: FullyConnectedNet(
+                [*self.hidden_neurons, self.output_dim],
+                self.activation,
+                self.use_bias,
+                name=k,
+                kernel_init=self.kernel_init,
+            )
+            for k in block_index.keys()
+        }
+
+        ############################
+        # initialization => instantiate all networks
+        if self.is_initializing():
+            x = jnp.zeros((1, embedding.shape[-1]), dtype=embedding.dtype)
+            [net(x) for net in networks.values()]
+
+        # if self.check_unhandled:
+        #     for b in block_index.keys():
+        #         if b not in networks.keys():
+        #             raise ValueError(f"Block {b} not found in networks. Available blocks are {self.networks.keys()}")
+
+        ############################
+        outputs = []
+        indices = []
+        for s, net in networks.items():
+            if s not in block_index:
+                continue
+            if block_index[s] is None:
+                continue
+            idx = block_index[s]
+            o = net(embedding[idx])
+            outputs.append(o)
+            indices.append(idx)
+
+        o = jnp.concatenate(outputs, axis=0)
+        idx = jnp.concatenate(indices, axis=0)
+
+        out = (
+            jnp.zeros((species.shape[0], *o.shape[1:]), dtype=o.dtype)
+            .at[idx]
+            .set(o, mode="drop")
+        )
+
+        if self.squeeze and out.shape[-1] == 1:
+            out = jnp.squeeze(out, axis=-1)
+        ############################
+
+        if self.input_key is not None:
+            output_key = self.name if self.output_key is None else self.output_key
+            return {**inputs, output_key: out} if output_key is not None else out
+        return out

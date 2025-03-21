@@ -7,9 +7,9 @@ from typing import Dict, Union, Callable, Sequence, Optional, Tuple, ClassVar
 
 from ..misc.encodings import SpeciesEncoding, RadialBasis, positional_encoding
 from ...utils.spherical_harmonics import generate_spherical_harmonics, CG_SO3
-from ...utils.activations import activation_from_str, tssr3
+from ...utils.activations import activation_from_str
 from ...utils.initializers import initializer_from_str
-from ..misc.nets import FullyConnectedNet
+from ..misc.nets import FullyConnectedNet, BlockIndexNet
 from ..misc.e3 import ChannelMixing, ChannelMixingE3, FilteredTensorProduct
 from ...utils.periodic_table import D3_COV_RADII, D3_VDW_RADII, VALENCE_ELECTRONS
 from ...utils import AtomicUnits as au
@@ -103,19 +103,32 @@ class CRATEmbedding(nn.Module):
 
     graph_lode: Optional[str] = None
     """The key for the lode graph data in the inputs dictionary."""
-    lode_channels: int = 16
+    lode_channels: Union[int, Sequence[int]] = 8
     """The number of channels for lode."""
-    lode_hidden: Sequence[int] = dataclasses.field(default_factory=lambda: [])
-    """The hidden layer sizes for the lode network."""
-    lode_switch: float = 2.0
-    """The switch parameter for lode."""
-    lode_shift: float = 1.0
-    """The shift parameter for lode."""
+    lmax_lode: int = 0
+    """The maximum order of spherical tensors for lode."""
+    a_lode: float = -1.
+    """The cutoff for the lode graph. If negative, the value is trainable with starting value -a_lode."""
+    lode_resolve_l: bool = True
+    """Whether to resolve the lode channels by l."""
+    lode_multipole_interaction: bool = True
+    """Whether to interact with the multipole moments of the lode graph."""
+    lode_direct_multipoles: bool = True
+    """Whether to directly use the first local equivariants to interact with long-range equivariants. If false, local equivariants are mixed before interaction."""
+    lode_equi_full_combine: bool = False
+    lode_normalize_l: bool = False
+    lode_use_field_norm: bool = True
+    lode_rshort: Optional[float] = None
+    lode_dshort: float = 0.5
+    
 
     charge_embedding: bool = False
     """Whether to include charge embedding."""
     total_charge_key: str = "total_charge"
     """The key for the total charge data in the inputs dictionary."""
+
+    block_index_key: Optional[str] = None
+    """The key for the block index. If provided, will use a BLOCK_INDEX_NET as a mixing network."""
 
     FID: ClassVar[str] = "CRATE"
 
@@ -125,6 +138,7 @@ class CRATEmbedding(nn.Module):
         assert (
             len(species.shape) == 1
         ), "Species must be a 1D array (batches must be flattened)"
+        reduce_memory =  "reduce_memory" in inputs.get("flags", {})
 
         kernel_init = (
             initializer_from_str(self.kernel_init)
@@ -219,41 +233,67 @@ class CRATEmbedding(nn.Module):
         do_lode = self.graph_lode is not None
         if do_lode:
             graph_lode = inputs[self.graph_lode]
-            rij_lr = graph_lode["distances"]/au.BOHR
-            # unswitch = 0.5 - 0.5 * jnp.cos(
-            #     (np.pi / self.lode_switch) * (rij_lr - cutoff + self.lode_shift)
-            # )
-            # unswitch = jnp.where(
-            #     rij_lr > cutoff + self.lode_switch - self.lode_shift,
-            #     1.0,
-            #     jnp.where(rij_lr < cutoff - self.lode_shift, 0.0, unswitch),
-            # )
-            ai = jnp.abs(self.param("a_lode", lambda key: jnp.asarray(D3_VDW_RADII)))[
-                species
-            ]
-            ai2 = ai**2
-            gamma_ij = (
-                ai2[graph_lode["edge_src"]] + ai2[graph_lode["edge_dst"]] + 1.0e-3
-            ) ** (-0.5)
-            qi, gi = jnp.split(
-                FullyConnectedNet(
-                    [*self.lode_hidden, 2 * self.lode_channels],
-                    activation=self.activation,
-                    name=f"lode_qi",
-                )(zi),
-                2,
-                axis=-1,
+            switch_lode = graph_lode["switch"][:, None]
+
+            edge_src_lr, edge_dst_lr = graph_lode["edge_src"], graph_lode["edge_dst"]
+            r = graph_lode["distances"][:, None]
+            rc = self._graphs_properties[self.graph_lode]["cutoff"]
+            
+            lmax_lr = self.lmax_lode
+            equivariant_lode = lmax_lr > 0
+            assert lmax_lr >=0, f"lmax_lode must be >= 0, got {lmax_lr}"
+            if self.lode_multipole_interaction:
+                assert lmax_lr <= self.lmax, f"lmax_lode must be <= lmax for multipole interaction, got {lmax_lr} > {self.lmax}"
+            nrep_lr = np.array([2 * l + 1 for l in range(lmax_lr + 1)], dtype=np.int32)
+            if self.lode_resolve_l and equivariant_lode:
+                ls_lr = np.arange(lmax_lr + 1)
+            else:
+                ls_lr = np.array([0])
+
+            if self.a_lode > 0:
+                a = self.a_lode**2
+            else:
+                a = (
+                    self.param(
+                        "a_lr",
+                        lambda key: jnp.asarray([-self.a_lode] * ls_lr.shape[0])[None, :],
+                    )
+                    ** 2
+                )
+            rc2a = rc**2 + a
+            ls_lr = 0.5 * (ls_lr[None, :] + 1)
+            ### minimal radial basis for long range (damped coulomb)
+            eij_lr = (
+                1.0 / (r**2 + a) ** ls_lr
+                - 1.0 / rc2a**ls_lr
+                + (r - rc) * rc * (2 * ls_lr) / rc2a ** (ls_lr + 1)
+            ) * switch_lode
+
+            if self.lode_rshort is not None:
+                rs = self.lode_rshort
+                d = self.lode_dshort
+                switch_short = 0.5 * (1 - jnp.cos(jnp.pi * (r - rs) / d)) * (r > rs) * (
+                    r < rs + d
+                ) + (r > rs + d)
+                eij_lr = eij_lr * switch_short
+
+            # dim_lr = self.nchannels_lode
+            nchannels_lode = (
+                [self.lode_channels] * self.nlayers
+                if isinstance(self.lode_channels, int)
+                else self.lode_channels
             )
-            gi = jax.nn.softplus(gi)
-            unswitch = jax.scipy.special.erf(
-                gi[graph_lode["edge_src"]] * (gamma_ij * rij_lr)[:, None]
-            )
-            Mij = (
-                qi[graph_lode["edge_dst"]]
-                * unswitch
-                * (graph_lode["switch"] / rij_lr)[:, None]
-            )
-            Mi = jax.ops.segment_sum(Mij, graph_lode["edge_src"], species.shape[0])
+            dim_lr = nchannels_lode
+            
+            if equivariant_lode:
+                if self.lode_resolve_l:
+                    eij_lr = eij_lr.repeat(nrep_lr, axis=-1)
+                Yij = generate_spherical_harmonics(lmax=lmax_lr, normalize=False)(
+                    graph_lode["vec"] / r
+                )
+                eij_lr = (eij_lr * Yij)[:, None, :]
+                dim_lr = [d * (lmax_lr + 1) for d in dim_lr]
+            
 
         ##################################################
         ### GET ANGLES ###
@@ -378,6 +418,7 @@ class CRATEmbedding(nn.Module):
                 raise ValueError(f"Unknown angle style {self.angle_style}")
             xa = xa[:, None, :]
             if not self.angle_combine_pairs:
+                if reduce_memory: raise NotImplementedError("Angle embedding not implemented with reduce_memory")
                 xa = (xa * radial_basis_angle[:, :, None]).reshape(
                     -1, 1, xa.shape[1] * radial_basis_angle.shape[1]
                 )
@@ -502,16 +543,23 @@ class CRATEmbedding(nn.Module):
 
             ##################################################
             ### PAIR EMBEDDING ###
-            Lij = (si_mp[:, None, :] * radial_basis[:, :, None]).reshape(
-                radial_basis.shape[0], si_mp.shape[1] * radial_basis.shape[1]
-            )
-
-            ### AGGREGATE PAIR EMBEDDING ###
-            Li = jax.ops.segment_sum(Lij, edge_src, species.shape[0])
+            if reduce_memory:
+                Li = jnp.zeros((species.shape[0]* radial_basis.shape[1],si_mp.shape[1]),dtype=si_mp.dtype)
+                for i in range(radial_basis.shape[1]):
+                    indices = i + edge_src*radial_basis.shape[1]
+                    Li = Li.at[indices].add(si_mp*radial_basis[:,i,None])
+                Li = Li.reshape(species.shape[0], radial_basis.shape[1]*si_mp.shape[1])
+            else:
+                Lij = (si_mp[:, None, :] * radial_basis[:, :, None]).reshape(
+                    radial_basis.shape[0], si_mp.shape[1] * radial_basis.shape[1]
+                )
+                ### AGGREGATE PAIR EMBEDDING ###
+                Li = jax.ops.segment_sum(Lij, edge_src, species.shape[0])
 
             ### CONCATENATE EMBEDDING COMPONENTS ###
             components = [si, Li]
             if self.pair_embedding_key is not None:
+                if reduce_memory: raise NotImplementedError("Pair embedding not implemented with reduce_memory")
                 components_pair = [si[edge_src], xij, Lij]
 
 
@@ -545,16 +593,24 @@ class CRATEmbedding(nn.Module):
                             si_mp_ang
                         )
 
-                Da = Da[:, :, None]
-                # combine pair and angle info
-                radang = (xa * (Da[angle_dst] * Da[angle_src])).reshape(
-                    (-1, Da.shape[1] * xa.shape[2])
-                )
+                Da = Da[angle_dst] * Da[angle_src]
+                ## combine pair and angle info
+                if reduce_memory:
+                    ang_embedding = jnp.zeros((species.shape[0]* Da.shape[-1],xa.shape[-1]),dtype=Da.dtype)
+                    for i in range(Da.shape[-1]):
+                        indices = i + central_atom*Da.shape[-1]
+                        ang_embedding = ang_embedding.at[indices].add(Da[:,i,None]*xa[:,0,:])
+                    ang_embedding = ang_embedding.reshape(species.shape[0], xa.shape[-1]*Da.shape[-1])
+                else:
+                    radang = (xa * Da[:, :, None]).reshape(
+                        (-1, Da.shape[1] * xa.shape[2])
+                    )
+                    ### AGGREGATE  ANGLE EMBEDDING ###
+                    ang_embedding = jax.ops.segment_sum(
+                        radang, central_atom, species.shape[0]
+                    )
+                    
 
-                ### AGGREGATE  ANGLE EMBEDDING ###
-                ang_embedding = jax.ops.segment_sum(
-                    radang, central_atom, species.shape[0]
-                )
                 components.append(ang_embedding)
 
                 if self.pair_embedding_key is not None:
@@ -607,25 +663,27 @@ class CRATEmbedding(nn.Module):
                         self.nchannels_l,
                         name=f"e3_initial_mixing_{layer}",
                     )(rhoi)
-                    assert n_tp[layer] > 0, "n_tp must be > 0 for the first equivariant layer."
+                    # assert n_tp[layer] > 0, "n_tp must be > 0 for the first equivariant layer."
                 else:
                     rhoi = rhoi + drhoi
                     # if message_passing[layer]:
                         # Vi0.append(drhoi[:, :, 0])
                 initialize_e3 = False
-                for itp in range(n_tp[layer]):
-                    dVi = FilteredTensorProduct(
-                        self.lmax, self.lmax, name=f"tensor_product_{layer}_{itp}",ignore_parity=self.ignore_irreps_parity,weights_by_channel=False
-                    )(rhoi, Vi)
-                    Vi = ChannelMixing(
-                            self.lmax,
-                            self.nchannels_l,
-                            self.nchannels_l,
-                            name=f"tp_mixing_{layer}_{itp}",
-                        )(Vi + dVi)
-                    Vi0.append(dVi[:, :, 0])
-                Vi0 = jnp.concatenate(Vi0, axis=-1)
-                components.append(Vi0)
+                if n_tp[layer] > 0:
+                    for itp in range(n_tp[layer]):
+                        dVi = FilteredTensorProduct(
+                            self.lmax, self.lmax, name=f"tensor_product_{layer}_{itp}",ignore_parity=self.ignore_irreps_parity,weights_by_channel=False
+                        )(rhoi, Vi)
+                        Vi = ChannelMixing(
+                                self.lmax,
+                                self.nchannels_l,
+                                self.nchannels_l,
+                                name=f"tp_mixing_{layer}_{itp}",
+                            )(Vi + dVi)
+                        Vi0.append(dVi[:, :, 0])
+                    Vi0 = jnp.concatenate(Vi0, axis=-1)
+                    components.append(Vi0)
+
                 if self.pair_embedding_key is not None:
                     Vij = Vi[edge_src]*Yij
                     Vij0 = [Vij[...,0]]
@@ -636,8 +694,56 @@ class CRATEmbedding(nn.Module):
 
             ##################################################
             ### CONCATENATE EMBEDDING COMPONENTS ###
-            if do_lode:
-                components.append(Mi)
+            if do_lode and nchannels_lode[layer] > 0:
+                zj = nn.Dense(dim_lr[layer], use_bias=False, name=f"LODE_{layer}")(xi)
+                if equivariant_lode:
+                    zj = zj.reshape(
+                        (species.shape[0], nchannels_lode[layer], lmax_lr + 1)
+                    ).repeat(nrep_lr, axis=-1)
+                xi_lr = jax.ops.segment_sum(
+                    eij_lr * zj[edge_dst_lr], edge_src_lr, species.shape[0]
+                )
+                if equivariant_lode:
+                    assert self.lode_use_field_norm or self.lode_multipole_interaction, "equivariant LODE requires field norm or multipole interaction"
+                    if self.lode_multipole_interaction:
+                        if initialize_e3:
+                            raise ValueError("equivariant LODE used before local equivariants initialized")
+                        size_l_lr = (lmax_lr+1)**2
+                        if self.lode_direct_multipoles:
+                            assert nchannels_lode[layer] <= self.nchannels_l
+                            Mi = Vi[:, : nchannels_lode[layer], :size_l_lr]
+                        else:
+                            Mi = ChannelMixingE3(
+                                lmax_lr,
+                                self.nchannels_l,
+                                nchannels_lode[layer],
+                                name=f"e3_LODE_{layer}",
+                            )(Vi[...,:size_l_lr])
+                        Mi_lr = Mi * xi_lr
+                    components.append(xi_lr[:, :, 0])
+                    if self.lode_use_field_norm and self.lode_equi_full_combine:
+                        xi_lr1 = ChannelMixing(
+                            lmax_lr,
+                            nchannels_lode[layer],
+                            nchannels_lode[layer],
+                            name=f"LODE_mixing_{layer}",
+                        )(xi_lr)
+                    norm = 1.
+                    for l in range(1, lmax_lr + 1):
+                        if self.lode_normalize_l:
+                            norm = 1. / (2 * l + 1)
+                        if self.lode_multipole_interaction:
+                            components.append(Mi_lr[:, :, l**2 : (l + 1) ** 2].sum(axis=-1)*norm)
+
+                        if self.lode_use_field_norm:
+                            if self.lode_equi_full_combine:
+                                components.append((xi_lr[:,:,l**2 : (l + 1) ** 2]*xi_lr1[:,:,l**2 : (l + 1) ** 2]).sum(axis=-1)*norm)
+                            else:
+                                components.append(
+                                    ((xi_lr[:, :, l**2 : (l + 1) ** 2]) ** 2).sum(axis=-1)*norm
+                                )
+                else:
+                    components.append(xi_lr)
 
             dxi = jnp.concatenate(components, axis=-1)
 
@@ -648,15 +754,27 @@ class CRATEmbedding(nn.Module):
 
             ##################################################
             ### MIX AND APPLY NONLINEARITY ###
-            dxi = actmix(
-                FullyConnectedNet(
-                    [*self.mixing_hidden, self.dim],
-                    activation=self.activation,
-                    name=f"dxi_{layer}",
-                    use_bias=self.use_bias,
-                    kernel_init=kernel_init,
-                )(dxi)
-            )
+            if self.block_index_key is not None:
+                block_index = inputs[self.block_index_key]
+                dxi = actmix(BlockIndexNet(
+                        output_dim=self.dim,
+                        hidden_neurons=self.mixing_hidden,
+                        activation=self.activation,
+                        name=f"dxi_{layer}",
+                        use_bias=self.use_bias,
+                        kernel_init=kernel_init,
+                    )((species,dxi, block_index))
+                )
+            else:
+                dxi = actmix(
+                    FullyConnectedNet(
+                        [*self.mixing_hidden, self.dim],
+                        activation=self.activation,
+                        name=f"dxi_{layer}",
+                        use_bias=self.use_bias,
+                        kernel_init=kernel_init,
+                    )(dxi)
+                )
 
             if self.pair_embedding_key is not None:
                 ### UPDATE PAIR EMBEDDING ###
