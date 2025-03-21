@@ -87,10 +87,12 @@ def inspect_model(model, prm=False, short=False, all=False, **kwargs):
     data = "# MODEL DESCRIPTION\n"
     data += yaml.dump(inspect_dict, sort_keys=False, Dumper=IndentDumper)
 
+    params = model.variables["params"] if "params" in model.variables else {}
+
     if prm:
         shapes = traverse_util.path_aware_map(
             lambda p, v: f"[{','.join(str(i) for i in v.shape)}]",
-            model.variables["params"],
+            params,
         )
 
         data = (
@@ -106,7 +108,7 @@ def inspect_model(model, prm=False, short=False, all=False, **kwargs):
         jax.tree.leaves(
             traverse_util.path_aware_map(
                 lambda p, v: v.size,
-                model.variables["params"],
+                params,
             )
         )
     )
