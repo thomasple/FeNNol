@@ -77,7 +77,7 @@ def main():
     input_file = args.input_file.resolve()
     assert input_file.exists(), f"Input file {input_file} does not exist"
     # assert args.format == "xyz", f"Only xyz format is supported for now"
-    assert args.format in ["xyz","arc"], f"Only xyz and arc format is supported for now"
+    assert args.format in ["xyz","arc","pkl"], f"Only xyz, arc and pkl formats are supported for now"
     output_keys = args.output_keys
     xyz_indexed = args.format == "arc"
 
@@ -109,17 +109,17 @@ def main():
 
     # define the model prediction function
     def model_predict(batch):
-        natoms = np.array([frame[2] for frame in batch])
-        batch_index = np.concatenate([frame[3] for frame in batch])
-        species = np.concatenate([frame[0] for frame in batch])
-        xyz = np.concatenate([frame[1] for frame in batch], axis=0)
+        natoms = np.array([frame["natoms"] for frame in batch])
+        batch_index = np.concatenate([frame["batch_index"] for frame in batch])
+        species = np.concatenate([frame["species"] for frame in batch])
+        xyz = np.concatenate([frame["coordinates"] for frame in batch], axis=0)
         inputs = {
             "species": species,
             "coordinates": xyz,
             "batch_index": batch_index,
             "natoms": natoms,}
         if args.periodic:
-            cells = np.array([[float(x) for x in frame[4].split()] for frame in batch]).reshape(-1,3,3)
+            cells = np.concatenate([frame["cell"] for frame in batch], axis=0)
             inputs["cells"] = cells
 
         if "forces" in output_keys:
@@ -135,7 +135,7 @@ def main():
     # define the function to process a batch
     def process_batch(batch):
         output = model_predict(batch)
-        natoms = np.array([frame[2] for frame in batch])
+        natoms = np.array([frame["natoms"] for frame in batch])
         if args.periodic:
             cells = np.array(output["cells"])
         species = np.array(output["species"])
@@ -165,16 +165,49 @@ def main():
         return frames_data
 
     ### start processing the input file
-    reader = xyz_reader(input_file, has_comment_line=True, indexed=xyz_indexed)
+    # reader = xyz_reader(input_file, has_comment_line=True, indexed=xyz_indexed)
+    if args.format in ["arc","xyz"]:
+        def reader():
+            for symbols, xyz, comment in xyz_reader(input_file, has_comment_line=True, indexed=xyz_indexed):
+                species = np.array([PERIODIC_TABLE_REV_IDX[s] for s in symbols])
+                frame = {"species": species, "coordinates": xyz, "natoms":species.shape[0]}
+                if args.periodic:
+                    cell = np.array([float(x) for x in comment.split()]).reshape(1,3,3)
+                    frame["cell"] = cell
+                yield frame
+
+    elif args.format == "pkl":
+        with open(input_file, "rb") as f:
+            data = pickle.load(f)
+        if isinstance(data, dict):
+            if "frames" in data:
+                frames = data["frames"]
+            elif "training" in data:
+                frames = data["training"]
+                if "validation" in data:
+                    frames.extend(data["validation"])
+            else:
+                raise ValueError("No frames found in the input file")
+        else:
+            frames = data
+        
+        def reader():
+            for frame in frames:
+                species = np.array(frame["species"])
+                coordinates = np.array(frame["coordinates"])
+                frame = {"species": species, "coordinates": coordinates,"natoms":species.shape[0]}
+                if args.periodic:
+                    cell = np.array(frame["cell"]).reshape(1,3,3)
+                    frame["cell"] = cell
+                yield frame
+
     batch = []
     output_data = []
     ibatch = 0
-    for symbols, xyz, comment in reader:
-        # todo: handle pbcs with comment
-        species = np.array([PERIODIC_TABLE_REV_IDX[s] for s in symbols])
-        nat = len(species)
-        batch_index = np.full(nat, ibatch)
-        batch.append((species, xyz, nat, batch_index,comment))
+    for frame in reader():
+        batch_index = np.full(frame["natoms"], ibatch, dtype=np.int32)
+        frame["batch_index"] = batch_index
+        batch.append(frame)
         ibatch += 1
         if len(batch) == args.batch_size:
             frames_data = process_batch(batch)
