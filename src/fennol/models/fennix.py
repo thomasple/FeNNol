@@ -16,6 +16,7 @@ from .preprocessing import (
     PreprocessingChain,
     JaxConverter,
     atom_unpadding,
+    check_input,
 )
 from .modules import MODULES, PREPROCESSING, FENNIXModules
 
@@ -179,7 +180,7 @@ class FENNIX:
     ) -> None:
         """Set the energy terms to be computed by the model and prepare the energy and force functions."""
         object.__setattr__(self, "energy_terms", energy_terms)
-        if energy_terms is None:
+        if energy_terms is None or len(energy_terms) == 0:
 
             def total_energy(variables, data):
                 out = self.__apply(variables, data)
@@ -391,15 +392,32 @@ class FENNIX:
         else:
             return energy_gradient
 
-    def preprocess(self, **inputs) -> Dict[str, Any]:
+    def preprocess(self,use_gpu=False, verbose=False,**inputs) -> Dict[str, Any]:
         """apply preprocessing to the input data
 
         !!! This is not a pure function => do not apply jax transforms !!!"""
         if self.preproc_state is None:
             out, _ = self.reinitialize_preprocessing(example_data=inputs)
+        elif use_gpu:
+            do_check_input = self.preproc_state.get("check_input", True)
+            if do_check_input:
+                inputs = check_input(inputs)
+            preproc_state, inputs = self.preprocessing.atom_padding(
+                self.preproc_state, inputs
+            )
+            inputs = self.preprocessing.process(preproc_state, inputs)
+            preproc_state, state_up, out, overflow = (
+                self.preprocessing.check_reallocate(
+                    preproc_state, inputs
+                )
+            )
+            if verbose and overflow:
+                print("GPU preprocessing: nblist overflow => reallocating nblist")
+                print("size updates:", state_up)
         else:
             preproc_state, out = self.preprocessing(self.preproc_state, inputs)
-            object.__setattr__(self, "preproc_state", preproc_state)
+
+        object.__setattr__(self, "preproc_state", preproc_state)
         return out
 
     def reinitialize_preprocessing(
@@ -419,7 +437,7 @@ class FENNIX:
         object.__setattr__(self, "preproc_state", preproc_state)
         return inputs, rng_key
 
-    def __call__(self, variables: Optional[dict] = None, **inputs) -> Dict[str, Any]:
+    def __call__(self, variables: Optional[dict] = None, gpu_preprocessing=False,**inputs) -> Dict[str, Any]:
         """Apply the FENNIX model (preprocess + modules)
 
         !!! This is not a pure function => do not apply jax transforms !!!
@@ -427,14 +445,14 @@ class FENNIX:
         """
         if variables is None:
             variables = self.variables
-        inputs = self.preprocess(**inputs)
+        inputs = self.preprocess(use_gpu=gpu_preprocessing,**inputs)
         output = self._apply(variables, inputs)
         if self.use_atom_padding:
             output = atom_unpadding(output)
         return output
 
     def total_energy(
-        self, variables: Optional[dict] = None, unit: Union[float, str] = None, **inputs
+        self, variables: Optional[dict] = None, unit: Union[float, str] = None, gpu_preprocessing=False,**inputs
     ) -> Tuple[jnp.ndarray, Dict]:
         """compute the total energy of the system
 
@@ -443,7 +461,13 @@ class FENNIX:
         """
         if variables is None:
             variables = self.variables
-        inputs = self.preprocess(**inputs)
+        inputs = self.preprocess(use_gpu=gpu_preprocessing,**inputs)
+        # def print_shape(path,value):
+        #     if isinstance(value,jnp.ndarray):
+        #         print(path,value.shape)
+        #     else:
+        #         print(path,value)
+        # jax.tree_util.tree_map_with_path(print_shape,inputs)
         _, output = self._total_energy(variables, inputs)
         if self.use_atom_padding:
             output = atom_unpadding(output)
@@ -456,7 +480,7 @@ class FENNIX:
         return e, output
 
     def energy_and_forces(
-        self, variables: Optional[dict] = None, unit: Union[float, str] = None, **inputs
+        self, variables: Optional[dict] = None, unit: Union[float, str] = None,gpu_preprocessing=False,**inputs
     ) -> Tuple[jnp.ndarray, jnp.ndarray, Dict]:
         """compute the total energy and forces of the system
 
@@ -465,7 +489,7 @@ class FENNIX:
         """
         if variables is None:
             variables = self.variables
-        inputs = self.preprocess(**inputs)
+        inputs = self.preprocess(use_gpu=gpu_preprocessing,**inputs)
         _, _, output = self._energy_and_forces(variables, inputs)
         if self.use_atom_padding:
             output = atom_unpadding(output)
@@ -480,7 +504,7 @@ class FENNIX:
         return e, f, output
 
     def energy_and_forces_and_virial(
-        self, variables: Optional[dict] = None, unit: Union[float, str] = None, **inputs
+        self, variables: Optional[dict] = None, unit: Union[float, str] = None,gpu_preprocessing=False, **inputs
     ) -> Tuple[jnp.ndarray, jnp.ndarray, Dict]:
         """compute the total energy and forces of the system
 
@@ -489,7 +513,7 @@ class FENNIX:
         """
         if variables is None:
             variables = self.variables
-        inputs = self.preprocess(**inputs)
+        inputs = self.preprocess(use_gpu=gpu_preprocessing,**inputs)
         _, _, _, output = self._energy_and_forces_and_virial(variables, inputs)
         if self.use_atom_padding:
             output = atom_unpadding(output)
