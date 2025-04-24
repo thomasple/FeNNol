@@ -6,22 +6,21 @@ FeNNol's documentation is available [here](https://thomasple.github.io/FeNNol/) 
 Active Learning tutorial in this [Colab notebook](https://colab.research.google.com/drive/1Z3G_jVSF60_nbDdJwbgyLdJBHTYuQ5nL?usp=sharing)
 
 ## Installation
-You can start with a fresh environment using conda:
+You can start with a fresh environment, for example using venv:
 ```bash
-conda create -n fennol python=3.10 pip
-conda activate fennol
+python -m venv fennol
+source fennol/bin/activate
 ```
 
 The first step is to install jax (see details at: https://jax.readthedocs.io/en/latest/installation.html).
-For a conda installation with CUDA 11.8, use:
+For example, to install the CPU version of jax:
 ```bash
-conda install jaxlib=*=*cuda11* jax=0.4.25 cuda-nvcc=11.8 -c conda-forge -c nvidia
+pip install -U jax
 ```
-and make sure that jax uses the correct version of CUDA/CuDNN/ptxas by correctly setting your PATH and LD_LIBRARY_PATH.
-For example, you can update the `LD_LIBRARY_PATH` as following so that jax uses the CUDA libraries that you just installed with conda:
-```bash
-export LD_LIBRARY_PATH=$HOME/miniconda3/envs/fennol/lib:$LD_LIBRARY_PATH
-```
+If you have a GPU, you can install the CUDA version of jax with:
+````bash
+pip install -U "jax[cuda12]"
+````
 
 Then, you can clone and install FeNNol using pip:
 ```bash
@@ -41,7 +40,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 - For the Deep-HP interface, cffi, pydlpack and pycuda are required:
 ```bash
-conda install cffi pydlpack pycuda
+pip install cffi pycuda
 ```
 
 ## Examples
