@@ -40,6 +40,7 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
         energy_terms: Optional[Sequence[str]] = None,
         use_float64: bool = False,
         matmul_prec: Optional[str] = None,
+        save_raw_output: bool = False,
         **kwargs
     ):
         super().__init__()
@@ -64,6 +65,7 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
         self.verbose = verbose
         self._fennol_inputs = None
         self._raw_inputs = None
+        self.save_raw_output = save_raw_output
 
         model_unit = au.get_multiplier(self.model.energy_unit)
         self.energy_conv = ase.units.Hartree / model_unit
@@ -78,6 +80,8 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
     ):
         super().calculate(atoms, properties, system_changes)
         inputs = self.preprocess(self.atoms, system_changes=system_changes)
+        total_charge = self.atoms.get_initial_charges().sum()
+        inputs["total_charge"] = int(total_charge)
 
         results = {}
         if "stress" in properties:
@@ -98,6 +102,9 @@ class FENNIXCalculator(ase.calculators.calculator.Calculator):
         if self.model.use_atom_padding and "forces" in results:
             mask = np.asarray(output["true_atoms"])
             results["forces"] = results["forces"][mask]
+        
+        if self.save_raw_output:
+            results["raw_output"] = output
 
         self.results.update(results)
 
