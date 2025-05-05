@@ -4,6 +4,7 @@ import jax
 import jax.numpy as jnp
 import math
 import optax
+import os
 
 from ..utils.atomic_units import AtomicUnits as au  # CM1,THZ,BOHR,MPROT
 from ..utils import Counter
@@ -370,7 +371,18 @@ def initialize_qtb(
         gamma < 0.5 * omegacut
     ), "gamma must be much smaller than omegacut (at most 0.5*omegacut)"
     gammar_min = qtb_parameters.get("gammar_min", 0.1)
-    post_state["gammar"] = jnp.asarray(np.ones((nspecies, nom)), dtype=fprec)
+    # post_state["gammar"] = jnp.asarray(np.ones((nspecies, nom)), dtype=fprec)
+    gammar = np.ones((nspecies, nom), dtype=float)
+    try:
+        for i, sp in enumerate(species_set):
+            if not os.path.exists(f"QTB_spectra_{sp}.out"): continue
+            data = np.loadtxt(f"QTB_spectra_{sp}.out")
+            gammar[i] = data[:, 4]/(gamma*au.FS*au.THZ)
+            print(f"# Restored gammar for species {sp} from QTB_spectra_{sp}.out")
+    except Exception as e:
+        print(f"# Could not restore gammar for all species with exception {e}. Starting from scratch.")
+        gammar[:,:] = 1.0
+    post_state["gammar"] = jnp.asarray(gammar, dtype=fprec)
 
     # Ornstein-Uhlenbeck correction for colored noise
     a1 = np.exp(-gamma * dt)
@@ -560,9 +572,9 @@ def initialize_qtb(
         rec_ratio = mCvvsum / s_rec.sum()
         if rec_ratio < 0.95 or rec_ratio > 1.05:
             print(
-                "# WARNING: reconvolution error is too high, corr_kin was not updated"
+                f"# WARNING: reconvolution error {rec_ratio} is too high, corr_kin was not updated"
             )
-            return
+            return post_state["corr_kin_prev"], post_state
 
         corr_kin = mCvvsum / s_out.sum()
         if np.abs(corr_kin - post_state["corr_kin_prev"]) < 1.0e-4:
