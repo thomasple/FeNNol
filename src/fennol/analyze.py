@@ -170,11 +170,11 @@ def main():
         def reader():
             for symbols, xyz, comment in xyz_reader(input_file, has_comment_line=True, indexed=xyz_indexed):
                 species = np.array([PERIODIC_TABLE_REV_IDX[s] for s in symbols])
-                frame = {"species": species, "coordinates": xyz, "natoms":species.shape[0]}
+                inputs = {"species": species, "coordinates": xyz, "natoms":species.shape[0]}
                 if args.periodic:
                     cell = np.array([float(x) for x in comment.split()]).reshape(1,3,3)
-                    frame["cell"] = cell
-                yield frame
+                    inputs["cell"] = cell
+                yield inputs
 
     elif args.format == "pkl":
         with open(input_file, "rb") as f:
@@ -195,11 +195,13 @@ def main():
             for frame in frames:
                 species = np.array(frame["species"])
                 coordinates = np.array(frame["coordinates"])
-                frame = {"species": species, "coordinates": coordinates,"natoms":species.shape[0]}
+                inputs = {"species": species, "coordinates": coordinates,"natoms":species.shape[0]}
                 if args.periodic:
                     cell = np.array(frame["cell"]).reshape(1,3,3)
-                    frame["cell"] = cell
-                yield frame
+                    inputs["cell"] = cell
+                if "total_charge" in frame:
+                    inputs["total_charge"] = frame["total_charge"]
+                yield inputs
 
     batch = []
     output_data = []
