@@ -47,7 +47,7 @@ def CG_SO3(j1: int, j2: int, j3: int) -> np.array:
     r"""Clebsch-Gordan coefficients for the direct product of two irreducible representations of :math:`SO(3)`
     Returns
     -------
-    `torch.Tensor`
+    `np.array`
         tensor :math:`C` of shape :math:`(2l_1+1, 2l_2+1, 2l_3+1)`
     """
     C = CG_SU2(j1, j2, j3)

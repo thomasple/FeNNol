@@ -12,7 +12,12 @@ import json
 from copy import deepcopy
 from pathlib import Path
 import argparse
-import torch
+try:
+    import torch
+except ImportError:
+    raise ImportError(
+        "PyTorch is required for training models. Install the CPU version following instructions at https://pytorch.org/get-started/locally/"
+    )
 import random
 from flax import traverse_util
 import json

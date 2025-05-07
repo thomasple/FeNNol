@@ -21,7 +21,7 @@ try:
     from torch.utils.data import DataLoader
 except ImportError:
     raise ImportError(
-        "PyTorch is required for training. Install the CPU version from https://pytorch.org/get-started/locally/"
+        "PyTorch is required for training models. Install the CPU version following instructions at https://pytorch.org/get-started/locally/"
     )
 
 from ..models import FENNIX

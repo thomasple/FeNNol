@@ -56,8 +56,6 @@ def deconvolute_spectrum(
             omnormij0, omnormij1 = np.meshgrid(omega, omnorm)
             omnormij0 = omnormij0.flatten(order="F")
             omnormij1 = omnormij1.flatten(order="F")
-            # print(omnormij.shape)
-            # omnormij=torch.cartesian_prod(omega,omnorm)
             Knorm = kernel(omnormij0, omnormij1, gamma).reshape(nom, 2 * nom - 1)
             K = K / np.sum(Knorm, axis=1)[:, None] / domega
             del Knorm, omnormij0, omnormij1, omnorm

@@ -22,6 +22,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
+   "jax",
    "numpy",
    "numba",
    "h5py",
@@ -35,6 +36,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+cuda = ["jax[cuda12]"]
 e3nn = ["e3nn-jax"]
 deephp = ["cffi", "pydlpack", "pycuda"]
 
