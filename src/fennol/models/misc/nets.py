@@ -62,21 +62,35 @@ class FullyConnectedNet(nn.Module):
             else self.kernel_init
         )
         ############################
-        for i, d in enumerate(self.neurons[:-1]):
-            x = nn.Dense(
-                d,
-                use_bias=self.use_bias,
-                name=f"Layer_{i+1}",
-                kernel_init=kernel_init,
-                # precision=jax.lax.Precision.HIGH,
-            )(x)
-            x = activation_from_str(self.activation)(x)
+        if isinstance(self.activation, str) and self.activation.lower() == "swiglu":
+            for i, d in enumerate(self.neurons[:-1]):
+                y = nn.Dense(
+                    d,
+                    use_bias=self.use_bias,
+                    name=f"Layer_{i+1}",
+                    kernel_init=kernel_init,
+                )(x)
+                z = jax.nn.swish(nn.Dense(
+                    d,
+                    use_bias=self.use_bias,
+                    name=f"Mask_{i+1}",
+                    kernel_init=kernel_init,
+                )(x))
+                x = y * z
+        else:
+            for i, d in enumerate(self.neurons[:-1]):
+                x = nn.Dense(
+                    d,
+                    use_bias=self.use_bias,
+                    name=f"Layer_{i+1}",
+                    kernel_init=kernel_init,
+                )(x)
+                x = activation_from_str(self.activation)(x)
         x = nn.Dense(
             self.neurons[-1],
             use_bias=self.use_bias,
             name=f"Layer_{len(self.neurons)}",
             kernel_init=kernel_init,
-            # precision=jax.lax.Precision.HIGH,
         )(x)
         if self.squeeze and x.shape[-1] == 1:
             x = jnp.squeeze(x, axis=-1)
