@@ -8,7 +8,7 @@ from flax import traverse_util
 from typing import Dict, List, Tuple, Union, Optional, Callable, Sequence
 from .databases import DBDataset, H5Dataset
 from ..models.preprocessing import AtomPadding
-
+import re
 import json
 import yaml
 
@@ -47,6 +47,7 @@ def load_configuration(config_file: str) -> Dict[str, any]:
 def load_dataset(
     dspath: str,
     batch_size: int,
+    batch_size_val: Optional[int] = None,
     rename_refs: dict = {},
     infinite_iterator: bool = False,
     atom_padding: bool = False,
@@ -133,6 +134,18 @@ def load_dataset(
             -1: lambda x, r: np.einsum("...kn,kj->...jn", x, r),
             2: lambda x, r: np.einsum("li,...lk,kj->...ij", r, x, r),
         }
+        def rotate_2f(x,r):
+            assert x.shape[-1]==6
+            # select from 6 components (xx,yy,zz,xy,xz,yz) to form the 3x3 tensor
+            indices = np.array([0,3,4,3,1,5,4,5,2])
+            x=x[...,indices].reshape(*x.shape[:-1],3,3)
+            x=np.einsum("li,...lk,kj->...ij", r, x, r)
+            # select back the 6 components
+            indices = np.array([[0,0],[1,1],[2,2],[0,1],[0,2],[1,2]])
+            x=x[...,indices[:,0],indices[:,1]]
+            return x
+        apply_rotation[-2]=rotate_2f
+
         valid_rotations = tuple(apply_rotation.keys())
         rotated_keys = {
             "coordinates": 1,
@@ -186,6 +199,33 @@ def load_dataset(
     else:
 
         def apply_random_rotations(output, nbatch):
+            pass
+
+    flow_matching = training_parameters.get("flow_matching", False)
+    if flow_matching:
+        if ref_keys is not None:
+            ref_keys.add("flow_matching_target")
+            if "flow_matching_target" in ref_keys_:
+                ref_keys_.remove("flow_matching_target")
+        all_inputs.add("flow_matching_time")
+
+        def add_flow_matching(output, nbatch):
+            ts = np_rng.uniform(0.0, 1.0, (nbatch,))
+            targets = []
+            for i in range(nbatch):
+                x1 = output["coordinates"][i]
+                com = x1.mean(axis=0, keepdims=True)
+                x1 = x1 - com
+                x0 = np_rng.normal(0.0, 1.0, x1.shape)
+                xt = (1 - ts[i]) * x0 + ts[i] * x1
+                output["coordinates"][i] = xt
+                targets.append(x1 - x0)
+            output["flow_matching_target"] = targets
+            output["flow_matching_time"] = [np.array(t) for t in ts]
+
+    else:
+
+        def add_flow_matching(output, nbatch):
             pass
 
     if pbc_training:
@@ -283,6 +323,7 @@ def load_dataset(
 
         nbatch_ = len(output["natoms"])
         apply_random_rotations(output,nbatch_)
+        add_flow_matching(output,nbatch_)
 
         # Stack and concatenate the arrays
         for k, v in output.items():
@@ -392,6 +433,8 @@ def load_dataset(
                 batch = layer(batch)
             return batch
 
+    if not os.path.exists(dspath):
+        raise ValueError(f"Dataset file '{dspath}' not found.")
     # dspath = training_parameters.get("dspath", None)
     print(f"Loading dataset from {dspath}...", end="")
     # print(f"   the following keys will be renamed if present : {rename_refs}")
@@ -447,9 +490,11 @@ def load_dataset(
     # batch_size = training_parameters.get("batch_size", 16)
     shuffle = training_parameters.get("shuffle_dataset", True)
     if train_val_split:
+        if batch_size_val is None:
+            batch_size_val = batch_size
         dataloader_validation = DataLoader(
             dataset["validation"],
-            batch_size=batch_size,
+            batch_size=batch_size_val,
             shuffle=shuffle,
             collate_fn=collate_fn_valid,
         )
@@ -547,14 +592,16 @@ def load_model(
     return model
 
 
-def copy_parameters(variables, variables_ref, params):
+def copy_parameters(variables, variables_ref, params=[".*"]):
     def merge_params(full_path_, v, v_ref):
         full_path = "/".join(full_path_[1:]).lower()
-        status = (False, "")
+        # status = (False, "")
         for path in params:
-            if full_path.startswith(path.lower()) and len(path) > len(status[1]):
-                status = (True, path)
-        return v_ref if status[0] else v
+            if re.match(path.lower(), full_path):
+            # if full_path.startswith(path.lower()) and len(path) > len(status[1]):
+                return v_ref
+        return v
+        # return v_ref if status[0] else v
 
     flat = traverse_util.flatten_dict(variables, keep_empty_nodes=False)
     flat_ref = traverse_util.flatten_dict(variables_ref, keep_empty_nodes=False)
