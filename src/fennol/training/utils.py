@@ -1,16 +1,14 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
-from typing import Callable, Optional, Dict, List, Tuple
+from typing import Callable, Optional, Dict, List, Tuple, Union, Any, NamedTuple
 import optax
 from copy import deepcopy
-from flax import traverse_util
-import json
-import re
 from functools import partial
 
 from ..utils import deep_update, AtomicUnits as au
 from ..models import FENNIX
+        
 
 @partial(jax.jit, static_argnums=(1,2,3,4))
 def linear_schedule(step, start_value,end_value, start_step, duration):
@@ -104,21 +102,8 @@ def get_loss_definition(
                 weight_ramp = training_parameters.get("max_epochs")
             weight_ramp_start = loss_prms.get("weight_ramp_start", 0.0)
             weight_end = loss_prms["weight"]
-            print(
-                "Weight ramp for",
-                k,
-                ":",
-                weight_start,
-                "->",
-                loss_prms["weight"],
-                " in",
-                weight_ramp,
-                "epochs",
-            )
+            print(f"Weight ramp for {k} : {weight_start} -> {weight_end} in {weight_ramp} epochs")
             loss_prms["weight_schedule"] = (weight_start,weight_end,weight_ramp_start,weight_ramp)
-            # loss_prms["weight_schedule"] = lambda e: weight_start + jnp.clip(
-                # (e - float(weight_ramp_start)) / float(weight_ramp), 0.0, 1.0
-            # ) * (weight_end - weight_start)
 
         used_keys.append(loss_prms["key"])
         loss_definition[k] = loss_prms
@@ -136,111 +121,6 @@ def get_loss_definition(
     return loss_definition, list(set(used_keys)), list(set(ref_keys))
 
 
-def get_optimizer(
-    training_parameters: Dict[str, any], variables: Dict, initial_lr: float
-) -> optax.GradientTransformation:
-    """
-    Returns an optax.GradientTransformation object that can be used to optimize the model parameters.
-
-    Args:
-    - training_parameters: A dictionary containing the training parameters.
-    - variables: A  pytree containing the model parameters.
-    - initial_lr: The initial learning rate.
-
-    Returns:
-    - An optax.GradientTransformation object that can be used to optimize the model parameters.
-    """
-
-    default_status = str(training_parameters.get("default_status", "trainable")).lower()
-    assert default_status in [
-        "trainable",
-        "frozen",
-    ], f"Default status must be 'trainable' or 'frozen', got {default_status}"
-
-    # find frozen and trainable parameters
-    frozen = training_parameters.get("frozen", [])
-    trainable = training_parameters.get("trainable", [])
-
-    def training_status(full_path, v):
-        full_path = "/".join(full_path[1:]).lower()
-        status = (default_status, "")
-        for path in frozen:
-            if full_path.startswith(path.lower()) and len(path) > len(status[1]):
-                status = ("frozen", path)
-        for path in trainable:
-            if full_path.startswith(path.lower()) and len(path) > len(status[1]):
-                status = ("trainable", path)
-        return status[0]
-
-    params_partition = traverse_util.path_aware_map(training_status, variables)
-    if len(frozen) > 0 or len(trainable) > 0:
-        print("params partition:")
-        print(json.dumps(params_partition, indent=2, sort_keys=False))
-
-    ## Gradient preprocessing
-    grad_processing = []
-
-    # zero nans
-    zero_nans = training_parameters.get("zero_nans", False)
-    if zero_nans:
-        grad_processing.append(optax.zero_nans())
-
-    # gradient clipping
-    clip_threshold = training_parameters.get("gradient_clipping", -1.0)
-    if clip_threshold > 0.0:
-        print("Adaptive gradient clipping threshold:", clip_threshold)
-        grad_processing.append(optax.adaptive_grad_clip(clip_threshold))
-
-    # OPTIMIZER
-    optimizer_name = training_parameters.get("optimizer", "adabelief")
-    optimizer = eval(
-        optimizer_name,
-        {"__builtins__": None},
-        {**optax.__dict__},
-    )
-    print("Optimizer:", optimizer_name)
-    optimizer_configuration = training_parameters.get("optimizer_config", {})
-    optimizer_configuration["learning_rate"] = 1.0
-    grad_processing.append(optimizer(**optimizer_configuration))
-
-    # weight decay
-    weight_decay = training_parameters.get("weight_decay", 0.0)
-    assert weight_decay >= 0.0, "Weight decay must be positive"
-    decay_targets = training_parameters.get("decay_targets", [""])
-
-    def decay_status(full_path, v):
-        full_path = "/".join(full_path).lower()
-        status = False
-        # print(full_path,re.match(r'^params\/', full_path))
-        for path in decay_targets:
-            if re.match(r"^params/" + path.lower(), full_path):
-                status = True
-            # if full_path.startswith("params/" + path.lower()):
-            #     status = True
-        return status
-
-    decay_mask = traverse_util.path_aware_map(decay_status, variables)
-    if weight_decay > 0.0:
-        print("weight decay:", weight_decay)
-        print(json.dumps(decay_mask, indent=2, sort_keys=False))
-        grad_processing.append(
-            optax.add_decayed_weights(weight_decay=-weight_decay, mask=decay_mask)
-        )
-
-    if zero_nans:
-        grad_processing.append(optax.zero_nans())
-
-    # learning rate
-    grad_processing.append(optax.inject_hyperparams(optax.scale)(step_size=initial_lr))
-
-    ## define optimizer chain
-    optimizer_ = optax.chain(
-        *grad_processing,
-    )
-    partition_optimizer = {"trainable": optimizer_, "frozen": optax.set_to_zero()}
-    return optax.multi_transform(partition_optimizer, params_partition)
-
-
 def get_train_step_function(
     loss_definition: Dict,
     model: FENNIX,
@@ -252,14 +132,11 @@ def get_train_step_function(
     jit: bool = True,
 ):
     def train_step(
-        epoch,
         data,
         inputs,
-        variables,
-        opt_st,
-        variables_ema=None,
-        ema_st=None,
+        training_state,
     ):
+        epoch = training_state["epoch"]
 
         def loss_fn(variables):
             if model_ref is not None:
@@ -271,22 +148,17 @@ def get_train_step_function(
             nsys = inputs["natoms"].shape[0]
             system_mask = inputs["true_sys"]
             atom_mask = inputs["true_atoms"]
+            batch_index = inputs["batch_index"]
             if "system_sign" in inputs:
                 system_sign = inputs["system_sign"] > 0
                 system_mask = jnp.logical_and(system_mask,system_sign)
-                atom_mask = jnp.logical_and(atom_mask, system_sign[inputs["batch_index"]])
+                atom_mask = jnp.logical_and(atom_mask, system_sign[batch_index])
 
             loss_tot = 0.0
             for loss_prms in loss_definition.values():
                 use_ref_mask = False
                 predicted = output[loss_prms["key"]]
-                if "remove_ref_sys" in loss_prms and loss_prms["remove_ref_sys"]:
-                    assert compute_ref_coords, "compute_ref_coords must be True"
-                    # predicted = predicted - output_data_ref[loss_prms["key"]]
-                    assert predicted.shape[0] == nsys, "remove_ref_sys only works with system-level predictions"
-                    shape_mask = [predicted.shape[0]] + [1] * (len(predicted.shape) - 1)
-                    system_sign = inputs["system_sign"].reshape(*shape_mask)
-                    predicted = jax.ops.segment_sum(system_sign*predicted,inputs["system_index"],nsys)
+                
 
                 if "ref" in loss_prms:
                     if loss_prms["ref"].startswith("model_ref/"):
@@ -297,6 +169,16 @@ def get_train_step_function(
                             raise KeyError(
                                 f"Reference key '{loss_prms['ref'][10:]}' not found in model_ref output. Keys available: {output_ref.keys()}"
                             )
+                        mask_key  = loss_prms["ref"][6:] + "_mask" 
+                        if mask_key in data:
+                            use_ref_mask = True
+                            ref_mask = data[mask_key]
+                        elif mask_key in output_ref:
+                            use_ref_mask = True
+                            ref_mask = output[mask_key]
+                        elif mask_key in output:
+                            use_ref_mask = True
+                            ref_mask = output[mask_key]
                     elif loss_prms["ref"].startswith("model/"):
                         try:
                             ref = output[loss_prms["ref"][6:]] * loss_prms["mult"]
@@ -304,6 +186,13 @@ def get_train_step_function(
                             raise KeyError(
                                 f"Reference key '{loss_prms['ref'][6:]}' not found in model output. Keys available: {output.keys()}"
                             )
+                        mask_key  = loss_prms["ref"][6:] + "_mask" 
+                        if mask_key in data:
+                            use_ref_mask = True
+                            ref_mask = data[mask_key]
+                        elif mask_key in output:
+                            use_ref_mask = True
+                            ref_mask = output[mask_key]
                     else:
                         try:
                             ref = data[loss_prms["ref"]] * loss_prms["mult"]
@@ -324,11 +213,8 @@ def get_train_step_function(
                     )
                     ref = jnp.linalg.norm(ref, axis=norm_axis, keepdims=True)
 
-                if loss_prms["type"] in [
-                    "ensemble_nll",
-                    "ensemble_crps",
-                    "gaussian_mixture",
-                ]:
+                ensemble_loss = loss_prms["type"] in ["ensemble_nll","ensemble_crps","gaussian_mixture",]
+                if ensemble_loss:
                     ensemble_axis = loss_prms.get("ensemble_axis", -1)
                     ensemble_weights_key = loss_prms.get("ensemble_weights", None)
                     ensemble_size = predicted.shape[ensemble_axis]
@@ -369,6 +255,31 @@ def get_train_step_function(
                         ensemble_weights * (predicted_ensemble - predicted) ** 2
                     ).sum(axis=ensemble_axis) * (ensemble_size / (ensemble_size - 1.0))
                     predicted = jnp.squeeze(predicted, axis=ensemble_axis)
+                
+                if "remove_ref_sys" in loss_prms and loss_prms["remove_ref_sys"]:
+                    assert compute_ref_coords, "compute_ref_coords must be True"
+                    # predicted = predicted - output_data_ref[loss_prms["key"]]
+                    # assert predicted.shape[0] == nsys, "remove_ref_sys only works with system-level predictions"
+                    shape_mask = [predicted.shape[0]] + [1] * (len(predicted.shape) - 1)
+                    if predicted.shape[0] == nsys:
+                        predicted_sign_mask = inputs["system_sign"].reshape(*shape_mask) < 0
+                        predicted_shift = jax.ops.segment_sum(predicted_sign_mask*predicted,inputs["system_index"],nsys)
+                        predicted = predicted - predicted_shift
+                    elif predicted.shape[0] == batch_index.shape[0]:
+                        predicted_sign_mask = (inputs["system_sign"]<0)[batch_index].reshape(*shape_mask)
+                        natshift = jnp.concatenate([jnp.array([0]),jnp.cumsum(natoms)])
+                        iat = jnp.arange(batch_index.shape[0]) - natshift[batch_index]
+                        iatdest = natshift[inputs["system_index"]][batch_index]+iat
+                        predicted_shift = jax.ops.segment_sum(predicted_sign_mask*predicted,iatdest,batch_index.shape[0])
+                        predicted = predicted - predicted_shift
+                    else:
+                        raise ValueError("remove_ref_sys only works with system-level or atom-level predictions")
+                    
+                    if ensemble_loss:
+                        predicted_ensemble = predicted_ensemble - jnp.expand_dims(predicted_shift,ensemble_axis)
+                        predicted_var = (
+                            ensemble_weights * (predicted_ensemble - jnp.expand_dims(predicted,ensemble_axis)) ** 2
+                        ).sum(axis=ensemble_axis) * (ensemble_size / (ensemble_size - 1.0))
 
                 if predicted.ndim > 1 and predicted.shape[-1] == 1:
                     predicted = jnp.squeeze(predicted, axis=-1)
@@ -385,9 +296,10 @@ def get_train_step_function(
                     truth_mask = atom_mask
                     if "ds_weight" in loss_prms:
                         weight_key = loss_prms["ds_weight"]
-                        natscale = data[weight_key][output["batch_index"]].reshape(
-                            *shape_mask
-                        )
+                        natscale=data[weight_key]
+                        if natscale.shape[0] == natoms.shape[0]:
+                            natscale = natscale[output["batch_index"]]
+                        natscale = natscale.reshape(*shape_mask)
                 elif ref.shape[0] == natoms.shape[0]:
                     ## shape is number of systems
                     truth_mask = system_mask
@@ -443,15 +355,16 @@ def get_train_step_function(
                     predicted_var_key = loss_prms.get(
                         "var_key", loss_prms["key"] + "_var"
                     )
+                    lamba_crps = loss_prms.get("lambda_crps", 1.0)
                     predicted_var = output[predicted_var_key]
                     if per_atom:
-                        predicted_var = predicted_var / natoms.reshape(*shape_mask)
+                        predicted_var = predicted_var / natoms.reshape(*shape_mask)**2
                     predicted_var = predicted_var * truth_mask + (1.0 - truth_mask)
                     sigma = predicted_var**0.5
                     dy = (ref - predicted) / sigma
                     Phi = 0.5 * (1.0 + jax.scipy.special.erf(dy / 2**0.5))
                     phi = jnp.exp(-0.5 * dy**2) / (2 * jnp.pi) ** 0.5
-                    loss = jnp.sum(natscale * sigma * (dy * (2 * Phi - 1.0) + 2 * phi))
+                    loss = jnp.sum(natscale * sigma * (dy * (2 * Phi - 1.0) + 2 * phi - lamba_crps/jnp.pi**0.5))
                 elif loss_type == "ensemble_nll":
                     predicted_var = predicted_var * truth_mask + (1.0 - truth_mask)
                     loss = 0.5 * jnp.sum(
@@ -464,14 +377,15 @@ def get_train_step_function(
                     )
                 elif loss_type == "ensemble_crps":
                     if per_atom:
-                        predicted_var = predicted_var / natoms.reshape(*shape_mask)
+                        predicted_var = predicted_var / natoms.reshape(*shape_mask)**2
+                    lamba_crps = loss_prms.get("lambda_crps", 1.0)
                     predicted_var = predicted_var * truth_mask + (1.0 - truth_mask)
                     sigma = predicted_var**0.5
                     dy = (ref - predicted) / sigma
                     Phi = 0.5 * (1.0 + jax.scipy.special.erf(dy / 2**0.5))
                     phi = jnp.exp(-0.5 * dy**2) / (2 * jnp.pi) ** 0.5
                     loss = jnp.sum(
-                        natscale * truth_mask * sigma * (dy * (2 * Phi - 1.0) + 2 * phi)
+                        natscale * truth_mask * sigma * (dy * (2 * Phi - 1.0) + 2 * phi - lamba_crps/jnp.pi**0.5)
                     )
                 elif loss_type == "gaussian_mixture":
                     gm_w = get_subsample(output[loss_prms["key"] + "_w"])
@@ -488,7 +402,7 @@ def get_train_step_function(
                         dy = mu / sigma
                         Phi = 0.5 * (1.0 + jax.scipy.special.erf(dy / 2**0.5))
                         phi = jnp.exp(-0.5 * dy**2) / (2 * jnp.pi) ** 0.5
-                        return sigma * (dy * (2 * Phi - 1.0) + 2 * phi)
+                        return sigma * (dy * (2 * Phi - 1.0) + 2 * phi - 1./jnp.pi**0.5)
 
                     crps1 = compute_crps(ref - predicted_ensemble, sigma)
                     gm_crps1 = (gm_w * crps1).sum(axis=ensemble_axis)
@@ -552,6 +466,24 @@ def get_train_step_function(
                     loss = jnp.sum(natscale * loss * truth_mask)
                 elif loss_type == "raw":
                     loss = jnp.sum(natscale * predicted)
+                elif loss_type == "binary_crossentropy":
+                    ref = ref.astype(predicted.dtype)
+                    if loss_prms.get("raw_logits",False):
+                        loss = jnp.sum(
+                            natscale*truth_mask
+                            * (
+                                -ref * jax.nn.log_sigmoid(predicted)
+                                - (1.0 - ref) * jax.nn.log_sigmoid(-predicted)
+                            )
+                        )
+                    else:
+                        loss = jnp.sum(
+                            natscale*truth_mask
+                            * (
+                                -ref * jnp.log(predicted + 1.0e-10)
+                                - (1.0 - ref) * jnp.log(1.0 - predicted + 1.0e-10)
+                            )
+                        )
                 else:
                     raise ValueError(f"Unknown loss type: {loss_type}")
 
@@ -564,18 +496,23 @@ def get_train_step_function(
 
             return loss_tot, output
 
+        variables = training_state["variables"]
+        new_training_state = {**training_state, "step":training_state["step"]+1}
+
         (loss, o), grad = jax.value_and_grad(loss_fn, has_aux=True)(variables)
-        updates, opt_st = optimizer.update(grad, opt_st, params=variables)
+        updates, new_training_state["opt_state"] = optimizer.update(grad, training_state["opt_state"], params=variables)
         variables = optax.apply_updates(variables, updates)
+        new_training_state["variables"] = variables
+
         if ema is not None:
-            if variables_ema is None or ema_st is None:
+            ema_st = training_state.get("ema_state",None)
+            if ema_st is None:
                 raise ValueError(
                     "train_step was setup with ema but either variables_ema or ema_st was not provided"
                 )
-            variables_ema, ema_st = ema.update(variables, ema_st)
-            return loss, variables, opt_st, variables_ema, ema_st, o
-        else:
-            return loss, variables, opt_st, o
+            new_training_state["variables_ema"], new_training_state["ema_state"] = ema.update(variables, ema_st)
+    
+        return loss, new_training_state, o
 
     if jit:
         return jax.jit(train_step)
@@ -607,10 +544,11 @@ def get_validation_function(
         nsys = inputs["natoms"].shape[0]
         system_mask = inputs["true_sys"]
         atom_mask = inputs["true_atoms"]
+        batch_index = inputs["batch_index"]
         if "system_sign" in inputs:
             system_sign = inputs["system_sign"] > 0
             system_mask = jnp.logical_and(system_mask,system_sign)
-            atom_mask = jnp.logical_and(atom_mask, system_sign[inputs["batch_index"]])
+            atom_mask = jnp.logical_and(atom_mask, system_sign[batch_index])
 
         for name, loss_prms in loss_definition.items():
             do_validation = loss_prms.get("validate", True)
@@ -622,17 +560,42 @@ def get_validation_function(
             if "remove_ref_sys" in loss_prms and loss_prms["remove_ref_sys"]:
                 assert compute_ref_coords, "compute_ref_coords must be True"
                 # predicted = predicted - output_data_ref[loss_prms["key"]]
-                assert predicted.shape[0] == nsys, "remove_ref_sys only works with system-level predictions"
                 shape_mask = [predicted.shape[0]] + [1] * (len(predicted.shape) - 1)
-                system_sign = inputs["system_sign"].reshape(*shape_mask)
-                predicted = jax.ops.segment_sum(system_sign*predicted,inputs["system_index"],nsys)
+                if predicted.shape[0] == nsys:
+                    system_sign = inputs["system_sign"].reshape(*shape_mask)
+                    predicted = jax.ops.segment_sum(system_sign*predicted,inputs["system_index"],nsys)
+                elif predicted.shape[0] == batch_index.shape[0]:
+                    atom_sign = inputs["system_sign"][batch_index].reshape(*shape_mask)
+                    natshift = jnp.concatenate([jnp.array([0]),jnp.cumsum(natoms)])
+                    iat = jnp.arange(batch_index.shape[0]) - natshift[batch_index]
+                    iatdest = natshift[inputs["system_index"]][batch_index]+iat
+                    predicted = jax.ops.segment_sum(atom_sign*predicted,iatdest,batch_index.shape[0])
+                else:
+                    raise ValueError("remove_ref_sys only works with system-level or atom-level predictions")
 
             if "ref" in loss_prms:
                 if loss_prms["ref"].startswith("model_ref/"):
                     assert model_ref is not None, "model_ref must be provided"
                     ref = output_ref[loss_prms["ref"][10:]] * loss_prms["mult"]
+                    mask_key  = loss_prms["ref"][6:] + "_mask" 
+                    if mask_key in data:
+                        use_ref_mask = True
+                        ref_mask = data[mask_key]
+                    elif mask_key in output_ref:
+                        use_ref_mask = True
+                        ref_mask = output[mask_key]
+                    elif mask_key in output:
+                        use_ref_mask = True
+                        ref_mask = output[mask_key]
                 elif loss_prms["ref"].startswith("model/"):
                     ref = output[loss_prms["ref"][6:]] * loss_prms["mult"]
+                    mask_key  = loss_prms["ref"][6:] + "_mask" 
+                    if mask_key in data:
+                        use_ref_mask = True
+                        ref_mask = data[mask_key]
+                    elif mask_key in output:
+                        use_ref_mask = True
+                        ref_mask = output[mask_key]
                 else:
                     ref = data[loss_prms["ref"]] * loss_prms["mult"]
                     if loss_prms["ref"] + "_mask" in data:
@@ -648,7 +611,8 @@ def get_validation_function(
                 )
                 ref = jnp.linalg.norm(ref, axis=norm_axis, keepdims=True)
 
-            if loss_prms["type"].startswith("ensemble"):
+            loss_type = loss_prms["type"].lower()
+            if loss_type.startswith("ensemble"):
                 axis = loss_prms.get("ensemble_axis", -1)
                 ensemble_weights_key = loss_prms.get("ensemble_weights", None)
                 if ensemble_weights_key is not None:
@@ -701,8 +665,28 @@ def get_validation_function(
             ref = ref * truth_mask
             predicted = predicted * truth_mask
 
-            rmse = jnp.sum((predicted - ref) ** 2 / nel) ** 0.5
-            mae = jnp.sum(jnp.abs(predicted - ref) / nel)
+            if loss_type == "binary_crossentropy":
+                ref = ref.astype(predicted.dtype)
+                if loss_prms.get("raw_logits",False):
+                    rmse = jnp.sum(
+                            (
+                                -ref * jax.nn.log_sigmoid(predicted)
+                                - (1.0 - ref) * jax.nn.log_sigmoid(-predicted)
+                            )*truth_mask/nel
+                        )
+                    predicted = truth_mask*jax.nn.sigmoid(predicted)
+                else:
+                    rmse = jnp.sum(
+                            (
+                                -ref * jnp.log(predicted + 1.0e-10)
+                                - (1.0 - ref) * jnp.log(1.0 - predicted + 1.0e-10)
+                            )*truth_mask/nel
+                        )
+                thr = loss_prms.get("class_threshold", 0.05)
+                mae = jnp.sum(jnp.where(jnp.abs(predicted - ref) > thr, 1, 0)/nel)*100
+            else:
+                rmse = jnp.sum((predicted - ref) ** 2 / nel) ** 0.5
+                mae = jnp.sum(jnp.abs(predicted - ref) / nel)
 
             rmses[name] = rmse
             maes[name] = mae

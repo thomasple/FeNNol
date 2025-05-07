@@ -31,12 +31,31 @@ from .utils import (
     get_loss_definition,
     get_train_step_function,
     get_validation_function,
-    get_optimizer,
     linear_schedule,
 )
+from .optimizers import get_optimizer, get_lr_schedule
 from ..utils import deep_update, AtomicUnits as au
 from ..utils.io import human_time_duration
 from ..models.preprocessing import AtomPadding, check_input, convert_to_jax
+
+def save_restart_checkpoint(output_directory,stage,training_state,preproc_state,metrics_state):
+    with open(output_directory + "/restart_checkpoint.pkl", "wb") as f:
+            pickle.dump({
+                "stage": stage,
+                "training": training_state,
+                "preproc_state": preproc_state,
+                "metrics_state": metrics_state,
+            }, f)
+
+def load_restart_checkpoint(output_directory):
+    restart_checkpoint_file = output_directory + "/restart_checkpoint.pkl"
+    if not os.path.exists(restart_checkpoint_file):
+        raise FileNotFoundError(
+            f"Training state file not found: {restart_checkpoint_file}"
+        )
+    with open(restart_checkpoint_file, "rb") as f:
+        restart_checkpoint = pickle.load(f)
+    return restart_checkpoint
 
 
 def main():
@@ -55,23 +74,13 @@ def main():
     restart_training = False
     if os.path.isdir(config_file):
         output_directory = Path(config_file).absolute().as_posix()
-        config_file = output_directory + "/config.yaml"
         restart_training = True
-        training_state_file = output_directory + "/train_state"
-        if not os.path.exists(training_state_file):
-            raise FileNotFoundError(
-                f"Training state file not found: {training_state_file}"
-            )
         while output_directory.endswith("/"):
             output_directory = output_directory[:-1]
+        config_file = output_directory + "/config.yaml"
         backup_dir = output_directory + f"_backup_{time.strftime('%Y-%m-%d-%H-%M-%S')}"
         shutil.copytree(output_directory, backup_dir)
-
-        with open(training_state_file, "rb") as f:
-            training_state = pickle.load(f)
         print("Restarting training from", output_directory)
-    else:
-        training_state = None
 
     parameters = load_configuration(config_file)
 
@@ -89,6 +98,11 @@ def main():
 
     _device = jax.devices(device)[0]
     jax.config.update("jax_default_device", _device)
+
+    if restart_training:
+        restart_checkpoint = load_restart_checkpoint(output_directory)
+    else:
+        restart_checkpoint = None
 
     # output directory
     if not restart_training:
@@ -168,7 +182,7 @@ def main():
                     ## load model from previous stage ##
                     params["model_file"] = model_file_stage
 
-                if restart_training and training_state["stage"] != i + 1:
+                if restart_training and restart_checkpoint["stage"] != i + 1:
                     print(f"Skipping stage {i+1} (already completed)")
                     continue
 
@@ -182,10 +196,11 @@ def main():
                     params,
                     stage=i + 1,
                     output_directory=output_directory,
-                    training_state=training_state,
+                    restart_checkpoint=restart_checkpoint,
                 )
-                training_state = None
+
                 restart_training = False
+                restart_checkpoint = None
         else:
             ## single training stage ##
             train(
@@ -193,7 +208,7 @@ def main():
                 parameters,
                 model_file=model_file,
                 output_directory=output_directory,
-                training_state=training_state,
+                restart_checkpoint=restart_checkpoint,
             )
     except KeyboardInterrupt:
         print("Training interrupted by user.")
@@ -209,9 +224,11 @@ def train(
     model_file=None,
     stage=None,
     output_directory=None,
-    training_state=None,
+    restart_checkpoint=None,
 ):
     if output_directory is None:
+        output_directory = "./"
+    elif output_directory == "":
         output_directory = "./"
     elif not output_directory.endswith("/"):
         output_directory += "/"
@@ -223,14 +240,25 @@ def train(
         rng_key = rng
         np_rng = np.random.Generator(np.random.PCG64(np.random.randint(0, 2**32 - 1)))
 
-    if training_state is not None:
+    ### GET TRAINING PARAMETERS ###
+    training_parameters = parameters.get("training", {})
+
+    #### LOAD MODEL ####
+    if restart_checkpoint is not None:
         model_key = None
         model_file = output_directory + "latest_model.fnx"
     else:
         rng_key, model_key = jax.random.split(rng_key)
     model = load_model(parameters, model_file, rng_key=model_key)
 
-    training_parameters = parameters.get("training", {})
+    ### SAVE INITIAL MODEL ###
+    save_initial_model = (
+        restart_checkpoint is None 
+        and (stage is None or stage == 0)
+    )
+    if save_initial_model:
+        model.save(output_directory + "initial_model.fnx")
+
     model_ref = None
     if "model_ref" in training_parameters:
         model_ref = load_model(parameters, training_parameters["model_ref"])
@@ -245,6 +273,8 @@ def train(
             model.variables = copy_parameters(
                 model.variables, model_ref.variables, ref_parameters
             )
+
+    ### SET FLOATING POINT PRECISION ###
     fprec = parameters.get("fprec", "float32")
 
     def convert_to_fprec(x):
@@ -254,6 +284,7 @@ def train(
 
     model.variables = jax.tree_map(convert_to_fprec, model.variables)
 
+    ### SET UP LOSS FUNCTION ###
     loss_definition, used_keys, ref_keys = get_loss_definition(
         training_parameters, model_energy_unit=model.energy_unit
     )
@@ -265,14 +296,17 @@ def train(
     else:
         compute_ref_coords = False
 
+    #### LOAD DATASET ####
     dspath = training_parameters.get("dspath", None)
     if dspath is None:
         raise ValueError("Dataset path 'training/dspath' should be specified.")
     batch_size = training_parameters.get("batch_size", 16)
+    batch_size_val = training_parameters.get("batch_size_val", None)
     rename_refs = training_parameters.get("rename_refs", {})
     training_iterator, validation_iterator = load_dataset(
         dspath=dspath,
         batch_size=batch_size,
+        batch_size_val=batch_size_val,
         training_parameters=training_parameters,
         infinite_iterator=True,
         atom_padding=True,
@@ -289,103 +323,19 @@ def train(
     compute_stress = "stress_tensor" in used_keys or "stress" in used_keys
     compute_pressure = "pressure" in used_keys or "pressure_tensor" in used_keys
 
-    # get optimizer parameters
-    lr = training_parameters.get("lr", 1.0e-3)
-    max_epochs = training_parameters.get("max_epochs", 2000)
+    ### get optimizer parameters ###
+    max_epochs = int(training_parameters.get("max_epochs", 2000))
+    epoch_format = len(str(max_epochs))
     nbatch_per_epoch = training_parameters.get("nbatch_per_epoch", 200)
     nbatch_per_validation = training_parameters.get("nbatch_per_validation", 20)
-    init_lr = training_parameters.get("init_lr", lr / 25)
-    final_lr = training_parameters.get("final_lr", lr / 10000)
 
-    schedule_type = training_parameters.get("schedule_type", "cosine_onecycle").lower()
-    schedule_type = training_parameters.get("scheduler", schedule_type).lower()
-    schedule_metrics = training_parameters.get("schedule_metrics", "rmse_tot")
-
-    adaptive_scheduler = False
-    print("Schedule type:", schedule_type)
-    if schedule_type == "cosine_onecycle":
-        transition_epochs = training_parameters.get("onecycle_epochs", max_epochs)
-        peak_epoch = training_parameters.get("peak_epoch", 0.3 * transition_epochs)
-        schedule_ = optax.cosine_onecycle_schedule(
-            peak_value=lr,
-            div_factor=lr / init_lr,
-            final_div_factor=init_lr / final_lr,
-            transition_steps=transition_epochs * nbatch_per_epoch,
-            pct_start=peak_epoch / transition_epochs,
-        )
-        sch_state = {"count": 0, "best": np.inf, "lr": init_lr}
-
-        def schedule(state, rmse=None):
-            new_state = {**state}
-            lr = schedule_(state["count"])
-            if rmse is None:
-                new_state["count"] += 1
-            new_state["lr"] = lr
-            return lr, new_state
-
-    elif schedule_type == "constant":
-        sch_state = {"count": 0}
-
-        def schedule(state, rmse=None):
-            new_state = {**state}
-            new_state["lr"] = lr
-            if rmse is None:
-                new_state["count"] += 1
-            return lr, new_state
-
-    elif schedule_type == "reduce_on_plateau":
-        patience = training_parameters.get("patience", 10)
-        factor = training_parameters.get("lr_factor", 0.5)
-        patience_thr = training_parameters.get("patience_thr", 0.0)
-        sch_state = {"count": 0, "best": np.inf, "lr": lr, "patience": patience}
-        adaptive_scheduler = True
-
-        def schedule(state, rmse=None):
-            new_state = {**state}
-            if rmse is None:
-                new_state["count"] += 1
-                return state["lr"], new_state
-            if rmse <= state["best"] * (1.0 + patience_thr):
-                if rmse < state["best"]:
-                    new_state["best"] = rmse
-                new_state["patience"] = 0
-            else:
-                new_state["patience"] += 1
-                if new_state["patience"] >= patience:
-                    new_state["lr"] = state["lr"] * factor
-                    new_state["patience"] = 0
-                    print("Reducing learning rate to", new_state["lr"])
-            return new_state["lr"], new_state
-
-    else:
-        raise ValueError(f"Unknown schedule_type: {schedule_type}")
-
-    stochastic_scheduler = training_parameters.get("stochastic_scheduler", False)
-    if stochastic_scheduler:
-        schedule_ = schedule
-        rng_key, scheduler_key = jax.random.split(rng_key)
-        sch_state["rng_key"] = scheduler_key
-        sch_state["lr_max"] = lr
-        sch_state["lr_min"] = final_lr
-
-        def schedule(state, rmse=None):
-            new_state = {**state, "lr": state["lr_max"]}
-            if rmse is None:
-                lr_max, new_state = schedule_(new_state, rmse=rmse)
-                lr_min = new_state["lr_min"]
-                new_state["rng_key"], subkey = jax.random.split(new_state["rng_key"])
-                lr = lr_min + (lr_max - lr_min) * jax.random.uniform(subkey)
-                new_state["lr"] = lr
-                new_state["lr_max"] = lr_max
-
-            return new_state["lr"], new_state
-
+    schedule, sch_state, schedule_metrics,adaptive_scheduler = get_lr_schedule(max_epochs,nbatch_per_epoch,training_parameters)
     optimizer = get_optimizer(
         training_parameters, model.variables, schedule(sch_state)[0]
     )
     opt_st = optimizer.init(model.variables)
 
-    # exponential moving average of the parameters
+    ### exponential moving average of the parameters ###
     ema_decay = training_parameters.get("ema_decay", -1.0)
     if ema_decay > 0.0:
         assert ema_decay < 1.0, "ema_decay must be in (0,1)"
@@ -394,7 +344,7 @@ def train(
         ema = optax.identity()
     ema_st = ema.init(model.variables)
 
-    # end event
+    #### end event ####
     end_event = training_parameters.get("end_event", None)
     if end_event is None or isinstance(end_event, str) and end_event.lower() == "none":
         is_end = lambda metrics: False
@@ -402,12 +352,11 @@ def train(
         assert len(end_event) == 2, "end_event must be a list of two elements"
         is_end = lambda metrics: metrics[end_event[0]] < end_event[1]
 
-    print_timings = parameters.get("print_timings", False)
-
     if "energy_terms" in training_parameters:
         model.set_energy_terms(training_parameters["energy_terms"], jit=False)
     print("energy terms:", model.energy_terms)
 
+    ### MODEL EVALUATION FUNCTION ###
     pbc_training = training_parameters.get("pbc_training", False)
     if compute_stress or compute_virial or compute_pressure:
         virial_key = "virial" if "virial" in used_keys else "virial_tensor"
@@ -416,7 +365,6 @@ def train(
         if compute_stress or compute_pressure:
             assert pbc_training, "PBC must be enabled for stress or virial training"
             print("Computing forces and stress tensor")
-
             def evaluate(model, variables, data):
                 _, _, vir, output = model._energy_and_forces_and_virial(variables, data)
                 cells = output["cells"]
@@ -432,7 +380,6 @@ def train(
 
         else:
             print("Computing forces and virial tensor")
-
             def evaluate(model, variables, data):
                 _, _, vir, output = model._energy_and_forces_and_virial(variables, data)
                 output[virial_key] = vir
@@ -440,23 +387,21 @@ def train(
 
     elif compute_forces:
         print("Computing forces")
-
         def evaluate(model, variables, data):
             _, _, output = model._energy_and_forces(variables, data)
             return output
 
     elif model.energy_terms is not None:
-
         def evaluate(model, variables, data):
             _, output = model._total_energy(variables, data)
             return output
 
     else:
-
         def evaluate(model, variables, data):
             output = model.modules.apply(variables, data)
             return output
 
+    ### TRAINING FUNCTIONS ###
     train_step = get_train_step_function(
         loss_definition=loss_definition,
         model=model,
@@ -476,7 +421,11 @@ def train(
         return_targets=False,
     )
 
-    ## configure preprocessing ##
+    #### CONFIGURE PREPROCESSING ####
+    gpu_preprocessing = training_parameters.get("gpu_preprocessing", False)
+    if gpu_preprocessing:
+        print("GPU preprocessing activated.")
+
     minimum_image = training_parameters.get("minimum_image", False)
     preproc_state = unfreeze(model.preproc_state)
     layer_state = []
@@ -497,34 +446,10 @@ def train(
         layer_state.append(freeze(stnew))
 
     preproc_state["layers_state"] = tuple(layer_state)
+    preproc_state["check_input"] = False
     model.preproc_state = freeze(preproc_state)
 
-    # inputs,data = next(training_iterator)
-    # inputs = model.preprocess(**inputs)
-    # print("preproc_state:",model.preproc_state)
-
-    if training_parameters.get("gpu_preprocessing", False):
-        print("GPU preprocessing activated.")
-
-        def preprocessing(model, inputs):
-            preproc_state = model.preproc_state
-            outputs = model.preprocessing.process(preproc_state, inputs)
-            preproc_state, state_up, outputs, overflow = (
-                model.preprocessing.check_reallocate(preproc_state, outputs)
-            )
-            if overflow:
-                print("GPU preprocessing: nblist overflow => reallocating nblist")
-                print("size updates:", state_up)
-            model.preproc_state = preproc_state
-            return outputs
-
-    else:
-        preprocessing = lambda model, inputs: model.preprocess(**inputs)
-
-    fetch_time = 0.0
-    preprocess_time = 0.0
-    step_time = 0.0
-
+    ### INITIALIZE METRICS ###
     maes_prev = defaultdict(lambda: np.inf)
     metrics_beta = training_parameters.get("metrics_ema_decay", -1.0)
     smoothen_metrics = metrics_beta < 1.0 and metrics_beta > 0.0
@@ -535,133 +460,117 @@ def train(
         rmse_tot_smooth = 0.0
         mae_tot_smooth = 0.0
         nsmooth = 0
-    count = 0
-    restore_count = 0
-    max_restore_count = training_parameters.get("max_restore_count", 5)
-    variables = deepcopy(model.variables)
-    variables_save = deepcopy(variables)
-    variables_ema_save = deepcopy(model.variables)
+    max_restore_count = training_parameters.get("max_restore_count", 5)    
 
     fmetrics = open(
         output_directory + f"metrics{stage_prefix}.traj",
-        "w" if training_state is None else "a",
+        "w" if restart_checkpoint is None else "a",
     )
 
     keep_all_bests = training_parameters.get("keep_all_bests", False)
-    previous_best_name = None
-    best_metric = np.inf
-    metric_use_best = training_parameters.get("metric_best", "rmse_tot")  # .lower()
-    # authorized_metrics = ["mae", "rmse"]
-    # if smoothen_metrics:
-    #     authorized_metrics+= ["mae_smooth", "rmse_smooth"]
-    # assert metric_use_best in authorized_metrics, f"metric_best must be one of {authorized_metrics}"
+    save_model_at_epochs = training_parameters.get("save_model_at_epochs", [])
+    save_model_at_epochs= set([int(x) for x in save_model_at_epochs])
+    save_model_every = int(training_parameters.get("save_model_every_epoch", 0))
+    if save_model_every > 0:
+        save_model_every = list(range(save_model_every, max_epochs+save_model_every, save_model_every))
+        save_model_at_epochs = save_model_at_epochs.union(save_model_every)
+    save_model_at_epochs = list(save_model_at_epochs)
+    save_model_at_epochs.sort()
 
-    if training_state is not None:
-        preproc_state = training_state["preproc_state"]
-        model.preproc_state = freeze(preproc_state)
-        opt_st = training_state["opt_state"]
-        ema_st = training_state["ema_state"]
-        sch_state = training_state["sch_state"]
-        variables = training_state["variables"]
-        model.variables = training_state["variables_ema"]
-        count = training_state["count"]
-        restore_count = training_state["restore_count"]
+    ### LR factor after restoring a model that has diverged
+    restore_scaling = training_parameters.get("restore_scaling", 1)
+    assert restore_scaling > 0.0, "restore_scaling must be > 0.0"
+    assert restore_scaling <= 1.0, "restore_scaling must be <= 1.0"
+    if restore_scaling != 1:
+        print("Applying LR scaling after restore:", restore_scaling)
+
+
+    metric_use_best = training_parameters.get("metric_best", "rmse_tot")  # .lower()
+    metrics_state = {}
+
+    ### INITIALIZE TRAINING STATE ###
+    if restart_checkpoint is not None:
+        training_state = deepcopy(restart_checkpoint["training"])
         epoch_start = training_state["epoch"]
-        rng_key = training_state["rng_key"]
-        best_metric = training_state["best_metric"]
+        model.preproc_state = freeze(restart_checkpoint["preproc_state"])
         if smoothen_metrics:
-            rmses_smooth = training_state["rmses_smooth"]
-            maes_smooth = training_state["maes_smooth"]
-            rmse_tot_smooth = training_state["rmse_tot_smooth"]
-            mae_tot_smooth = training_state["mae_tot_smooth"]
-            nsmooth = training_state["nsmooth"]
+            metrics_state = deepcopy(restart_checkpoint["metrics_state"])
+            rmses_smooth = metrics_state["rmses_smooth"]
+            maes_smooth = metrics_state["maes_smooth"]
+            rmse_tot_smooth = metrics_state["rmse_tot_smooth"]
+            mae_tot_smooth = metrics_state["mae_tot_smooth"]
+            nsmooth = metrics_state["nsmooth"]
         print("Restored training state")
     else:
-        epoch_start = 0
+        epoch_start = 1
         training_state = {
-            "preproc_state": preproc_state,
             "rng_key": rng_key,
             "opt_state": opt_st,
             "ema_state": ema_st,
             "sch_state": sch_state,
-            "variables": variables,
+            "variables": model.variables,
             "variables_ema": model.variables,
-            "count": count,
-            "restore_count": restore_count,
+            "step": 0,
+            "restore_count": 0,
+            "restore_scale": 1,
             "epoch": 0,
-            "stage": stage,
             "best_metric": np.inf,
         }
         if smoothen_metrics:
-            training_state["rmses_smooth"] = dict(rmses_smooth)
-            training_state["maes_smooth"] = dict(maes_smooth)
-            training_state["rmse_tot_smooth"] = rmse_tot_smooth
-            training_state["mae_tot_smooth"] = mae_tot_smooth
-            training_state["nsmooth"] = nsmooth
+            metrics_state = {
+                "rmses_smooth": dict(rmses_smooth),
+                "maes_smooth": dict(maes_smooth),
+                "rmse_tot_smooth": rmse_tot_smooth,
+                "mae_tot_smooth": mae_tot_smooth,
+                "nsmooth": nsmooth,
+            }
+    
+    del opt_st, ema_st, sch_state, preproc_state
+    variables_save = training_state['variables']
+    variables_ema_save = training_state['variables_ema']
 
     ### Training loop ###
     start = time.time()
     print("Starting training...")
-    for epoch in range(epoch_start, max_epochs):
+    for epoch in range(epoch_start, max_epochs+1):
+        training_state["epoch"] = epoch
         s = time.time()
         for _ in range(nbatch_per_epoch):
             # fetch data
             inputs0, data = next(training_iterator)
 
             # preprocess data
-            inputs = preprocessing(model, inputs0)
-            # inputs = model.preprocess(**inputs0)
+            inputs = model.preprocess(verbose=True,use_gpu=gpu_preprocessing,**inputs0)
 
             rng_key, subkey = jax.random.split(rng_key)
             inputs["rng_key"] = subkey
-            # if compute_ref_coords:
-            #     inputs_ref = {**inputs0, "coordinates": data[coordinates_ref_key]}
-            #     inputs_ref = model.preprocess(**inputs_ref)
-            # else:
-            #     inputs_ref = None
-            # if print_timings:
-            #     jax.block_until_ready(inputs["coordinates"])
+            inputs["training_epoch"] = epoch
+
+            # adjust learning rate
+            current_lr, training_state["sch_state"] = schedule(training_state["sch_state"])
+            current_lr *= training_state["restore_scale"]
+            training_state["opt_state"].inner_states["trainable"].inner_state[-1].hyperparams[
+                "step_size"
+            ] = current_lr 
 
             # train step
-            # opt_st.inner_states["trainable"].inner_state[1].hyperparams[
-            #     "learning_rate"
-            # ] = schedule(count)
-            current_lr, sch_state = schedule(sch_state)
-            opt_st.inner_states["trainable"].inner_state[-1].hyperparams[
-                "step_size"
-            ] = current_lr
-            loss, variables, opt_st, model.variables, ema_st, output = train_step(
-                epoch=epoch,
-                data=data,
-                inputs=inputs,
-                variables=variables,
-                variables_ema=model.variables,
-                opt_st=opt_st,
-                ema_st=ema_st,
-            )
-            count += 1
+            loss,training_state, _ = train_step(data,inputs,training_state)
 
         rmses_avg = defaultdict(lambda: 0.0)
         maes_avg = defaultdict(lambda: 0.0)
         for _ in range(nbatch_per_validation):
             inputs0, data = next(validation_iterator)
 
-            inputs = preprocessing(model, inputs0)
-            # inputs = model.preprocess(**inputs0)
+            inputs = model.preprocess(verbose=True,use_gpu=gpu_preprocessing,**inputs0)
 
             rng_key, subkey = jax.random.split(rng_key)
             inputs["rng_key"] = subkey
+            inputs["training_epoch"] = epoch
 
-            # if compute_ref_coords:
-            #     inputs_ref = {**inputs0, "coordinates": data[coordinates_ref_key]}
-            #     inputs_ref = model.preprocess(**inputs_ref)
-            # else:
-            #     inputs_ref = None
             rmses, maes, output_val = validation(
                 data=data,
                 inputs=inputs,
-                variables=model.variables,
-                # inputs_ref=inputs_ref,
+                variables=training_state["variables_ema"],
             )
             for k, v in rmses.items():
                 rmses_avg[k] += v
@@ -669,15 +578,17 @@ def train(
                 maes_avg[k] += v
 
         jax.block_until_ready(output_val)
+
+        ### Timings ###
         e = time.time()
         epoch_time = e - s
 
         elapsed_time = e - start
         if not adaptive_scheduler:
-            remain_glob = elapsed_time * (max_epochs - epoch) / (epoch + 1)
-            remain_last = epoch_time * (max_epochs - epoch)
+            remain_glob = elapsed_time * (max_epochs - epoch + 1) / epoch
+            remain_last = epoch_time * (max_epochs - epoch + 1)
             # estimate remaining time via weighted average (put more weight on last at the beginning)
-            wremain = np.sin(0.5 * np.pi * (epoch + 1) / max_epochs)
+            wremain = np.sin(0.5 * np.pi * epoch / max_epochs)
             remaining_time = human_time_duration(
                 remain_glob * wremain + remain_last * (1 - wremain)
             )
@@ -692,12 +603,9 @@ def train(
         for k in maes_avg.keys():
             maes_avg[k] /= nbatch_per_validation
 
-        step_time /= nbatch_per_epoch
-        fetch_time /= nbatch_per_epoch
-        preprocess_time /= nbatch_per_epoch
-
+        ### Print metrics ###
         print("")
-        line = f"Epoch {epoch+1}, lr={current_lr:.3e}, loss = {loss:.3e}"
+        line = f"Epoch {epoch}, lr={current_lr:.3e}, loss = {loss:.3e}"
         line += f", epoch time = {epoch_time}, batch time = {batch_time}"
         line += f", elapsed time = {elapsed_time}"
         if not adaptive_scheduler:
@@ -726,13 +634,7 @@ def train(
                     f"    rmse_{k}= {rmses_avg[k]/mult:10.3f} ; mae_{k}= {maes_avg[k]/mult:10.3f}   {unit}  {weight_str}"
                 )
 
-        # if print_timings:
-        #     print(
-        #         f"    Timings per batch: fetch time = {fetch_time:.5f}; preprocess time = {preprocess_time:.5f}; train time = {step_time:.5f}"
-        #     )
-        fetch_time = 0.0
-        step_time = 0.0
-        preprocess_time = 0.0
+        ### CHECK IF WE SHOULD RESTORE PREVIOUS MODEL ###
         restore = False
         reinit = False
         for k, mae in maes_avg.items():
@@ -751,39 +653,51 @@ def train(
                     restore = True
                     break
 
+        epoch_time_str = time.strftime("%Y-%m-%d-%H-%M-%S")
+        model.variables = training_state["variables_ema"]
+        if epoch in save_model_at_epochs:
+            filename = output_directory + f"model{stage_prefix}_epoch{epoch:0{epoch_format}}_{epoch_time_str}.fnx"
+            print("Scheduled model save :", filename)
+            model.save(filename)
+
         if restore:
-            restore_count += 1
-            if restore_count > max_restore_count:
+            training_state["restore_count"] += 1
+            if training_state["restore_count"]  > max_restore_count:
                 if reinit:
                     raise ValueError("Model diverged and could not be restored.")
                 else:
-                    restore_count = 0
+                    training_state["restore_count"]  = 0
                     print(
                         f"{max_restore_count} unsuccessful restores, resuming training."
                     )
-                    continue
 
-            variables = deepcopy(variables_save)
-            model.variables = deepcopy(variables_ema_save)
-            print("Restored previous model after divergence.")
+            training_state["variables"] = deepcopy(variables_save)
+            training_state["variables_ema"] = deepcopy(variables_ema_save)
+            model.variables = training_state["variables_ema"]
+            training_state["restore_scale"] *= restore_scaling
+            print(f"Restored previous model after divergence. Restore scale: {training_state['restore_scale']:.3f}")
             if reinit:
-                opt_st = optimizer.init(model.variables)
-                ema_st = ema.init(model.variables)
+                training_state["opt_state"] = optimizer.init(model.variables)
+                training_state["ema_state"] = ema.init(model.variables)
                 print("Reinitialized optimizer after divergence.")
+            save_restart_checkpoint(output_directory,stage,training_state,model.preproc_state,metrics_state)
             continue
 
-        restore_count = 0
-        variables_save = deepcopy(variables)
-        variables_ema_save = deepcopy(model.variables)
+        training_state["restore_count"]  = 0
+
+        variables_save = deepcopy(training_state["variables"])
+        variables_ema_save = deepcopy(training_state["variables_ema"])
         maes_prev = maes_avg
 
+        ### SAVE MODEL ###
         model.save(output_directory + "latest_model.fnx")
 
         # save metrics
+        step = int(training_state["step"])
         metrics = {
-            "epoch": epoch + 1,
-            "step": count,
-            "data_count": count * batch_size,
+            "epoch": epoch,
+            "step": step,
+            "data_count": step * batch_size,
             "elapsed_time": time.time() - start,
             "lr": current_lr,
             "loss": loss,
@@ -820,17 +734,25 @@ def train(
             metrics["rmse_smooth_tot"] = rmse_tot_smooth / (1.0 - metrics_beta**nsmooth)
             metrics["mae_smooth_tot"] = mae_tot_smooth / (1.0 - metrics_beta**nsmooth)
 
+            # update metrics state
+            metrics_state["rmses_smooth"] = dict(rmses_smooth)
+            metrics_state["maes_smooth"] = dict(maes_smooth)
+            metrics_state["rmse_tot_smooth"] = rmse_tot_smooth
+            metrics_state["mae_tot_smooth"] = mae_tot_smooth
+            metrics_state["nsmooth"] = nsmooth
+
         assert (
             metric_use_best in metrics
         ), f"Error: metric for selectring best model '{metric_use_best}' not in metrics"
+
         metric_for_best = metrics[metric_use_best]
-        if metric_for_best < best_metric:
-            best_metric = metric_for_best
-            metrics["best_metric"] = best_metric
+        if metric_for_best <  training_state["best_metric"]:
+            training_state["best_metric"] = metric_for_best
+            metrics["best_metric"] = training_state["best_metric"]
             if keep_all_bests:
                 best_name = (
                     output_directory
-                    + f"best_model{stage_prefix}_{time.strftime('%Y-%m-%d-%H-%M-%S')}.fnx"
+                    + f"best_model{stage_prefix}_epoch{epoch:0{epoch_format}}_{epoch_time_str}.fnx"
                 )
                 model.save(best_name)
 
@@ -838,9 +760,9 @@ def train(
             model.save(best_name)
             print("New best model saved to:", best_name)
         else:
-            metrics["best_metric"] = best_metric
+            metrics["best_metric"] = training_state["best_metric"]
 
-        if epoch == 0:
+        if epoch == 1:
             headers = [f"{i+1}:{k}" for i, k in enumerate(metrics.keys())]
             fmetrics.write("# " + " ".join(headers) + "\n")
         fmetrics.write(" ".join([str(metrics[k]) for k in metrics.keys()]) + "\n")
@@ -850,29 +772,12 @@ def train(
         assert (
             schedule_metrics in metrics
         ), f"Error: cannot update lr, '{schedule_metrics}' not in metrics"
-        current_lr, sch_state = schedule(sch_state, metrics[schedule_metrics])
+        current_lr, training_state["sch_state"] = schedule(training_state["sch_state"], metrics[schedule_metrics])
 
         # update and save training state
-        training_state["preproc_state"] = model.preproc_state
-        training_state["opt_state"] = opt_st
-        training_state["ema_state"] = ema_st
-        training_state["sch_state"] = sch_state
-        training_state["variables"] = variables
-        training_state["variables_ema"] = model.variables
-        training_state["count"] = count
-        training_state["restore_count"] = restore_count
-        training_state["epoch"] = epoch
-        training_state["best_metric"] = best_metric
-        if smoothen_metrics:
-            training_state["rmses_smooth"] = dict(rmses_smooth)
-            training_state["maes_smooth"] = dict(maes_smooth)
-            training_state["rmse_tot_smooth"] = rmse_tot_smooth
-            training_state["mae_tot_smooth"] = mae_tot_smooth
-            training_state["nsmooth"] = nsmooth
+        save_restart_checkpoint(output_directory,stage,training_state,model.preproc_state,metrics_state)
 
-        with open(output_directory + "train_state", "wb") as f:
-            pickle.dump(training_state, f)
-
+        
         if is_end(metrics):
             print("Stage finished.")
             break
