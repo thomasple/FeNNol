@@ -491,7 +491,7 @@ class Reshape(nn.Module):
 
     key: str
     """The key of the input array."""
-    shape: Sequence[int]
+    shape: Sequence[Union[int,str]]
     """The shape of the output array."""
     output_key: Optional[str] = None
     """The key of the output array. If None, the input key is used."""
@@ -500,7 +500,32 @@ class Reshape(nn.Module):
 
     @nn.compact
     def __call__(self, inputs) -> Any:
-        output = jnp.reshape(inputs[self.key], self.shape)
+        shape = []
+        for s in self.shape:
+            if isinstance(s,int):
+                shape.append(s)
+                continue
+
+            if isinstance(s,str):
+                s_=s.lower().strip()
+                if s_ in ["natoms" ,"nat","natom","n_atoms","atoms"]:
+                    shape.append(inputs["species"].shape[0])
+                    continue
+                
+                if s_ in ["nsys","nbatch","nsystems","n_sys","n_systems","n_batch"]:
+                    shape.append(inputs["natoms"].shape[0])
+                    continue
+                
+                s_ = s.strip().split("[")
+                key = s_[0]
+                if key in inputs:
+                    axis = int(s_[1].split("]")[0])
+                    shape.append(inputs[key].shape[axis])
+                    continue
+
+            raise ValueError(f"Error parsing shape component {s}")
+
+        output = jnp.reshape(inputs[self.key], shape)
         output_key = self.output_key if self.output_key is not None else self.key
         return {**inputs, output_key: output}
 
@@ -524,8 +549,8 @@ class ChemicalConstant(nn.Module):
     def __call__(self, inputs) -> Any:
         if isinstance(self.value, str):
             constant = CHEMICAL_PROPERTIES[self.value.upper()]
-        elif isinstance(self.value, list):
-            constant = self.value
+        elif isinstance(self.value, list) or isinstance(self.value, tuple):
+            constant = list(self.value)
         elif isinstance(self.value, float):
             constant = [self.value] * len(PERIODIC_TABLE)
         elif hasattr(self.value, "items"):
@@ -581,12 +606,15 @@ class SwitchFunction(nn.Module):
                 cutoff = graph["cutoff"]
         else:
             # distances = inputs
-            distances, edge_mask = inputs
-            assert (
-                self.cutoff is not None
-            ), "cutoff must be specified if no graph is given"
-            # edge_mask = distances < self.cutoff
-            cutoff = self.cutoff
+            if len(inputs) == 3:
+                distances, edge_mask, cutoff = inputs
+            else:
+                distances, edge_mask = inputs
+                assert (
+                    self.cutoff is not None
+                ), "cutoff must be specified if no graph is given"
+                # edge_mask = distances < self.cutoff
+                cutoff = self.cutoff
 
         if self.switch_start > 1.0e-5:
             assert (
