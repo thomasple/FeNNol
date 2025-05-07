@@ -1,3 +1,7 @@
+![GitHub License](https://img.shields.io/github/license/thomasple/FeNNol)
+![PyPI - Version](https://img.shields.io/pypi/v/FeNNol?link=https%3A%2F%2Fpypi.org%2Fproject%2FFeNNol%2F)
+
+
 ## FeNNol: Force-field-enhanced Neural Networks optimized library
 FeNNol is a library for building, training and running neural network potentials for molecular simulations. It is based on the JAX library and is designed to be fast and flexible.
 
@@ -6,8 +10,7 @@ FeNNol's documentation is available [here](https://thomasple.github.io/FeNNol/) 
 Active Learning tutorial in this [Colab notebook](https://colab.research.google.com/drive/1Z3G_jVSF60_nbDdJwbgyLdJBHTYuQ5nL?usp=sharing)
 
 ## Installation
-### From PyPi
-fennol can be install directly using pip:
+### From PyPI
 ```bash
 # CPU version
 pip install fennol
@@ -16,14 +19,14 @@ pip install fennol
 pip install "fennol[cuda]"
 ```
 
-### From Github repo
+### Latest version from Github repo
 You can start with a fresh environment, for example using venv:
 ```bash
 python -m venv fennol
 source fennol/bin/activate
 ```
 
-The first step is to install jax (see details at: https://jax.readthedocs.io/en/latest/installation.html)
+The first step is to install jax (see details at: https://jax.readthedocs.io/en/latest/installation.html). For example, to install the latest version using pip:
 ```bash
 # CPU version
 pip install -U jax
@@ -32,14 +35,14 @@ pip install -U jax
 pip install -U "jax[cuda12]"
 ```
 
-Then, you can clone and install FeNNol using pip:
+Then, you can clone the repo and install FeNNol using pip:
 ```bash
 git clone https://github.com/thomasple/FeNNol.git
 cd FeNNol
 pip install .
 ```
 
-*Optional dependencies*:
+### Optional dependencies
 - Some modules require e3nn-jax (https://github.com/e3nn/e3nn-jax) which can be installed with:
 ```bash
 pip install --upgrade e3nn-jax
@@ -48,7 +51,7 @@ pip install --upgrade e3nn-jax
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
-- For the Deep-HP interface, cffi, pydlpack and pycuda are required:
+- For the Deep-HP interface, cffi and pycuda are required:
 ```bash
 pip install cffi pycuda
 ```
