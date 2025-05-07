@@ -6,21 +6,31 @@ FeNNol's documentation is available [here](https://thomasple.github.io/FeNNol/) 
 Active Learning tutorial in this [Colab notebook](https://colab.research.google.com/drive/1Z3G_jVSF60_nbDdJwbgyLdJBHTYuQ5nL?usp=sharing)
 
 ## Installation
+### From PyPi
+fennol can be install directly using pip:
+```bash
+# CPU version
+pip install fennol
+
+# GPU version
+pip install "fennol[cuda]"
+```
+
+### From Github repo
 You can start with a fresh environment, for example using venv:
 ```bash
 python -m venv fennol
 source fennol/bin/activate
 ```
 
-The first step is to install jax (see details at: https://jax.readthedocs.io/en/latest/installation.html).
-For example, to install the CPU version of jax:
+The first step is to install jax (see details at: https://jax.readthedocs.io/en/latest/installation.html)
 ```bash
+# CPU version
 pip install -U jax
-```
-If you have a GPU, you can install the CUDA version of jax with:
-````bash
+
+# GPU version
 pip install -U "jax[cuda12]"
-````
+```
 
 Then, you can clone and install FeNNol using pip:
 ```bash
