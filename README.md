@@ -1,5 +1,6 @@
-![GitHub License](https://img.shields.io/github/license/thomasple/FeNNol)
-![PyPI - Version](https://img.shields.io/pypi/v/FeNNol?link=https%3A%2F%2Fpypi.org%2Fproject%2FFeNNol%2F)
+
+[![PyPI - Version](https://img.shields.io/pypi/v/FeNNol?link=https%3A%2F%2Fpypi.org%2Fproject%2FFeNNol%2F)](https://pypi.org/project/FeNNol/)
+[![DOI:10.1063/5.0217688](https://zenodo.org/badge/DOI/10.1063/5.0217688.svg)](https://doi.org/10.1063/5.0217688) 
 
 
 ## FeNNol: Force-field-enhanced Neural Networks optimized library
