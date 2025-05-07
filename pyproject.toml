@@ -4,6 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools_scm]
 version_file = "src/fennol/version.py"
+local_scheme = "no-local-version"
 
 [project]
 name = "FeNNol"
@@ -11,11 +12,10 @@ name = "FeNNol"
 dynamic = ["version"]
 description = "FeNNol: Force-field-enhanced Neural Network optimized library"
 readme = "README.md"
-license = { file = "LICENSE" }
+license-files = ["LICENSE"]
 authors = [{ name = "Thomas Plé", email = "thomas.ple@sorbonne-universite.fr" }]
 keywords = ["machine learning potential", "jax", "force field","molecular dynamics"]
 classifiers = [
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Chemistry",
