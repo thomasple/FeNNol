@@ -180,6 +180,9 @@ class FENNIX:
     ) -> None:
         """Set the energy terms to be computed by the model and prepare the energy and force functions."""
         object.__setattr__(self, "energy_terms", energy_terms)
+        if isinstance(energy_terms, str):
+            energy_terms = [energy_terms]
+        
         if energy_terms is None or len(energy_terms) == 0:
 
             def total_energy(variables, data):

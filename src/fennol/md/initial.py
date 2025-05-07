@@ -120,6 +120,7 @@ def load_system_data(simulation_parameters, fprec):
 
     ### PIMD
     nbeads = simulation_parameters.get("nbeads", None)
+    nreplicas = simulation_parameters.get("nreplicas", None)
     if nbeads is not None:
         nbeads = int(nbeads)
         print("# nbeads: ", nbeads)
@@ -146,7 +147,19 @@ def load_system_data(simulation_parameters, fprec):
         eigmat = jnp.asarray(eigmat, dtype=fprec)
         system_data["omk"] = omk
         system_data["eigmat"] = eigmat
+        nreplicas = None
+    elif nreplicas is not None:
+        nreplicas = int(nreplicas)
+        print("# nreplicas: ", nreplicas)
+        system_data["nreplicas"] = nreplicas
+        system_data["mass"] = np.repeat(mass[None, :], nreplicas, axis=0).reshape(-1)
+        system_data["species"] = np.repeat(species[None, :], nreplicas, axis=0).reshape(-1)
+        coordinates = np.repeat(coordinates[None, :, :], nreplicas, axis=0).reshape(-1,3)
+        species = np.repeat(species[None, :], nreplicas, axis=0).reshape(-1)
+        bead_index = np.arange(nreplicas, dtype=np.int32).repeat(nat)
+        natoms = np.array([nat] * nreplicas, dtype=np.int32)
     else:
+        system_data["nreplicas"]=1
         bead_index = np.array([0] * nat, dtype=np.int32)
         natoms = np.array([nat], dtype=np.int32)
 
@@ -162,6 +175,9 @@ def load_system_data(simulation_parameters, fprec):
         if nbeads is not None:
             cell = np.repeat(cell, nbeads, axis=0)
             reciprocal_cell = np.repeat(reciprocal_cell, nbeads, axis=0)
+        elif nreplicas is not None:
+            cell = np.repeat(cell, nreplicas, axis=0)
+            reciprocal_cell = np.repeat(reciprocal_cell, nreplicas, axis=0)
         conformation["cells"] = cell
         conformation["reciprocal_cells"] = reciprocal_cell
     

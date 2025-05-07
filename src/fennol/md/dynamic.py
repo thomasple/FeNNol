@@ -10,6 +10,7 @@ from collections import defaultdict
 from functools import partial
 import jax
 import jax.numpy as jnp
+import pickle
 
 from flax.core import freeze, unfreeze
 
@@ -125,7 +126,6 @@ def dynamic(simulation_parameters, device, fprec):
     start_time = 0.0
     start_step = 0
 
-
     ### Set I/O parameters
     Tdump = simulation_parameters.get("tdump", 1.0 / au.PS) * au.FS
     ndump = int(Tdump / dt)
@@ -139,12 +139,12 @@ def dynamic(simulation_parameters, device, fprec):
         coordinates = conformation["coordinates"]
         cell = conformation["cells"][0]
         # temper = 2 * ek / (3.0 * nat) * au.KELVIN
-        ek = 1.5*nat * system_data["kT"] 
+        ek = 1.5 * nat * system_data["kT"]
         Pkin = (2 * au.KBAR) * ek / ((3.0 / au.BOHR**3) * volume)
         e, f, vir_t, _ = model._energy_and_forces_and_virial(
             model.variables, conformation
         )
-        KBAR = au.KBAR/model_energy_unit
+        KBAR = au.KBAR / model_energy_unit
         Pvir = -(np.trace(vir_t[0]) * KBAR) / ((3.0 / au.BOHR**3) * volume)
         vstep = volume * 0.000001
         scalep = ((volume + vstep) / volume) ** (1.0 / 3.0)
@@ -215,6 +215,13 @@ def dynamic(simulation_parameters, device, fprec):
     nsummary = simulation_parameters.get("nsummary", 100 * nprint)
     assert nsummary > nprint, "nsummary must be > nprint"
 
+    save_keys = simulation_parameters.get("save_keys", [])
+    if save_keys:
+        print(f"# Saving keys: {save_keys}")
+        fkeys = open(f"{system_name}.traj.pkl", "wb+")
+    else:
+        fkeys = None
+
     ### Print header
     include_thermostat_energy = "thermostat_energy" in system["thermostat"]
     thermostat_name = dyn_state["thermostat_name"]
@@ -234,7 +241,7 @@ def dynamic(simulation_parameters, device, fprec):
     if estimate_pressure:
         print_aniso_pressure = simulation_parameters.get("print_aniso_pressure", False)
         pressure_unit_str = simulation_parameters.get("pressure_unit", "atm")
-        pressure_unit = au.get_multiplier(pressure_unit_str)*au.BOHR**3
+        pressure_unit = au.get_multiplier(pressure_unit_str) * au.BOHR**3
         header += f"  Press[{pressure_unit_str}]"
     if variable_cell:
         header += "   Density"
@@ -246,27 +253,34 @@ def dynamic(simulation_parameters, device, fprec):
         traj_ext = ".traj.xyz"
         write_frame = write_xyz_frame
     elif traj_format == "extxyz":
-        traj_ext =  ".traj.extxyz"
+        traj_ext = ".traj.extxyz"
         write_frame = write_extxyz_frame
     elif traj_format == "arc":
-        traj_ext =  ".arc"
+        traj_ext = ".arc"
         write_frame = write_arc_frame
     else:
         raise ValueError(
             f"Unknown trajectory format '{traj_format}'. Supported formats are 'arc' and 'xyz'"
         )
-    
+
     write_all_beads = simulation_parameters.get("write_all_beads", False) and pimd
-    
+
     if write_all_beads:
-        fout = [open(f"{system_name}_bead{i+1:03d}"+traj_ext, "w") for i in range(nbeads)]
+        fout = [
+            open(f"{system_name}_bead{i+1:03d}" + traj_ext, "a") for i in range(nbeads)
+        ]
     else:
-        fout = open(system_name+traj_ext, "a+")
+        fout = open(system_name + traj_ext, "a")
 
     ensemble_key = simulation_parameters.get("etot_ensemble_key", None)
     if ensemble_key is not None:
-        fens = open(f"{system_name}.ensemble_weights.traj", "a+")
+        fens = open(f"{system_name}.ensemble_weights.traj", "a")
 
+    write_centroid = simulation_parameters.get("write_centroid", False) and pimd
+    if write_centroid:
+        fcentroid = open(f"{system_name}_centroid" + traj_ext, "a")
+
+    fcolvars = None
 
     ### initialize proprerty trajectories
     properties_traj = defaultdict(list)
@@ -283,7 +297,7 @@ def dynamic(simulation_parameters, device, fprec):
     for istep in range(1, nsteps + 1):
 
         ### update the system
-        dyn_state, system, conformation, preproc_state = step(
+        dyn_state, system, conformation, preproc_state, model_output = step(
             istep, dyn_state, system, conformation, preproc_state, force_preprocess
         )
 
@@ -320,7 +334,8 @@ def dynamic(simulation_parameters, device, fprec):
                 properties_traj["Temper_c[Kelvin]"].append(temper_c)
 
             ### construct line of properties
-            line = f"{istep:10.6g} {(start_time+istep*dt)/1000: 10.3f}  {etot*atom_energy_unit: #10.4f}  {epot*atom_energy_unit: #10.4f}  {ek*atom_energy_unit: #10.4f} {temper: 10.2f}"
+            simulated_time = (start_time + istep * dt) / 1000
+            line = f"{istep:10.6g} {simulated_time: 10.3f}  {etot*atom_energy_unit: #10.4f}  {epot*atom_energy_unit: #10.4f}  {ek*atom_energy_unit: #10.4f} {temper: 10.2f}"
             if pimd:
                 line += f" {temper_c: 10.2f}"
             if include_thermostat_energy:
@@ -329,38 +344,78 @@ def dynamic(simulation_parameters, device, fprec):
                     etherm * atom_energy_unit
                 )
             if estimate_pressure:
-                pres = system["pressure"]*pressure_unit
+                pres = system["pressure"] * pressure_unit
                 properties_traj[f"Pressure[{pressure_unit_str}]"].append(pres)
                 if print_aniso_pressure:
-                    pres_tensor = system["pressure_tensor"]*pressure_unit
-                    pres_tensor = 0.5*(pres_tensor + pres_tensor.T)
-                    properties_traj[f"Pressure_xx[{pressure_unit_str}]"].append(pres_tensor[0,0])
-                    properties_traj[f"Pressure_yy[{pressure_unit_str}]"].append(pres_tensor[1,1])
-                    properties_traj[f"Pressure_zz[{pressure_unit_str}]"].append(pres_tensor[2,2])
-                    properties_traj[f"Pressure_xy[{pressure_unit_str}]"].append(pres_tensor[0,1])
-                    properties_traj[f"Pressure_xz[{pressure_unit_str}]"].append(pres_tensor[0,2])
-                    properties_traj[f"Pressure_yz[{pressure_unit_str}]"].append(pres_tensor[1,2])
+                    pres_tensor = system["pressure_tensor"] * pressure_unit
+                    pres_tensor = 0.5 * (pres_tensor + pres_tensor.T)
+                    properties_traj[f"Pressure_xx[{pressure_unit_str}]"].append(
+                        pres_tensor[0, 0]
+                    )
+                    properties_traj[f"Pressure_yy[{pressure_unit_str}]"].append(
+                        pres_tensor[1, 1]
+                    )
+                    properties_traj[f"Pressure_zz[{pressure_unit_str}]"].append(
+                        pres_tensor[2, 2]
+                    )
+                    properties_traj[f"Pressure_xy[{pressure_unit_str}]"].append(
+                        pres_tensor[0, 1]
+                    )
+                    properties_traj[f"Pressure_xz[{pressure_unit_str}]"].append(
+                        pres_tensor[0, 2]
+                    )
+                    properties_traj[f"Pressure_yz[{pressure_unit_str}]"].append(
+                        pres_tensor[1, 2]
+                    )
                 line += f" {pres:10.3f}"
             if variable_cell:
                 density = system["density"]
                 properties_traj["Density[g/cm^3]"].append(density)
                 if print_aniso_pressure:
                     cell = system["cell"]
-                    properties_traj[f"Cell_Ax[Angstrom]"].append(cell[0,0])
-                    properties_traj[f"Cell_Ay[Angstrom]"].append(cell[0,1])
-                    properties_traj[f"Cell_Az[Angstrom]"].append(cell[0,2])
-                    properties_traj[f"Cell_Bx[Angstrom]"].append(cell[1,0])
-                    properties_traj[f"Cell_By[Angstrom]"].append(cell[1,1])
-                    properties_traj[f"Cell_Bz[Angstrom]"].append(cell[1,2])
-                    properties_traj[f"Cell_Cx[Angstrom]"].append(cell[2,0])
-                    properties_traj[f"Cell_Cy[Angstrom]"].append(cell[2,1])
-                    properties_traj[f"Cell_Cz[Angstrom]"].append(cell[2,2])
+                    properties_traj[f"Cell_Ax[Angstrom]"].append(cell[0, 0])
+                    properties_traj[f"Cell_Ay[Angstrom]"].append(cell[0, 1])
+                    properties_traj[f"Cell_Az[Angstrom]"].append(cell[0, 2])
+                    properties_traj[f"Cell_Bx[Angstrom]"].append(cell[1, 0])
+                    properties_traj[f"Cell_By[Angstrom]"].append(cell[1, 1])
+                    properties_traj[f"Cell_Bz[Angstrom]"].append(cell[1, 2])
+                    properties_traj[f"Cell_Cx[Angstrom]"].append(cell[2, 0])
+                    properties_traj[f"Cell_Cy[Angstrom]"].append(cell[2, 1])
+                    properties_traj[f"Cell_Cz[Angstrom]"].append(cell[2, 2])
                 line += f" {density:10.4f}"
                 if "piston_temperature" in system["barostat"]:
                     piston_temperature = system["barostat"]["piston_temperature"]
                     properties_traj["T_piston[Kelvin]"].append(piston_temperature)
 
             print(line)
+
+            ### save colvars
+            if "colvars" in system:
+                colvars = system["colvars"]
+                if fcolvars is None:
+                    # open colvars file and print header
+                    fcolvars = open(f"{system_name}.colvars", "a")
+                    fcolvars.write("# time[ps]")
+                    fcolvars.write(" ".join(colvars.keys()))
+                    fcolvars.write("\n")
+                fcolvars.write(f"{simulated_time:.3f} ")
+                fcolvars.write(" ".join([f"{v:.6f}" for v in colvars.values()]))
+                fcolvars.write("\n")
+                fcolvars.flush()
+
+            if save_keys:
+                data = {
+                    k: (
+                        np.asarray(model_output[k])
+                        if isinstance(model_output[k], jnp.ndarray)
+                        else model_output[k]
+                    )
+                    for k in save_keys
+                }
+                data["properties"] = {
+                    k: float(v) for k, v in zip(header.split()[1:], line.split())
+                }
+                pickle.dump(data, fkeys)
 
         ### save frame
         if istep % ndump == 0:
@@ -376,7 +431,7 @@ def dynamic(simulation_parameters, device, fprec):
                     system["coordinates"] = wrapbox(
                         system["coordinates"], cell, reciprocal_cell
                     )
-                conformation = update_conformation(conformation,system)
+                conformation = update_conformation(conformation, system)
                 line += " (atoms have been wrapped into the box)"
                 force_preprocess = True
             print(line)
@@ -385,10 +440,10 @@ def dynamic(simulation_parameters, device, fprec):
                 "Time": start_time + istep * dt,
                 "energy_unit": energy_unit_str,
             }
-            
+
             if write_all_beads:
-                coords = np.asarray(conformation["coordinates"].reshape(nbeads, nat, 3))
-                for i,fb in enumerate(fout):
+                coords = np.asarray(conformation["coordinates"].reshape(-1, nat, 3))
+                for i, fb in enumerate(fout):
                     write_frame(
                         fb,
                         system_data["symbols"],
@@ -401,16 +456,28 @@ def dynamic(simulation_parameters, device, fprec):
                 write_frame(
                     fout,
                     system_data["symbols"],
-                    np.asarray(conformation["coordinates"].reshape(nbeads, nat, 3)[0]),
+                    np.asarray(conformation["coordinates"].reshape(-1, nat, 3)[0]),
                     cell=cell,
                     properties=properties,
                     forces=None,  # np.asarray(system["forces"].reshape(nbeads, nat, 3)[0]) * energy_unit,
                 )
+            if write_centroid:
+                centroid = np.asarray(system["coordinates"][0])
+                write_frame(
+                    fcentroid,
+                    system_data["symbols"],
+                    centroid,
+                    cell=cell,
+                    properties=properties,
+                    forces=np.asarray(system["forces"].reshape(nbeads, nat, 3)[0])
+                    * energy_unit,
+                )
             if ensemble_key is not None:
-                weights = " ".join([f'{w:.6f}' for w in system["ensemble_weights"].tolist()])
+                weights = " ".join(
+                    [f"{w:.6f}" for w in system["ensemble_weights"].tolist()]
+                )
                 fens.write(f"{weights}\n")
                 fens.flush()
-
 
         ### summary over last nsummary steps
         if istep % (nsummary) == 0:
@@ -454,8 +521,8 @@ def dynamic(simulation_parameters, device, fprec):
                 print(f"#   {'Total':15} : {human_time_duration(tfull/dsteps):>12}")
                 ## reset timings
                 timings = defaultdict(lambda: 0.0)
-            
-            corr_kin = system["thermostat"].get("corr_kin",None)
+
+            corr_kin = system["thermostat"].get("corr_kin", None)
             if corr_kin is not None:
                 print(f"# QTB kin. correction : {100*(corr_kin-1.):.2f} %")
             print(f"# Averages over last {nsummary:_} steps :")
@@ -481,6 +548,12 @@ def dynamic(simulation_parameters, device, fprec):
     fout.close()
     if ensemble_key is not None:
         fens.close()
+    if fcolvars is not None:
+        fcolvars.close()
+    if fkeys is not None:
+        fkeys.close()
+    if write_centroid:
+        fcentroid.close()
 
 
 if __name__ == "__main__":
