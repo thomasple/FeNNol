@@ -11,7 +11,7 @@ from functools import partial
 from flax.core.frozen_dict import FrozenDict
 
 
-from ..utils.activations import chain
+from ..utils.activations import chain,safe_sqrt
 from ..utils import deep_update, mask_filter_1d
 from ..utils.kspace import get_reciprocal_space_parameters
 from .misc.misc import SwitchFunction
@@ -733,7 +733,8 @@ class GraphProcessor(nn.Module):
                     graph["pbc_shifts"], cells[batch_index_vec]
                 )
 
-        distances = jnp.linalg.norm(vec, axis=-1)
+        d2  = jnp.sum(vec**2, axis=-1)
+        distances = safe_sqrt(d2)
         edge_mask = distances < self.cutoff
 
         switch = SwitchFunction(
@@ -751,15 +752,23 @@ class GraphProcessor(nn.Module):
         if "alch_group" in inputs:
             alch_group = inputs["alch_group"]
             lambda_e = inputs["alch_elambda"]
-            lambda_e = 0.5*(1.-jnp.cos(jnp.pi*lambda_e))
             mask = alch_group[edge_src] == alch_group[edge_dst]
             graph_out["switch_raw"] = switch
             graph_out["switch"] = jnp.where(
                 mask,
                 switch,
-                lambda_e * switch ,
+                0.5*(1.-jnp.cos(jnp.pi*lambda_e)) * switch ,
             )
 
+            if "alch_alpha_pre" in inputs:
+                graph_out["distances_raw"] = distances
+                alch_alpha = (1-lambda_e)*inputs["alch_alpha_pre"]**2
+                distances = jnp.where(
+                    mask,
+                    distances,
+                    safe_sqrt(alch_alpha + d2 * (1. - alch_alpha/self.cutoff**2))
+                )  
+                graph_out["distances"] = distances
 
         return {**inputs, self.graph_key: graph_out}
 
@@ -967,9 +976,11 @@ class GraphFilterProcessor(nn.Module):
         graph_in = inputs[self.parent_graph]
         graph = inputs[self.graph_key]
 
+        d_key = "distances_raw" if "distances_raw" in graph else "distances"
+
         if graph_in["vec"].shape[0] == 0:
             vec = graph_in["vec"]
-            distances = graph_in["distances"]
+            distances = graph_in[d_key]
             filter_indices = jnp.asarray([], dtype=jnp.int32)
         else:
             filter_indices = graph["filter_indices"]
@@ -979,7 +990,7 @@ class GraphFilterProcessor(nn.Module):
                 .get(mode="fill", fill_value=self.cutoff)
             )
             distances = (
-                graph_in["distances"]
+                graph_in[d_key]
                 .at[filter_indices]
                 .get(mode="fill", fill_value=self.cutoff)
             )
@@ -1011,6 +1022,18 @@ class GraphFilterProcessor(nn.Module):
                 switch,
                 lambda_e * switch ,
             )
+
+            
+            if "alch_alpha_pre" in inputs:
+                graph_out["distances_raw"] = distances
+                alch_alpha = (1-lambda_e)*inputs["alch_alpha_pre"]**2
+                distances = jnp.where(
+                    mask,
+                    distances,
+                    safe_sqrt(alch_alpha + distances**2 * (1. - alch_alpha/self.cutoff**2))
+                )  
+                graph_out["distances"] = distances
+
 
         return {**inputs, self.graph_key: graph_out}
 
@@ -1265,12 +1288,12 @@ class GraphAngleProcessor(nn.Module):
     @nn.compact
     def __call__(self, inputs: Union[dict, Tuple[jax.Array, dict]]):
         graph = inputs[self.graph_key]
-        distances = graph["distances"]
+        distances = graph["distances_raw"] if "distances_raw" in graph else graph["distances"]
         vec = graph["vec"]
         angle_src = graph["angle_src"]
         angle_dst = graph["angle_dst"]
 
-        dir = vec / jnp.clip(distances[:, None], a_min=1.0e-5)
+        dir = vec / jnp.clip(distances[:, None], min=1.0e-5)
         cos_angles = (
             dir.at[angle_src].get(mode="fill", fill_value=0.5)
             * dir.at[angle_dst].get(mode="fill", fill_value=0.5)
