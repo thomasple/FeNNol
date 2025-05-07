@@ -120,6 +120,7 @@ class CRATEmbedding(nn.Module):
     lode_use_field_norm: bool = True
     lode_rshort: Optional[float] = None
     lode_dshort: float = 0.5
+    lode_extra_powers: Sequence[int] = ()
     
 
     charge_embedding: bool = False
@@ -250,6 +251,10 @@ class CRATEmbedding(nn.Module):
             else:
                 ls_lr = np.array([0])
 
+            nextra_powers = len(self.lode_extra_powers)
+            if nextra_powers > 0:
+                ls_lr = np.concatenate([self.lode_extra_powers,ls_lr])
+
             if self.a_lode > 0:
                 a = self.a_lode**2
             else:
@@ -274,8 +279,13 @@ class CRATEmbedding(nn.Module):
                 d = self.lode_dshort
                 switch_short = 0.5 * (1 - jnp.cos(jnp.pi * (r - rs) / d)) * (r > rs) * (
                     r < rs + d
-                ) + (r > rs + d)
+                ) + (r >= rs + d)
                 eij_lr = eij_lr * switch_short
+            
+            if nextra_powers>0:
+                eij_lr_extra = eij_lr[:,:nextra_powers]
+                eij_lr = eij_lr[:,nextra_powers:]
+
 
             # dim_lr = self.nchannels_lode
             nchannels_lode = (
@@ -293,6 +303,11 @@ class CRATEmbedding(nn.Module):
                 )
                 eij_lr = (eij_lr * Yij)[:, None, :]
                 dim_lr = [d * (lmax_lr + 1) for d in dim_lr]
+            
+            if nextra_powers > 0:
+                eij_lr_extra = eij_lr_extra[:,None,:]
+                extra_dims = [nextra_powers*d for d in nchannels_lode]
+                dim_lr = [d + ed for d,ed in zip(dim_lr,extra_dims)]
             
 
         ##################################################
@@ -696,6 +711,16 @@ class CRATEmbedding(nn.Module):
             ### CONCATENATE EMBEDDING COMPONENTS ###
             if do_lode and nchannels_lode[layer] > 0:
                 zj = nn.Dense(dim_lr[layer], use_bias=False, name=f"LODE_{layer}")(xi)
+                if nextra_powers > 0:
+                    zj_extra = zj[:,:nextra_powers*nchannels_lode[layer]].reshape(
+                        (species.shape[0],nchannels_lode[layer], nextra_powers)
+                    )
+                    zj = zj[:,nextra_powers*nchannels_lode[layer]:]
+                    xi_lr_extra = jax.ops.segment_sum(
+                        eij_lr_extra * zj_extra[edge_dst_lr], edge_src_lr, species.shape[0]
+                    )
+                    components.append(xi_lr_extra.reshape(species.shape[0],-1))
+
                 if equivariant_lode:
                     zj = zj.reshape(
                         (species.shape[0], nchannels_lode[layer], lmax_lr + 1)
