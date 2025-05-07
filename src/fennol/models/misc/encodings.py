@@ -110,6 +110,45 @@ class SpeciesEncoding(nn.Module):
             )
 
             conv_tensors.append(conv_tensor)
+        
+        if "valence_structure" in encodings:
+            vref = np.array([2, 6, 10, 14])
+            conv_tensor = np.array(VALENCE_STRUCTURE[1 : zmax + 1])/vref[None,:]
+            dim = conv_tensor.shape[1]
+            conv_tensor = np.concatenate(
+                [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
+            )
+            conv_tensors.append(conv_tensor)
+        
+        if "period_onehot" in encodings:
+            periods = PERIODIC_COORDINATES[1 : zmax + 1, 0]-1
+            conv_tensor = np.eye(7)[periods]
+            dim = conv_tensor.shape[1]
+            conv_tensor = np.concatenate(
+                [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
+            )
+            conv_tensors.append(conv_tensor)
+        
+        if "period" in encodings:
+            conv_tensor = (PERIODIC_COORDINATES[1 : zmax + 1, 0]/7.)[:,None]
+            dim = conv_tensor.shape[1]
+            conv_tensor = np.concatenate(
+                [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
+            )
+            conv_tensors.append(conv_tensor)
+        
+        if "period_positional" in encodings:
+            row = PERIODIC_COORDINATES[1 : zmax + 1, 0]
+            drow = self.extra_params.get("drow", default=5)
+            nrow = self.extra_params.get("nrow", default=100.0)
+
+            conv_tensor = positional_encoding_static(row, drow, nrow)
+            dim = conv_tensor.shape[1]
+            conv_tensor = np.concatenate(
+                [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
+            )
+            conv_tensors.append(conv_tensor)
+
 
         if "properties" in encodings:
             props = np.array(XENONPY_PROPS)[1:-1]
@@ -125,7 +164,8 @@ class SpeciesEncoding(nn.Module):
                 [np.zeros((1, dim)), conv_tensor, np.zeros((1, dim))], axis=0
             )
             conv_tensors.append(conv_tensor)
-
+        
+        
         if "valence_properties" in encodings:
             assert zmax <= 86, "Valence properties only available for zmax <= 86"
             Z = np.arange(1, zmax + 1).reshape(-1, 1)
@@ -220,6 +260,14 @@ class SpeciesEncoding(nn.Module):
                 (zmaxpad, self.dim),
             )
             conv_tensors.append(rand_encoding)
+        
+        if "zeros" in encodings:
+            zeros_encoding = self.param(
+                "zeros_encoding",
+                lambda key, shape: jnp.zeros(shape, dtype=jnp.float32),
+                (zmaxpad, self.dim),
+            )
+            conv_tensors.append(zeros_encoding)
 
         if "randint" in encodings:
             rand_encoding = self.param(
@@ -593,9 +641,9 @@ class RadialBasis(nn.Module):
             out = switchstart * jnp.exp(-a[None, :] * x[:, None]) * norm[None, :]
 
         elif basis == "neural_net" or basis == "nn":
-            neurons = self.extra_params.get(
+            neurons = [*self.extra_params.get(
                 "hidden_neurons", default=[2 * self.dim]
-            ) + [self.dim]
+            ), self.dim]
             activation = self.extra_params.get("activation", default="swish")
             use_bias = self.extra_params.get("use_bias", default=True)
 
@@ -604,7 +652,10 @@ class RadialBasis(nn.Module):
             )(x[:, None])
         elif basis == "damped_coulomb":
             l = np.arange(self.dim)[None, :]
-            a2 = self.extra_params.get("a", default=1.0)**2
+            a = self.extra_params.get("a", default=1.0)
+            if self.trainable:
+                a = self.param("a", lambda key: jnp.asarray([a]*self.dim)[None,:])
+            a2=a**2
             x = x[:, None] - self.start
             end = self.end - self.start
             x21 = a2 + x**2
@@ -617,7 +668,7 @@ class RadialBasis(nn.Module):
 
         elif basis.startswith("spherical_bessel_"):
             l = int(basis.split("_")[-1])
-            out = generate_spherical_jn_basis([l], self.dim, self.end)(x)
+            out = generate_spherical_jn_basis(self.dim, self.end,[l])(x)
         else:
             raise NotImplementedError(f"Unknown radial basis {basis}.")
         ############################
@@ -669,11 +720,11 @@ def generate_spherical_jn_basis(dim:int, rc:float, ls:Union[int,Sequence[int]]=[
     zn = np.array([jn_zeros(l, dim) for l in ls], dtype=float).T
     znrc = zn / rc
     norms = np.zeros((dim, len(ls)), dtype=float)
-    for l in ls:
+    for il,l in enumerate(ls):
         for i in range(dim):
-            norms[i, l] = (
-                integrate.quad(lambda x: (spherical_jn(l, x) * x) ** 2, 0, zn[i, l])[0]
-                / znrc[i, l] ** 3
+            norms[i, il] = (
+                integrate.quad(lambda x: (spherical_jn(l, x) * x) ** 2, 0, zn[i, il])[0]
+                / znrc[i, il] ** 3
             ) ** (-0.5)
 
     fn_str = f"""def spherical_jn_basis_(x):
@@ -687,8 +738,8 @@ def generate_spherical_jn_basis(dim:int, rc:float, ls:Union[int,Sequence[int]]=[
 
     jns = jnp.stack([
   """
-    for l in ls:
-        fn_str += f"      {expand_func(jn(l, zl[l]))},\n"
+    for il,l in enumerate(ls):
+        fn_str += f"      {expand_func(jn(l, zl[il]))},\n"
     fn_str += f"""    ],axis=-1)
     return (norms[None,:,:]*jns).reshape(*xshape,{dim},{len(ls)})
   """
