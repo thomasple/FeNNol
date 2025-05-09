@@ -760,9 +760,12 @@ class GraphProcessor(nn.Module):
                 0.5*(1.-jnp.cos(jnp.pi*lambda_e)) * switch ,
             )
 
-            if "alch_alpha_pre" in inputs:
+            if "alch_softcore_e" in inputs or "alch_softcore_v" in inputs:
                 graph_out["distances_raw"] = distances
-                alch_alpha = (1-lambda_e)*inputs["alch_alpha_pre"]**2
+                if "alch_softcore_e" in inputs:
+                    alch_alpha = (1-inputs["alch_elambda"])*inputs["alch_softcore_e"]**2
+                else:
+                    alch_alpha = (1-inputs["alch_vlambda"])*inputs["alch_softcore_v"]**2
                 distances = jnp.where(
                     mask,
                     distances,
@@ -1014,26 +1017,26 @@ class GraphFilterProcessor(nn.Module):
             edge_dst=graph["edge_dst"]
             alch_group = inputs["alch_group"]
             lambda_e = inputs["alch_elambda"]
-            lambda_e = 0.5*(1.-jnp.cos(jnp.pi*lambda_e))
             mask = alch_group[edge_src] == alch_group[edge_dst]
             graph_out["switch_raw"] = switch
             graph_out["switch"] = jnp.where(
                 mask,
                 switch,
-                lambda_e * switch ,
+                0.5*(1.-jnp.cos(jnp.pi*lambda_e)) * switch ,
             )
 
-            
-            if "alch_alpha_pre" in inputs:
+            if "alch_softcore_e" in inputs or "alch_softcore_v" in inputs:
                 graph_out["distances_raw"] = distances
-                alch_alpha = (1-lambda_e)*inputs["alch_alpha_pre"]**2
+                if "alch_softcore_e" in inputs:
+                    alch_alpha = (1-inputs["alch_elambda"])*inputs["alch_softcore_e"]**2
+                else:
+                    alch_alpha = (1-inputs["alch_vlambda"])*inputs["alch_softcore_v"]**2
                 distances = jnp.where(
                     mask,
                     distances,
                     safe_sqrt(alch_alpha + distances**2 * (1. - alch_alpha/self.cutoff**2))
                 )  
                 graph_out["distances"] = distances
-
 
         return {**inputs, self.graph_key: graph_out}
 
