@@ -6,8 +6,7 @@ import jax.numpy as jnp
 
 
 def minmaxone(x, name=""):
-    print(name, x.min(), x.max(), (x**2).mean())
-
+    print(name, x.min(), x.max(), (x**2).mean() ** 0.5)
 
 def minmaxone_jax(x, name=""):
     jax.debug.print(

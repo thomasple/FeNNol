@@ -368,12 +368,26 @@ class FENNIX:
 
         def _energy_gradient(variables, data):
             def _etot(variables, inputs):
+                if "strain" in inputs:
+                    scaling = inputs["strain"]
+                    batch_index = data["batch_index"]
+                    coordinates = inputs["coordinates"] if "coordinates" in inputs else data["coordinates"]
+                    coordinates = jax.vmap(jnp.matmul)(
+                        coordinates, scaling[batch_index]
+                    )
+                    inputs = {**inputs, "coordinates": coordinates}
+                    if "cells" in inputs or "cells" in data:
+                        cells = inputs["cells"] if "cells" in inputs else data["cells"]
+                        cells = jax.vmap(jnp.matmul)(cells, scaling)
+                        inputs["cells"] = cells
                 if "cells" in inputs:
                     reciprocal_cells = jnp.linalg.inv(inputs["cells"])
                     inputs = {**inputs, "reciprocal_cells": reciprocal_cells}
                 energy, out = self._total_energy_raw(variables, {**data, **inputs})
                 return energy.sum(), out
 
+            if "strain" in gradient_keys and "strain" not in data:
+                data = {**data, "strain": jnp.array(np.eye(3)[None, :, :].repeat(data["natoms"].shape[0], axis=0))}
             inputs = {k: data[k] for k in gradient_keys}
             de, out = jax.grad(_etot, argnums=1, has_aux=True)(variables, inputs)
 

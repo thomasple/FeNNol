@@ -1,14 +1,6 @@
-import sys, os, io
-import argparse
-import time
 from pathlib import Path
-import math
 
 import numpy as np
-from typing import Optional, Callable
-from collections import defaultdict
-from functools import partial
-import jax
 import jax.numpy as jnp
 
 from flax.core import freeze, unfreeze
@@ -20,10 +12,6 @@ from ..models import FENNIX
 
 from ..utils.periodic_table import PERIODIC_TABLE_REV_IDX, ATOMIC_MASSES
 from ..utils.atomic_units import AtomicUnits as au
-from ..utils.input_parser import parse_input
-from .thermostats import get_thermostat
-
-from copy import deepcopy
 
 
 def load_model(simulation_parameters):
@@ -73,7 +61,14 @@ def load_system_data(simulation_parameters, fprec):
     ### GET TEMPERATURE
     temperature = np.clip(simulation_parameters.get("temperature", 300.0), 1.0e-6, None)
     kT = temperature / au.KELVIN
-    totmass_amu = mass_amu.sum()/6.02214129e-1
+    totmass_amu = mass_amu.sum() / 6.02214129e-1
+
+    ### GET TOTAL CHARGE
+    total_charge = simulation_parameters.get("total_charge", 0.0)
+
+    ### ENERGY UNIT
+    energy_unit_str = simulation_parameters.get("energy_unit", "kcal/mol")
+    energy_unit = au.get_multiplier(energy_unit_str)
 
     ## SYSTEM DATA
     system_data = {
@@ -85,6 +80,9 @@ def load_system_data(simulation_parameters, fprec):
         "temperature": temperature,
         "kT": kT,
         "totmass_amu": totmass_amu,
+        "total_charge": total_charge,
+        "energy_unit": energy_unit,
+        "energy_unit_str": energy_unit_str,
     }
 
     ### Set boundary conditions
@@ -97,7 +95,7 @@ def load_system_data(simulation_parameters, fprec):
         for l in cell:
             print("# ", l)
         # print(cell)
-        dens = totmass_amu  / volume
+        dens = totmass_amu / volume
         print("# density: ", dens.item(), " g/cm^3")
         minimum_image = simulation_parameters.get("minimum_image", True)
         estimate_pressure = simulation_parameters.get("estimate_pressure", False)
@@ -125,7 +123,7 @@ def load_system_data(simulation_parameters, fprec):
         nbeads = int(nbeads)
         print("# nbeads: ", nbeads)
         system_data["nbeads"] = nbeads
-        coordinates = np.repeat(coordinates[None, :, :], nbeads, axis=0).reshape(-1,3)
+        coordinates = np.repeat(coordinates[None, :, :], nbeads, axis=0).reshape(-1, 3)
         species = np.repeat(species[None, :], nbeads, axis=0).reshape(-1)
         bead_index = np.arange(nbeads, dtype=np.int32).repeat(nat)
         natoms = np.array([nat] * nbeads, dtype=np.int32)
@@ -153,13 +151,17 @@ def load_system_data(simulation_parameters, fprec):
         print("# nreplicas: ", nreplicas)
         system_data["nreplicas"] = nreplicas
         system_data["mass"] = np.repeat(mass[None, :], nreplicas, axis=0).reshape(-1)
-        system_data["species"] = np.repeat(species[None, :], nreplicas, axis=0).reshape(-1)
-        coordinates = np.repeat(coordinates[None, :, :], nreplicas, axis=0).reshape(-1,3)
+        system_data["species"] = np.repeat(species[None, :], nreplicas, axis=0).reshape(
+            -1
+        )
+        coordinates = np.repeat(coordinates[None, :, :], nreplicas, axis=0).reshape(
+            -1, 3
+        )
         species = np.repeat(species[None, :], nreplicas, axis=0).reshape(-1)
         bead_index = np.arange(nreplicas, dtype=np.int32).repeat(nat)
         natoms = np.array([nat] * nreplicas, dtype=np.int32)
     else:
-        system_data["nreplicas"]=1
+        system_data["nreplicas"] = 1
         bead_index = np.array([0] * nat, dtype=np.int32)
         natoms = np.array([nat], dtype=np.int32)
 
@@ -168,6 +170,7 @@ def load_system_data(simulation_parameters, fprec):
         "coordinates": coordinates,
         "batch_index": bead_index,
         "natoms": natoms,
+        "total_charge": total_charge,
     }
     if cell is not None:
         cell = cell[None, :, :]
@@ -180,7 +183,7 @@ def load_system_data(simulation_parameters, fprec):
             reciprocal_cell = np.repeat(reciprocal_cell, nreplicas, axis=0)
         conformation["cells"] = cell
         conformation["reciprocal_cells"] = reciprocal_cell
-    
+
     additional_keys = simulation_parameters.get("additional_keys", {})
     for key, value in additional_keys.items():
         conformation[key] = value
@@ -228,39 +231,4 @@ def initialize_preprocessing(simulation_parameters, model, conformation, system_
     return preproc_state, conformation
 
 
-def initialize_system(conformation, vel, model, system_data, fprec):
-    ## initial energy and forces
-    print("# Computing initial energy and forces")
-    e, f, vir,_ = model._energy_and_forces_and_virial(model.variables, conformation)
-    model_energy_unit = model.Ha_to_model_energy
-    f = np.array(f) / model_energy_unit
-    epot = np.mean(e) / model_energy_unit
-    vir = np.mean(vir, axis=0) / model_energy_unit
-    
-    if "nbeads" in system_data:
-        ek = 0.5 * jnp.sum(system_data["mass"][:, None,None] * vel[0,:,:,None]*vel[0,:,None,:],axis=0)
-    else:
-        ek = 0.5 * jnp.sum(system_data["mass"][:, None,None] * vel[:,:,None]*vel[:,None,:],axis=0)
 
-    ## build system
-    system = {}
-    system["ek_tensor"] = ek
-    system["ek"] = jnp.trace(ek)
-    system["epot"] = epot
-    system["vel"] = vel.astype(fprec)
-    if "cells" in conformation:
-        system["virial"] = vir
-        system["cell"] = conformation["cells"][0]
-    if "nbeads" in system_data:
-        nbeads = system_data["nbeads"]
-        coordinates = conformation["coordinates"].reshape(nbeads, -1, 3)
-        eigx = jnp.zeros_like(coordinates).at[0].set(coordinates[0])
-        system["coordinates"] = eigx
-        system["forces"] = jnp.einsum(
-            "in,i...->n...", system_data["eigmat"], f.reshape(nbeads, -1, 3)
-        ) * (1.0 / nbeads**0.5)
-    else:
-        system["coordinates"] = conformation["coordinates"]
-        system["forces"] = f
-
-    return system

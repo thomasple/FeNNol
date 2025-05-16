@@ -2,47 +2,23 @@ import sys, os, io
 import argparse
 import time
 from pathlib import Path
-import math
 
 import numpy as np
-from typing import Optional, Callable
 from collections import defaultdict
-from functools import partial
 import jax
 import jax.numpy as jnp
 import pickle
 
-from flax.core import freeze, unfreeze
-
-
-from ..models import FENNIX
 from ..utils.io import (
     write_arc_frame,
-    last_xyz_frame,
     write_xyz_frame,
     write_extxyz_frame,
     human_time_duration,
 )
-from ..utils.periodic_table import PERIODIC_TABLE_REV_IDX, ATOMIC_MASSES
-from ..utils.atomic_units import AtomicUnits as au
+from .utils import wrapbox, save_dynamics_restart
+from ..utils import minmaxone, AtomicUnits as au
 from ..utils.input_parser import parse_input
-from .initial import load_model, load_system_data, initialize_preprocessing
 from .integrate import initialize_dynamics
-
-from copy import deepcopy
-
-
-def minmaxone(x, name=""):
-    print(name, x.min(), x.max(), (x**2).mean() ** 0.5)
-
-
-@jax.jit
-def wrapbox(x, cell, reciprocal_cell):
-    # q = jnp.einsum("ji,sj->si", reciprocal_cell, x)
-    q = x @ reciprocal_cell
-    q = q - jnp.floor(q)
-    # return jnp.einsum("ji,sj->si", cell, q)
-    return q @ cell
 
 
 def main():
@@ -98,83 +74,29 @@ def main():
 def dynamic(simulation_parameters, device, fprec):
     tstart_dyn = time.time()
 
-    ### Initialize the model
-    model = load_model(simulation_parameters)
-
-    ### Get the coordinates and species from the xyz file
-    system_data, conformation = load_system_data(simulation_parameters, fprec)
-    nat = system_data["nat"]
-
-    preproc_state, conformation = initialize_preprocessing(
-        simulation_parameters, model, conformation, system_data
-    )
-
     random_seed = simulation_parameters.get(
         "random_seed", np.random.randint(0, 2**32 - 1)
     )
     print(f"# random_seed: {random_seed}")
     rng_key = jax.random.PRNGKey(random_seed)
-    rng_key, subkey = jax.random.split(rng_key)
+
     ## INITIALIZE INTEGRATOR AND SYSTEM
-    step, update_conformation, dyn_state, system = initialize_dynamics(
-        simulation_parameters, system_data, conformation, model, fprec, subkey
+    rng_key, subkey = jax.random.split(rng_key)
+    step, update_conformation, system_data, dyn_state, conformation, system = (
+        initialize_dynamics(simulation_parameters, fprec, subkey)
     )
 
+    nat = system_data["nat"]
     dt = dyn_state["dt"]
     ## get number of steps
     nsteps = int(simulation_parameters.get("nsteps"))
-    start_time = 0.0
-    start_step = 0
+    start_time_ps = dyn_state.get("start_time_ps", 0.0)
 
     ### Set I/O parameters
     Tdump = simulation_parameters.get("tdump", 1.0 / au.PS) * au.FS
     ndump = int(Tdump / dt)
     system_name = system_data["name"]
-
-    model_energy_unit = au.get_multiplier(model.energy_unit)
-    ### Print initial pressure
     estimate_pressure = dyn_state["estimate_pressure"]
-    if estimate_pressure and fprec == "float64":
-        volume = system_data["pbc"]["volume"]
-        coordinates = conformation["coordinates"]
-        cell = conformation["cells"][0]
-        # temper = 2 * ek / (3.0 * nat) * au.KELVIN
-        ek = 1.5 * nat * system_data["kT"]
-        Pkin = (2 * au.KBAR) * ek / ((3.0 / au.BOHR**3) * volume)
-        e, f, vir_t, _ = model._energy_and_forces_and_virial(
-            model.variables, conformation
-        )
-        KBAR = au.KBAR / model_energy_unit
-        Pvir = -(np.trace(vir_t[0]) * KBAR) / ((3.0 / au.BOHR**3) * volume)
-        vstep = volume * 0.000001
-        scalep = ((volume + vstep) / volume) ** (1.0 / 3.0)
-        cellp = cell * scalep
-        reciprocal_cell = np.linalg.inv(cellp)
-        sysp = model.preprocess(
-            **{
-                **conformation,
-                "coordinates": coordinates * scalep,
-                "cells": cellp[None, :, :],
-                "reciprocal_cells": reciprocal_cell[None, :, :],
-            }
-        )
-        ep, _ = model._total_energy(model.variables, sysp)
-        scalem = ((volume - vstep) / volume) ** (1.0 / 3.0)
-        cellm = cell * scalem
-        reciprocal_cell = np.linalg.inv(cellm)
-        sysm = model.preprocess(
-            **{
-                **conformation,
-                "coordinates": coordinates * scalem,
-                "cells": cellm[None, :, :],
-                "reciprocal_cells": reciprocal_cell[None, :, :],
-            }
-        )
-        em, _ = model._total_energy(model.variables, sysm)
-        Pvir_fd = -(ep[0] * KBAR - em[0] * KBAR) / (2.0 * vstep / au.BOHR**3)
-        print(
-            f"# Initial pressure: {Pkin+Pvir:.3f} (virial); {Pkin+Pvir_fd:.3f} (finite difference) ; Pkin: {Pkin:.3f} ; Pvir: {Pvir:.3f} ; Pvir_fd: {Pvir_fd:.3f}"
-        )
 
     @jax.jit
     def check_nan(system):
@@ -183,8 +105,8 @@ def dynamic(simulation_parameters, device, fprec):
         )
 
     if system_data["pbc"] is not None:
-        cell = system_data["pbc"]["cell"]
-        reciprocal_cell = system_data["pbc"]["reciprocal_cell"]
+        cell = system["cell"]
+        reciprocal_cell = np.linalg.inv(cell)
         do_wrap_box = simulation_parameters.get("wrap_box", False)
     else:
         cell = None
@@ -193,9 +115,9 @@ def dynamic(simulation_parameters, device, fprec):
 
     ### Energy units and print initial energy
     per_atom_energy = simulation_parameters.get("per_atom_energy", True)
-    energy_unit_str = simulation_parameters.get("energy_unit", "kcal/mol")
+    energy_unit_str = system_data["energy_unit_str"]
+    energy_unit = system_data["energy_unit"]
     print("# Energy unit: ", energy_unit_str)
-    energy_unit = au.get_multiplier(energy_unit_str)
     atom_energy_unit = energy_unit
     atom_energy_unit_str = energy_unit_str
     if per_atom_energy:
@@ -284,8 +206,6 @@ def dynamic(simulation_parameters, device, fprec):
 
     ### initialize proprerty trajectories
     properties_traj = defaultdict(list)
-    if print_timings:
-        timings = defaultdict(lambda: 0.0)
 
     ### initialize counters and timers
     t0 = time.time()
@@ -297,8 +217,8 @@ def dynamic(simulation_parameters, device, fprec):
     for istep in range(1, nsteps + 1):
 
         ### update the system
-        dyn_state, system, conformation, preproc_state, model_output = step(
-            istep, dyn_state, system, conformation, preproc_state, force_preprocess
+        dyn_state, system, conformation, model_output = step(
+            istep, dyn_state, system, conformation, force_preprocess
         )
 
         ### print properties
@@ -334,7 +254,7 @@ def dynamic(simulation_parameters, device, fprec):
                 properties_traj["Temper_c[Kelvin]"].append(temper_c)
 
             ### construct line of properties
-            simulated_time = (start_time + istep * dt) / 1000
+            simulated_time = start_time_ps + istep * dt / 1000
             line = f"{istep:10.6g} {simulated_time: 10.3f}  {etot*atom_energy_unit: #10.4f}  {epot*atom_energy_unit: #10.4f}  {ek*atom_energy_unit: #10.4f} {temper: 10.2f}"
             if pimd:
                 line += f" {temper_c: 10.2f}"
@@ -435,9 +355,12 @@ def dynamic(simulation_parameters, device, fprec):
                 line += " (atoms have been wrapped into the box)"
                 force_preprocess = True
             print(line)
+
+            save_dynamics_restart(system_data, conformation, dyn_state, system)
+
             properties = {
                 "energy": float(system["epot"]) * energy_unit,
-                "Time": start_time + istep * dt,
+                "Time_ps": start_time_ps + istep * dt / 1000,
                 "energy_unit": energy_unit_str,
             }
 
@@ -493,34 +416,16 @@ def dynamic(simulation_parameters, device, fprec):
 
             print("#" * 50)
             print(f"# Step {istep:_} of {nsteps:_}  ({istep/nsteps*100:.5g} %)")
+            print(f"# Simulated time      : {istep * dt*1.e-3:.3f} ps")
+            print(f"# Tot. Simu. time     : {start_time_ps + istep * dt*1.e-3:.3f} ps")
             print(f"# Tot. elapsed time   : {human_time_duration(elapsed_time)}")
             print(
-                f"# Est. total time     : {human_time_duration(estimated_total_time)}"
+                f"# Est. total duration   : {human_time_duration(estimated_total_time)}"
             )
             print(
                 f"# Est. remaining time : {human_time_duration(estimated_remaining_time)}"
             )
             print(f"# Time for {nsummary:_} steps : {human_time_duration(tfull)}")
-
-            if print_timings:
-                print(f"# Detailed per-step timings :")
-                dsteps = nsummary
-                tother = tfull - sum([t for t in timings.values()])
-                timings["Other"] = tother
-                # sort timings
-                timings = {
-                    k: v
-                    for k, v in sorted(
-                        timings.items(), key=lambda item: item[1], reverse=True
-                    )
-                }
-                for k, v in timings.items():
-                    print(
-                        f"#   {k:15} : {human_time_duration(v/dsteps):>12} ({v/tfull*100:5.3g} %)"
-                    )
-                print(f"#   {'Total':15} : {human_time_duration(tfull/dsteps):>12}")
-                ## reset timings
-                timings = defaultdict(lambda: 0.0)
 
             corr_kin = system["thermostat"].get("corr_kin", None)
             if corr_kin is not None:

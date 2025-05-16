@@ -16,7 +16,7 @@ from ..utils.deconvolution import (
 
 
 def get_barostat(
-    thermostat, simulation_parameters, dt, system_data, fprec, rng_key=None
+    thermostat, simulation_parameters, dt, system_data, fprec, rng_key=None, restart_data={}
 ):
     state = {}
 
@@ -39,6 +39,16 @@ def get_barostat(
     isotropic = not anisotropic
 
     pbc_data = system_data["pbc"]
+    start_barostat = simulation_parameters.get("start_barostat", 0.0)*au.FS
+    start_time = restart_data.get("simulation_time_ps",0.) * 1e3
+    start_barostat = max(0.,start_barostat-start_time)
+    istart_barostat = int(round(start_barostat / dt))
+    if istart_barostat > 0 and barostat_name not in ["NONE"]:
+        print(
+            f"# BAROSTAT will start at {start_barostat/1000:.3f} ps ({istart_barostat} steps)"
+        )
+    else:
+        istart_barostat = 0
 
     if barostat_name in ["LGV", "LANGEVIN"]:
         assert rng_key is not None, "rng_key must be provided for QTB barostat"
@@ -50,14 +60,6 @@ def get_barostat(
         a1 = math.exp(-gamma * dt)
         a2 = ((1 - a1 * a1) * kT / masspiston) ** 0.5
 
-        start_barostat = simulation_parameters.get("start_barostat", 0.0)*au.FS
-        istart_barostat = int(round(start_barostat / dt))
-        if istart_barostat > 0:
-            print(
-                f"# LANGEVIN barostat will start at {start_barostat/1000:.3f} ps ({istart_barostat} steps)"
-            )
-        else:
-            istart_barostat = 0
 
         rng_key, v_key = jax.random.split(rng_key)
         if anisotropic:
@@ -186,6 +188,7 @@ def get_barostat(
                 x,
                 vel,
                 {
+                    **system,
                     "barostat": barostat_state,
                     "cell": cell,
                     "thermostat": thermostat_state,
