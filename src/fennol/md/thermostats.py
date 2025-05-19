@@ -344,6 +344,8 @@ def initialize_qtb(
     n_of_type = jnp.asarray(n_of_type, dtype=fprec)
     mass_idx = jax.ops.segment_sum(mass, type_idx, nspecies) / n_of_type
 
+    niter_deconv_kin = qtb_parameters.get("niter_deconv_kin", 7)
+    niter_deconv_pot = qtb_parameters.get("niter_deconv_pot", 20)
     corr_kin = qtb_parameters.get("corr_kin", -1)
     do_corr_kin = corr_kin <= 0
     if do_corr_kin:

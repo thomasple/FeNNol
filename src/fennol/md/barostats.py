@@ -112,7 +112,8 @@ def get_barostat(
 
 
             # apply B
-            pV = 2 * (system["ek_tensor"] + jnp.trace(system["ek_tensor"])*jnp.eye(3)/(3*x.shape[0])) - system["virial"]
+            # pV = 2 * (system["ek_tensor"] + jnp.trace(system["ek_tensor"])*jnp.eye(3)/(3*x.shape[0])) - system["virial"]
+            pV = system["PV_tensor"]
             if isotropic:
                 dpV = jnp.trace(pV) - 3*volume * target_pressure
             else:
