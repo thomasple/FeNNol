@@ -779,14 +779,14 @@ def initialize_qtb(
         if verbose:
             print("# Refreshing QTB forces.")
         state, post_state = postprocess_work(state, post_state)
-        state["corr_kin"], post_state = compute_corr_kin(post_state)
+        state["corr_kin"], post_state = compute_corr_kin(post_state, niter=niter_deconv_kin)
         state["istep"] = 0
         if write_spectra:
             write_spectra_to_file(post_state)
         write_qtb_restart(state, post_state)
         return state, post_state
 
-    post_state["corr_pot"] = jnp.asarray(compute_corr_pot(), dtype=fprec)
+    post_state["corr_pot"] = jnp.asarray(compute_corr_pot(niter=niter_deconv_pot), dtype=fprec)
 
     state["force"], post_state = refresh_force(post_state)
     return thermostat, (postprocess, post_state), state
