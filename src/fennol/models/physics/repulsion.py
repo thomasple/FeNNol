@@ -159,6 +159,7 @@ class RepulsionNLH(nn.Module):
     _energy_unit: str = "Ha"
     """The energy unit of the model. **Automatically set by FENNIX**"""
     trainable: bool = False
+    direct_forces_key: Optional[str] = None
 
     FID: ClassVar[str] = "REPULSION_NLH"
 
@@ -229,14 +230,21 @@ class RepulsionNLH(nn.Module):
 
         Z = jnp.where(species > 0, species.astype(rijs.dtype), 0.0)
         phi = (cs * jnp.exp(-alphas*rijs[:,None])).sum(axis=-1)
+        Zij = Z[edge_src]*Z[edge_dst]*switch
 
-        ereppair = Z[edge_src]*Z[edge_dst] * phi * switch/rijs
-
+        ereppair = Zij * phi / rijs           
 
         energy_unit = au.get_multiplier(self._energy_unit)
         erep_atomic = (energy_unit*0.5*au.BOHR)*jax.ops.segment_sum(ereppair, edge_src, species.shape[0])
 
         energy_key = self.energy_key if self.energy_key is not None else self.name
         output = {**inputs, energy_key: erep_atomic }
+
+        if self.direct_forces_key is not None:
+            dphidr = -(alphas*cs * jnp.exp(-alphas*rijs[:,None])).sum(axis=-1)
+            dedr = Zij * (dphidr/rijs - phi/(rijs**2))
+            dedij = (dedr/rijs)[:,None] * graph["vec"]
+            fi = (energy_unit*au.BOHR)*jax.ops.segment_sum(dedij, edge_src, species.shape[0])
+            output[self.direct_forces_key] = fi
 
         return output
