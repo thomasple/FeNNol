@@ -113,22 +113,25 @@ def get_barostat(
 
             # apply B
             # pV = 2 * (system["ek_tensor"] + jnp.trace(system["ek_tensor"])*jnp.eye(3)/(3*x.shape[0])) - system["virial"]
-            pV = system["PV_tensor"]
+            ek = system["ek_c"] if nbeads is not None else system["ek"] 
+            pV = system["PV_tensor"] + ek*jnp.array(np.eye(3)*(2/(3*x.shape[0])))
             if isotropic:
                 dpV = jnp.trace(pV) - 3*volume * target_pressure
             else:
-                dpV = 0.5 * (pV + pV.T) - volume * target_pressure * jnp.eye(3) 
+                dpV = 0.5 * (pV + pV.T) - volume * jnp.array(target_pressure * np.eye(3))
 
             vextvol = vextvol + (dt_bar/masspiston) * dpV
 
             # apply A
             if isotropic:
-                scale1 = jnp.exp((0.5 * dt_bar*(1+1./x.shape[0])) * vextvol)
-                vel = vel / scale1
+                scalev = jnp.exp((-0.5 * dt_bar*(1+1./x.shape[0])) * vextvol)
+                vel = vel * scalev
+                scale1 = jnp.exp((0.5 * dt_bar) * vextvol)
             else:
                 vextvol = aniso_mask * vextvol
-                l, O = jnp.linalg.eigh(vextvol + jnp.trace(vextvol) * jnp.eye(3)/(3*x.shape[0]))
-                Dv = jnp.diag(jnp.exp(-0.5 * dt_bar * l))
+                l, O = jnp.linalg.eigh(vextvol) 
+                lcorr = jnp.trace(vextvol)/(3*x.shape[0])
+                Dv = jnp.diag(jnp.exp(-0.5 * dt_bar * (l+lcorr)))
                 Dx = jnp.diag(jnp.exp(0.5 * dt_bar * l))
                 scalev = O @ Dv @ O.T
                 scale1 = O @ Dx @ O.T
@@ -154,16 +157,17 @@ def get_barostat(
 
             # apply A
             if isotropic:
-                scale2 = jnp.exp((0.5 * dt_bar*(1+1./x.shape[0])) * vextvol)
-                # vel = vel * scale1
-                vel = vel / scale2
+                scalev = jnp.exp((-0.5 * dt_bar*(1+1./x.shape[0])) * vextvol)
+                vel = vel * scalev
+                scale2 = jnp.exp((0.5 * dt_bar) * vextvol)
                 x = x * (scale1 * scale2)
                 extvol = extvol * (scale1 * scale2) ** 3
                 cell = cell * (scale1 * scale2)
             else:
                 vextvol = aniso_mask * vextvol
-                l, O = jnp.linalg.eigh(vextvol + jnp.trace(vextvol) * jnp.eye(3)/(3*x.shape[0]))
-                Dv = jnp.diag(jnp.exp(-0.5 * dt_bar * l))
+                l, O = jnp.linalg.eigh(vextvol) 
+                lcorr = jnp.trace(vextvol)/(3*x.shape[0])
+                Dv = jnp.diag(jnp.exp(-0.5 * dt_bar * (l+lcorr)))
                 Dx = jnp.diag(jnp.exp(0.5 * dt_bar * l))
                 scalev = O @ Dv @ O.T
                 scale = scale1 @ (O @ Dx @ O.T)

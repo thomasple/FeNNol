@@ -278,7 +278,7 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
             vir = jnp.mean(de["strain"], axis=0)
             system["virial"] = vir
             
-            pV =  2 * (ek + jnp.trace(ek)*jnp.eye(3)/(3*v.shape[0])) - vir
+            pV =  2 * ek  - vir
             system["PV_tensor"] = pV
             volume = jnp.abs(jnp.linalg.det(system["cell"]))
             Pres = pV / volume
