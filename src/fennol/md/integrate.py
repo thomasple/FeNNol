@@ -119,7 +119,8 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
     colvars_definitions = simulation_parameters.get("colvars", None)
     use_colvars = colvars_definitions is not None
     if use_colvars:
-        colvars_calculators = setup_colvars(colvars_definitions)
+        colvars_calculators, colvars_names = setup_colvars(colvars_definitions)
+        dyn_state["colvars"] = colvars_names
 
     ### IR SPECTRUM
     do_ir_spectrum = simulation_parameters.get("ir_spectrum", False)
@@ -302,7 +303,7 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
                 system["total_dipole"] = jnp.mean(out["total_dipole"], axis=0)
 
         if use_colvars:
-            coords = system["coordinates"][0]
+            coords = system["coordinates"].reshape(-1, nat, 3)[0]
             colvars = {}
             for colvar_name, colvar_calc in colvars_calculators.items():
                 colvars[colvar_name] = colvar_calc(coords)

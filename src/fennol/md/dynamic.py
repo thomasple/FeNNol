@@ -8,6 +8,7 @@ from collections import defaultdict
 import jax
 import jax.numpy as jnp
 import pickle
+import yaml
 
 from ..utils.io import (
     write_arc_frame,
@@ -17,7 +18,7 @@ from ..utils.io import (
 )
 from .utils import wrapbox, save_dynamics_restart
 from ..utils import minmaxone, AtomicUnits as au
-from ..utils.input_parser import parse_input
+from ..utils.input_parser import parse_input,convert_dict_units, InputFile
 from .integrate import initialize_dynamics
 
 
@@ -30,7 +31,21 @@ def main():
     parser = argparse.ArgumentParser(prog="fennol_md")
     parser.add_argument("param_file", type=Path, help="Parameter file")
     args = parser.parse_args()
-    simulation_parameters = parse_input(args.param_file)
+
+    param_file = args.param_file
+    if not param_file.exists() and not param_file.is_file():
+        raise FileNotFoundError(f"Parameter file {param_file} not found")
+    
+    if param_file.suffix in [".yaml", ".yml"]:
+        with open(param_file, "r") as f:
+            simulation_parameters = convert_dict_units(yaml.safe_load(f))
+            simulation_parameters = InputFile(**simulation_parameters)
+    elif param_file.suffix == ".fnl":
+        simulation_parameters = parse_input(args.param_file)
+    else:
+        raise ValueError(
+            f"Unknown parameter file format '{param_file.suffix}'. Supported formats are '.yaml', '.yml' and '.fnl'"
+        )
 
     ### Set the device
     device: str = simulation_parameters.get("device", "cpu").lower()
@@ -143,6 +158,18 @@ def dynamic(simulation_parameters, device, fprec):
         fkeys = open(f"{system_name}.traj.pkl", "wb+")
     else:
         fkeys = None
+    
+    ### initialize colvars
+    use_colvars = "colvars" in dyn_state
+    if use_colvars:
+        print(f"# Colvars: {dyn_state['colvars']}")
+        colvars_names = dyn_state["colvars"]
+        # open colvars file and print header
+        fcolvars = open(f"{system_name}.colvars.traj", "a")
+        fcolvars.write("#time[ps] ")
+        fcolvars.write(" ".join(colvars_names))
+        fcolvars.write("\n")
+        fcolvars.flush()
 
     ### Print header
     include_thermostat_energy = "thermostat_energy" in system["thermostat"]
@@ -201,8 +228,6 @@ def dynamic(simulation_parameters, device, fprec):
     write_centroid = simulation_parameters.get("write_centroid", False) and pimd
     if write_centroid:
         fcentroid = open(f"{system_name}_centroid" + traj_ext, "a")
-
-    fcolvars = None
 
     ### initialize proprerty trajectories
     properties_traj = defaultdict(list)
@@ -310,16 +335,10 @@ def dynamic(simulation_parameters, device, fprec):
             print(line)
 
             ### save colvars
-            if "colvars" in system:
+            if use_colvars:
                 colvars = system["colvars"]
-                if fcolvars is None:
-                    # open colvars file and print header
-                    fcolvars = open(f"{system_name}.colvars", "a")
-                    fcolvars.write("# time[ps]")
-                    fcolvars.write(" ".join(colvars.keys()))
-                    fcolvars.write("\n")
                 fcolvars.write(f"{simulated_time:.3f} ")
-                fcolvars.write(" ".join([f"{v:.6f}" for v in colvars.values()]))
+                fcolvars.write(" ".join([f"{colvars[k]:.6f}" for k in colvars_names]))
                 fcolvars.write("\n")
                 fcolvars.flush()
 
@@ -453,7 +472,7 @@ def dynamic(simulation_parameters, device, fprec):
     fout.close()
     if ensemble_key is not None:
         fens.close()
-    if fcolvars is not None:
+    if use_colvars:
         fcolvars.close()
     if fkeys is not None:
         fkeys.close()
