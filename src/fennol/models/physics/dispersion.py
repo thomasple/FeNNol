@@ -15,7 +15,8 @@ from ...utils.periodic_table import (
     C6_FREE,
     VALENCE_ELECTRONS,
 )
-
+import pathlib
+import pickle
 
 class VdwOQDO(nn.Module):
     """ Dispersion and exchange based on the Optimized Quantum Drude Oscillator model.
@@ -155,3 +156,96 @@ class VdwOQDO(nn.Module):
             output_key + "_exchange": ex,
             output_key: edisp + ex,
         }
+
+
+class DispersionD3(nn.Module):
+    """
+
+    FID : DISPERSION_D3
+
+    """
+
+    _graphs_properties: Dict
+    graph_key: str = "graph"
+    output_key: Optional[str] = None
+    s6: float = 1.0
+    s8: float = 1.0
+    a1: float = 0.4
+    a2: float = 5.0
+    _energy_unit: str = "Ha"
+    """The energy unit of the model. **Automatically set by FENNIX**"""
+
+    FID: ClassVar[str] = "DISPERSION_D3"
+
+    @nn.compact
+    def __call__(self, inputs):
+
+        path = str(pathlib.Path(__file__).parent.resolve()) + "/ref_data_d3.pkl"
+        with open(path, "rb") as f:
+            DATA_D3 = pickle.load(f)
+
+        graph = inputs[self.graph_key]
+        edge_src = graph["edge_src"]
+        edge_dst = graph["edge_dst"]
+        switch = graph["switch"]
+        species = inputs["species"]
+
+        rij = jnp.clip(graph["distances"] / au.BOHR, 1e-6, None)
+
+        ## RADII (in BOHR)
+        rcov = jnp.array(DATA_D3["COV_D3"])[species]
+        # rvdw = jnp.array(DATA_D3["VDW_D3"])[species]
+        r4r2 = jnp.array(DATA_D3["R4R2"])[species]
+
+        rcij = rcov[edge_src] + rcov[edge_dst]
+
+        ## COORDINATION NUMBER
+        KCN = 16.0
+        cnij = jax.nn.sigmoid(KCN * (rcij / rij - 1.0))
+        cn = jax.ops.segment_sum(cnij, edge_src, species.shape[0])
+
+        ## WEIGHTS
+        refcn = jnp.array(DATA_D3["REF_CN"])[species]
+        mask = refcn >= 0
+        dcn = refcn - cn[:, None]
+        KW = 4.0
+        weights = jnp.where(mask, jnp.exp(-KW * dcn**2), 0.0)
+        norm = weights.sum(axis=1, keepdims=True)
+        weights = jnp.where(mask, weights / jnp.clip(norm, 1e-6, None), 0.0)
+
+        ## correct for all null weights
+        imaxcn = np.argmax(DATA_D3["REF_CN"], axis=1)
+        exweight = np.zeros_like(DATA_D3["REF_CN"])
+        for i, imax in enumerate(imaxcn):
+            exweight[i, imax] = 1.0
+        exweight = jnp.array(exweight)[species]
+
+        exceptional = norm < 1.0e-6
+        weights = jnp.where(exceptional, exweight, weights)
+
+        ## C6 coefficients
+        REF_C6 = DATA_D3["REF_C6"]
+        nz = REF_C6.shape[0]
+        nref = REF_C6.shape[-1]
+        REF_C6 = jnp.array(REF_C6.reshape((nz * nz, nref, nref)))
+        pair_num = species[edge_src] * nz + species[edge_dst]
+        rc6 = REF_C6[pair_num]
+        c6 = jnp.einsum("iab,ia,ib->i", rc6, weights[edge_src], weights[edge_dst])
+
+        ## DISPERSION
+
+        qq = 3 * r4r2[edge_src] * r4r2[edge_dst]
+        c8 = c6 * qq
+
+        r0 = self.a1 * jnp.sqrt(qq) + self.a2
+
+        t6 = self.s6 / (rij**6 + r0**6)
+        t8 = self.s8 / (rij**8 + r0**8)
+
+        energy_unit = au.get_multiplier(self._energy_unit)
+        energy = (-0.5*energy_unit) * jax.ops.segment_sum(
+            (c6 * t6 + c8 * t8) * switch, edge_src, species.shape[0]
+        )
+
+        output_key = self.output_key if self.output_key is not None else self.name
+        return {**inputs, output_key: energy}
