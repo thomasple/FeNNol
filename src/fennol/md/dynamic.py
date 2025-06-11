@@ -343,6 +343,8 @@ def dynamic(simulation_parameters, device, fprec):
                 fcolvars.flush()
 
             if save_keys:
+                if 'forces' in save_keys and 'dEd_coordinates' in model_output:
+                    model_output['forces'] = - model_output['dEd_coordinates']
                 data = {
                     k: (
                         np.asarray(model_output[k])
