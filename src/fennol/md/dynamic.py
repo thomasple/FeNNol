@@ -162,6 +162,8 @@ def dynamic(simulation_parameters, device, fprec):
         wrap_groups = None
 
     ### Energy units and print initial energy
+    model_energy_unit = system_data["model_energy_unit"]
+    model_energy_unit_str = system_data["model_energy_unit_str"]
     per_atom_energy = simulation_parameters.get("per_atom_energy", True)
     energy_unit_str = system_data["energy_unit_str"]
     energy_unit = system_data["energy_unit"]
@@ -387,6 +389,9 @@ def dynamic(simulation_parameters, device, fprec):
                 data["properties"] = {
                     k: float(v) for k, v in zip(header.split()[1:], line.split())
                 }
+                data["properties"]["properties_energy_unit"] = (atom_energy_unit,atom_energy_unit_str)
+                data["properties"]["model_energy_unit"] = (model_energy_unit,model_energy_unit_str)
+
                 pickle.dump(data, fkeys)
 
         ### save frame
