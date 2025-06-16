@@ -48,9 +48,13 @@ def main():
         )
 
     ### Set the device
-    device: str = simulation_parameters.get("device", "cpu").lower()
+    if "FENNOL_DEVICE" in os.environ:
+        device = os.environ["FENNOL_DEVICE"].lower()
+        print(f"# Setting device from env FENNOL_DEVICE={device}")
+    else:
+        device = simulation_parameters.get("device", "cpu").lower()
     if device == "cpu":
-        device = "cpu"
+        jax.config.update('jax_platforms', 'cpu')
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
     elif device.startswith("cuda") or device.startswith("gpu"):
         if ":" in device:
