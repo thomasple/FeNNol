@@ -3,6 +3,8 @@ import jax.numpy as jnp
 import numpy as np
 from functools import partial
 
+from ..utils import read_tinker_interval
+
 
 def build_colvar_distance(colvar_name, colvar_def, global_colvars={}):
     atom1 = colvar_def["atom1"] - 1
@@ -67,11 +69,22 @@ def build_colvar_dihedral(colvar_name, colvar_def, global_colvars={}):
 
     return colvar_dihedral
 
+def build_colvar_maxdcom(colvar_name, colvar_def, global_colvars={}):
+    atoms = read_tinker_interval(colvar_def["atoms"])
+    
+    def colvar_maxdcom(coordinates):
+        sel_coord = coordinates[atoms]
+        com = jnp.mean(sel_coord, axis=0,keepdims=True)
+        return jnp.max(jnp.linalg.norm(sel_coord - com, axis=1))
+
+    return colvar_maxdcom
+
 
 __RAW_COLVAR = {
     "distance": build_colvar_distance,
     "angle": build_colvar_angle,
     "dihedral": build_colvar_dihedral,
+    "maxdcom": build_colvar_maxdcom,
 }
 
 
