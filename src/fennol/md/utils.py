@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 import pickle
 from ..utils import AtomicUnits as au
-
+from functools import partial
 
 def get_restart_file(system_data):
     restart_file = system_data["name"] + ".dyn.restart"
@@ -51,12 +51,19 @@ def save_dynamics_restart(system_data, conformation, dyn_state, system):
         pickle.dump(restart_data, f)
 
 
-@jax.jit
-def wrapbox(x, cell, reciprocal_cell):
-    # q = jnp.einsum("ji,sj->si", reciprocal_cell, x)
+@partial(jax.jit,static_argnames=["wrap_groups"])
+def wrapbox(x, cell, reciprocal_cell, wrap_groups = None):
     q = x @ reciprocal_cell
-    q = q - jnp.floor(q)
-    # return jnp.einsum("ji,sj->si", cell, q)
+    if wrap_groups is not None:
+        for (group, indices) in wrap_groups:
+            if group == "__other":
+                q = q.at[indices].add(-jnp.floor(q[indices]))
+            else:
+                com = jnp.mean(q[indices], axis=0)
+                shift = -jnp.floor(com)[None, :]
+                q = q.at[indices].add(shift)
+    else:
+        q = q - jnp.floor(q)
     return q @ cell
 
 
