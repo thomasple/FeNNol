@@ -23,6 +23,8 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
 
     ### Get the coordinates and species from the xyz file
     system_data, conformation = load_system_data(simulation_parameters, fprec)
+    system_data["model_energy_unit"] = model_energy_unit
+    system_data["model_energy_unit_str"] = model.energy_unit
 
     ### FINISH BUILDING conformation
     if os.path.exists(get_restart_file(system_data)):
@@ -43,7 +45,7 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
     dt = simulation_parameters.get("dt") * au.FS
     dt2 = 0.5 * dt
     mass = system_data["mass"]
-    totmass_amu = system_data["totmass_amu"]
+    densmass = system_data["totmass_Da"]*(au.MPROT*au.GCM3)
     nat = system_data["nat"]
     dtm = jnp.asarray(dt / mass[:, None], dtype=fprec)
 
@@ -216,6 +218,7 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
     def update_observables(system, conformation):
         ### POTENTIAL ENERGY AND FORCES
         epot, de, out = energy_and_gradient(model.variables, conformation)
+        out["forces"] = -de["coordinates"]
         epot = epot / model_energy_unit
         de = {k: v / model_energy_unit for k, v in de.items()}
         forces = -de["coordinates"]
@@ -277,6 +280,7 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
 
             vir = jnp.mean(de["strain"], axis=0)
             system["virial"] = vir
+            out["virial_tensor"] = vir * model_energy_unit
             
             pV =  2 * ek  - vir
             system["PV_tensor"] = pV
@@ -285,7 +289,7 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
             system["pressure_tensor"] = Pres
             system["pressure"] = jnp.trace(Pres) * (1.0 / 3.0)
             if variable_cell:
-                density = totmass_amu / volume
+                density = densmass / volume
                 system["density"] = density
                 system["volume"] = volume
 

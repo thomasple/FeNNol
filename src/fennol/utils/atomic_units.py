@@ -6,7 +6,8 @@ class AtomicUnits:
     KCALPERMOL = 627.5096080305927  # Hartree to kcal/mol
     KJPERMOL = 2625.5002  # Hartree to kJ/mol
     BOHR = 0.52917721  # Bohr to Angstrom
-    MPROT = 1836.1526734252586  # proton mass
+    MPROT = 1836.1526734252586  # proton/electron mass ratio (amu/Da)
+    GCM3 = 1./(MPROT*0.602214129) # amu/A^3 to g/cm^3 (=(1e8)^3/(MPROT*avogadro))
     HBAR = 1.0  # Planck's constant
     FS = 2.4188843e-2  # AU time to femtoseconds
     PS = FS / 1000  # AU time to picoseconds
@@ -57,6 +58,8 @@ class AtomicUnits:
         "KCAL": KCAL,
         "KJ": KJ,
         "RY": RY,
+        "GCM-3": GCM3,
+        "GCM3": GCM3,
     }
 
     @staticmethod
