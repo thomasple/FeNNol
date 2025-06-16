@@ -1733,9 +1733,9 @@ def atom_unpadding(inputs: Dict[str, Any]) -> Dict[str, Any]:
     if "true_atoms" not in inputs:
         return inputs
 
-    species = inputs["species"]
-    true_atoms = inputs["true_atoms"]
-    true_sys = inputs["true_sys"]
+    species = np.asarray(inputs["species"])
+    true_atoms = np.asarray(inputs["true_atoms"])
+    true_sys = np.asarray(inputs["true_sys"])
     natall = species.shape[0]
     nat = np.argmax(species <= 0)
     if nat == 0:
@@ -1747,9 +1747,10 @@ def atom_unpadding(inputs: Dict[str, Any]) -> Dict[str, Any]:
     output = {**inputs}
     for k, v in inputs.items():
         if isinstance(v, jax.Array) or isinstance(v, np.ndarray):
+            v = np.asarray(v)
             if v.ndim == 0:
-                continue
-            if v.shape[0] == natall:
+                output[k] = v
+            elif v.shape[0] == natall:
                 output[k] = v[true_atoms]
             elif v.shape[0] == nsysall:
                 output[k] = v[true_sys]
@@ -1832,37 +1833,29 @@ class PreprocessingChain:
         do_check_input = state.get("check_input", True)
         if do_check_input:
             inputs = check_input(inputs)
-        new_state = []
-        layer_state = state["layers_state"]
-        i = 0
+        new_state = {**state}
         if self.use_atom_padding:
-            s, inputs = self.atom_padder(layer_state[0], inputs)
-            new_state.append(s)
-            i += 1
-        for layer in self.layers:
+            s, inputs = self.atom_padder(state["padder_state"], inputs)
+            new_state["padder_state"] = s
+        layer_state = state["layers_state"]
+        new_layer_state = []
+        for i,layer in enumerate(self.layers):
             s, inputs = layer(layer_state[i], inputs, return_state_update=False)
-            new_state.append(s)
-            i += 1
-        return FrozenDict({**state, "layers_state": tuple(new_state)}), convert_to_jax(
-            inputs
-        )
+            new_layer_state.append(s)
+        new_state["layers_state"] = tuple(new_layer_state)
+        return FrozenDict(new_state), convert_to_jax(inputs)
 
     def check_reallocate(self, state, inputs):
         new_state = []
         state_up = []
         layer_state = state["layers_state"]
-        i = 0
-        if self.use_atom_padding:
-            new_state.append(layer_state[0])
-            i += 1
         parent_overflow = False
-        for layer in self.layers:
+        for i,layer in enumerate(self.layers):
             s, s_up, inputs, parent_overflow = layer.check_reallocate(
                 layer_state[i], inputs, parent_overflow
             )
             new_state.append(s)
             state_up.append(s_up)
-            i += 1
 
         if not parent_overflow:
             return state, {}, inputs, False
@@ -1875,17 +1868,15 @@ class PreprocessingChain:
 
     def atom_padding(self, state, inputs):
         if self.use_atom_padding:
-            padder_state = state["layers_state"][0]
-            return self.atom_padder(padder_state, inputs)
+            padder_state,inputs = self.atom_padder(state["padder_state"], inputs)
+            return FrozenDict({**state,"padder_state": padder_state}), inputs
         return state, inputs
 
     @partial(jax.jit, static_argnums=(0, 1))
     def process(self, state, inputs):
         layer_state = state["layers_state"]
-        i = 1 if self.use_atom_padding else 0
-        for layer in self.layers:
+        for i,layer in enumerate(self.layers):
             inputs = layer.process(layer_state[i], inputs)
-            i += 1
         return inputs
 
     @partial(jax.jit, static_argnums=(0))
@@ -1895,12 +1886,14 @@ class PreprocessingChain:
         return inputs
 
     def init(self):
-        state = []
+        state = {"check_input": True}
         if self.use_atom_padding:
-            state.append(self.atom_padder.init())
+            state["padder_state"] = self.atom_padder.init()
+        layer_state = []
         for layer in self.layers:
-            state.append(layer.init())
-        return FrozenDict({"check_input": True, "layers_state": state})
+            layer_state.append(layer.init())
+        state["layers_state"] = tuple(layer_state)
+        return FrozenDict(state)
 
     def init_with_output(self, inputs):
         state = self.init()
