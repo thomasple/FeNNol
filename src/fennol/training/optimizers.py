@@ -329,6 +329,24 @@ def get_lr_schedule(max_epochs,nbatch_per_epoch,training_parameters):
                 new_state["count"] += 1
             return lr, new_state
 
+    elif schedule_type == "cosine":
+        assert (
+            "peak_epoch" in training_parameters
+        ), "Sine schedule requires 'peak_epoch' parameter"
+        period = training_parameters["peak_epoch"] * nbatch_per_epoch
+        peak_lr = lr
+        sch_state = {"count": 0}
+
+        def schedule(state, rmse=None):
+            new_state = {**state}
+            istep = state["count"]
+            g = 0.5 * (1 + jnp.cos(jnp.pi * istep / period))
+            lr = peak_lr + (init_lr - peak_lr) * g
+            new_state["lr"] = lr
+            if rmse is None:
+                new_state["count"] += 1
+            return lr, new_state
+
     elif schedule_type == "reduce_on_plateau":
         patience = training_parameters.get("patience", 10)
         factor = training_parameters.get("lr_factor", 0.5)

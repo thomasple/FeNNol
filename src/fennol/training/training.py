@@ -481,6 +481,21 @@ def train(
     if save_model_every > 0:
         save_model_every = list(range(save_model_every, max_epochs+save_model_every, save_model_every))
         save_model_at_epochs = save_model_at_epochs.union(save_model_every)
+    if "save_model_schedule" in training_parameters:
+        save_model_schedule_def = [int(i) for i in training_parameters["save_model_schedule"]]
+        save_model_schedule = []
+        while len(save_model_schedule_def) > 0:
+            i = save_model_schedule_def.pop(0)
+            if i > 0:
+                save_model_schedule.append(i)
+            elif i < 0:
+                start = -i
+                freq = save_model_schedule_def.pop(0)
+                assert freq > 0, "syntax error in save_model_schedule"
+                save_model_schedule.extend(
+                    list(range(start, max_epochs + 1, freq))
+                )
+        save_model_at_epochs = save_model_at_epochs.union(save_model_schedule)
     save_model_at_epochs = list(save_model_at_epochs)
     save_model_at_epochs.sort()
 
