@@ -753,6 +753,7 @@ class GraphProcessor(nn.Module):
         if "alch_group" in inputs:
             alch_group = inputs["alch_group"]
             lambda_e = inputs["alch_elambda"]
+            lambda_v = inputs["alch_vlambda"]
             mask = alch_group[edge_src] == alch_group[edge_dst]
             graph_out["switch_raw"] = switch
             graph_out["switch"] = jnp.where(
@@ -760,19 +761,18 @@ class GraphProcessor(nn.Module):
                 switch,
                 0.5*(1.-jnp.cos(jnp.pi*lambda_e)) * switch ,
             )
+            graph_out["distances_raw"] = distances
+            if "alch_softcore_e" in inputs:
+                alch_alpha = (1-lambda_e)*inputs["alch_softcore_e"]**2
+            else:
+                alch_alpha = (1-lambda_v)*inputs.get("alch_softcore_v",0.5)**2
 
-            if "alch_softcore_e" in inputs or "alch_softcore_v" in inputs:
-                graph_out["distances_raw"] = distances
-                if "alch_softcore_e" in inputs:
-                    alch_alpha = (1-inputs["alch_elambda"])*inputs["alch_softcore_e"]**2
-                else:
-                    alch_alpha = (1-inputs["alch_vlambda"])*inputs["alch_softcore_v"]**2
-                distances = jnp.where(
-                    mask,
-                    distances,
-                    safe_sqrt(alch_alpha + d2 * (1. - alch_alpha/self.cutoff**2))
-                )  
-                graph_out["distances"] = distances
+            graph_out["distances"] = jnp.where(
+                mask,
+                distances,
+                safe_sqrt(alch_alpha + d2 * (1. - alch_alpha/self.cutoff**2))
+            )  
+
 
         return {**inputs, self.graph_key: graph_out}
 
@@ -1018,6 +1018,7 @@ class GraphFilterProcessor(nn.Module):
             edge_dst=graph["edge_dst"]
             alch_group = inputs["alch_group"]
             lambda_e = inputs["alch_elambda"]
+            lambda_v = inputs["alch_vlambda"]
             mask = alch_group[edge_src] == alch_group[edge_dst]
             graph_out["switch_raw"] = switch
             graph_out["switch"] = jnp.where(
@@ -1026,18 +1027,18 @@ class GraphFilterProcessor(nn.Module):
                 0.5*(1.-jnp.cos(jnp.pi*lambda_e)) * switch ,
             )
 
-            if "alch_softcore_e" in inputs or "alch_softcore_v" in inputs:
-                graph_out["distances_raw"] = distances
-                if "alch_softcore_e" in inputs:
-                    alch_alpha = (1-inputs["alch_elambda"])*inputs["alch_softcore_e"]**2
-                else:
-                    alch_alpha = (1-inputs["alch_vlambda"])*inputs["alch_softcore_v"]**2
-                distances = jnp.where(
-                    mask,
-                    distances,
-                    safe_sqrt(alch_alpha + distances**2 * (1. - alch_alpha/self.cutoff**2))
-                )  
-                graph_out["distances"] = distances
+            graph_out["distances_raw"] = distances
+            if "alch_softcore_e" in inputs:
+                alch_alpha = (1-lambda_e)*inputs["alch_softcore_e"]**2
+            else:
+                alch_alpha = (1-lambda_v)*inputs.get("alch_softcore_v",0.5)**2
+
+            graph_out["distances"] = jnp.where(
+                mask,
+                distances,
+                safe_sqrt(alch_alpha + distances**2 * (1. - alch_alpha/self.cutoff**2))
+            )  
+            
 
         return {**inputs, self.graph_key: graph_out}
 

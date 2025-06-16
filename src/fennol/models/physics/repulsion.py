@@ -5,7 +5,7 @@ import flax.linen as nn
 import numpy as np
 from typing import Any, Dict, Union, Callable, Sequence, Optional, ClassVar
 from ...utils import AtomicUnits as au
-from ...utils.periodic_table import D3_COV_RADII,UFF_VDW_RADII
+from ...utils.periodic_table import D3_COV_RADII, UFF_VDW_RADII
 
 
 class RepulsionZBL(nn.Module):
@@ -28,7 +28,7 @@ class RepulsionZBL(nn.Module):
     _energy_unit: str = "Ha"
     """The energy unit of the model. **Automatically set by FENNIX**"""
     proportional_regularization: bool = True
-    d: float = 0.46850/au.BOHR
+    d: float = 0.46850 / au.BOHR
     p: float = 0.23
     alphas: Sequence[float] = (3.19980, 0.94229, 0.40290, 0.20162)
     cs: Sequence[float] = (0.18175273, 0.5098655, 0.28021213, 0.0281697)
@@ -51,7 +51,7 @@ class RepulsionZBL(nn.Module):
         assert len(self.alphas) == 4, "alphas must be a sequence of length 4"
         alphas_ = np.array(self.alphas, dtype=rijs.dtype)
         assert len(self.cs) == 4, "cs must be a sequence of length 4"
-        cs_ =  np.array(self.cs, dtype=rijs.dtype)
+        cs_ = np.array(self.cs, dtype=rijs.dtype)
         cs_ = 0.5 * cs_ / np.sum(cs_)
         if self.trainable:
             d = jnp.abs(
@@ -86,10 +86,10 @@ class RepulsionZBL(nn.Module):
             if training:
                 if self.proportional_regularization:
                     reg = jnp.asarray(
-                        ((1 - alphas/alphas_) ** 2).sum()
-                        + ((1 - cs/cs_) ** 2).sum()
-                        + (1 - p/p_) ** 2
-                        + (1 - d/d_) ** 2
+                        ((1 - alphas / alphas_) ** 2).sum()
+                        + ((1 - cs / cs_) ** 2).sum()
+                        + (1 - p / p_) ** 2
+                        + (1 - d / d_) ** 2
                     ).reshape(1)
                 else:
                     reg = jnp.asarray(
@@ -108,23 +108,24 @@ class RepulsionZBL(nn.Module):
             switch = graph["switch_raw"]
             lambda_v = inputs["alch_vlambda"]
             alch_group = inputs["alch_group"]
-            alch_alpha = inputs.get("alch_alpha", 0.5)
             alch_m = inputs.get("alch_m", 2)
 
             mask = alch_group[edge_src] == alch_group[edge_dst]
 
-            rijs = jnp.where(mask, rijs, (rijs**2 + alch_alpha**2 * (1 - lambda_v))**0.5)
-            lambda_v = 0.5*(1-jnp.cos(jnp.pi*lambda_v))
+            if "alch_softcore_rep" in inputs:
+                alch_alpha = inputs["alch_softcore_rep"] ** 2 * (1 - lambda_v)
+                rijs = jnp.where(mask, rijs, (rijs**2 + alch_alpha) ** 0.5)
+            lambda_v = 0.5 * (1 - jnp.cos(jnp.pi * lambda_v))
             switch = jnp.where(
                 mask,
                 switch,
-                (lambda_v**alch_m) * switch ,
+                (lambda_v**alch_m) * switch,
             )
         else:
             switch = graph["switch"]
 
         Z = jnp.where(species > 0, species.astype(rijs.dtype), 0.0)
-        Zij = Z[edge_src]*Z[edge_dst]
+        Zij = Z[edge_src] * Z[edge_dst]
         Zp = Z**p / d
         x = rijs * (Zp[edge_src] + Zp[edge_dst])
         phi = (cs[None, :] * jnp.exp(-alphas[None, :] * x[:, None])).sum(axis=-1)
@@ -140,14 +141,15 @@ class RepulsionZBL(nn.Module):
             output[energy_key + "_regularization"] = reg
 
         return output
-    
+
+
 class RepulsionNLH(nn.Module):
-    """ NLH pairwise repulsive potential with pair-specific coefficients up to Z=92
+    """NLH pairwise repulsive potential with pair-specific coefficients up to Z=92
 
     FID: REPULSION_NLH
 
     ### Reference
-    K. Nordlund, S. Lehtola, G. Hobler, Repulsive interatomic potentials calculated at three levels of theory, Phys. Rev. A 111, 032818 
+    K. Nordlund, S. Lehtola, G. Hobler, Repulsive interatomic potentials calculated at three levels of theory, Phys. Rev. A 111, 032818
     https://doi.org/10.1103/PhysRevA.111.032818
     """
 
@@ -167,15 +169,15 @@ class RepulsionNLH(nn.Module):
     def __call__(self, inputs):
 
         path = str(pathlib.Path(__file__).parent.resolve()) + "/nlh_coeffs.dat"
-        DATA_NLH = np.loadtxt(path,usecols=np.arange(0,8)) 
+        DATA_NLH = np.loadtxt(path, usecols=np.arange(0, 8))
         zmax = int(np.max(DATA_NLH[:, 0]))
-        AB = np.zeros(((zmax+1)**2,6), dtype=np.float32)
+        AB = np.zeros(((zmax + 1) ** 2, 6), dtype=np.float32)
         for i in range(DATA_NLH.shape[0]):
             z1 = int(DATA_NLH[i, 0])
             z2 = int(DATA_NLH[i, 1])
-            AB[z1+zmax*z2] = DATA_NLH[i, 2:8]
-            AB[z2+zmax*z1] = DATA_NLH[i, 2:8]
-        AB = AB.reshape((zmax+1)**2, 3,2)
+            AB[z1 + zmax * z2] = DATA_NLH[i, 2:8]
+            AB[z2 + zmax * z1] = DATA_NLH[i, 2:8]
+        AB = AB.reshape((zmax + 1) ** 2, 3, 2)
 
         species = inputs["species"]
         graph = inputs[self.graph_key]
@@ -188,19 +190,23 @@ class RepulsionNLH(nn.Module):
         ALPHAS = jnp.array(AB[:, :, 1], dtype=rijs.dtype)
 
         if self.trainable:
-            cfact = jnp.abs(self.param(
-                "c_fact",
-                lambda key: jnp.ones(CS.shape[1], dtype=CS.dtype),
-            ))
-            CS = CS * cfact[None,:]
+            cfact = jnp.abs(
+                self.param(
+                    "c_fact",
+                    lambda key: jnp.ones(CS.shape[1], dtype=CS.dtype),
+                )
+            )
+            CS = CS * cfact[None, :]
             CS = CS / jnp.sum(CS, axis=1, keepdims=True)
-            alphas_fact = jnp.abs(self.param(
-                "alpha_fact",
-                lambda key: jnp.ones(ALPHAS.shape[1], dtype=ALPHAS.dtype),
-            ))
-            ALPHAS = ALPHAS * alphas_fact[None,:]
+            alphas_fact = jnp.abs(
+                self.param(
+                    "alpha_fact",
+                    lambda key: jnp.ones(ALPHAS.shape[1], dtype=ALPHAS.dtype),
+                )
+            )
+            ALPHAS = ALPHAS * alphas_fact[None, :]
 
-        s12 = species[edge_src] + zmax*species[edge_dst]
+        s12 = species[edge_src] + zmax * species[edge_dst]
         cs = CS[s12]
         alphas = ALPHAS[s12]
 
@@ -208,17 +214,17 @@ class RepulsionNLH(nn.Module):
             switch = graph["switch_raw"]
             lambda_v = inputs["alch_vlambda"]
             alch_group = inputs["alch_group"]
-            alch_alpha = inputs.get("alch_alpha", 0.)
             alch_m = inputs.get("alch_m", 2)
 
             mask = alch_group[edge_src] == alch_group[edge_dst]
-
-            rijs = jnp.where(mask, rijs, (rijs**2 + alch_alpha**2 * (1 - lambda_v))**0.5)
-            lambda_v = 0.5*(1-jnp.cos(jnp.pi*lambda_v))
+            if "alch_softcore_rep" in inputs:
+                alch_alpha = inputs["alch_softcore_rep"] ** 2 * (1 - lambda_v)
+                rijs = jnp.where(mask, rijs, (rijs**2 + alch_alpha) ** 0.5)
+            lambda_v = 0.5 * (1 - jnp.cos(jnp.pi * lambda_v))
             switch = jnp.where(
                 mask,
                 switch,
-                (lambda_v**alch_m) * switch ,
+                (lambda_v**alch_m) * switch,
             )
             # alphas = jnp.where(
             #     mask[:,None],
@@ -229,22 +235,26 @@ class RepulsionNLH(nn.Module):
             switch = graph["switch"]
 
         Z = jnp.where(species > 0, species.astype(rijs.dtype), 0.0)
-        phi = (cs * jnp.exp(-alphas*rijs[:,None])).sum(axis=-1)
-        Zij = Z[edge_src]*Z[edge_dst]*switch
+        phi = (cs * jnp.exp(-alphas * rijs[:, None])).sum(axis=-1)
+        Zij = Z[edge_src] * Z[edge_dst] * switch
 
-        ereppair = Zij * phi / rijs           
+        ereppair = Zij * phi / rijs
 
         energy_unit = au.get_multiplier(self._energy_unit)
-        erep_atomic = (energy_unit*0.5*au.BOHR)*jax.ops.segment_sum(ereppair, edge_src, species.shape[0])
+        erep_atomic = (energy_unit * 0.5 * au.BOHR) * jax.ops.segment_sum(
+            ereppair, edge_src, species.shape[0]
+        )
 
         energy_key = self.energy_key if self.energy_key is not None else self.name
-        output = {**inputs, energy_key: erep_atomic }
+        output = {**inputs, energy_key: erep_atomic}
 
         if self.direct_forces_key is not None:
-            dphidr = -(alphas*cs * jnp.exp(-alphas*rijs[:,None])).sum(axis=-1)
-            dedr = Zij * (dphidr/rijs - phi/(rijs**2))
-            dedij = (dedr/rijs)[:,None] * graph["vec"]
-            fi = (energy_unit*au.BOHR)*jax.ops.segment_sum(dedij, edge_src, species.shape[0])
+            dphidr = -(alphas * cs * jnp.exp(-alphas * rijs[:, None])).sum(axis=-1)
+            dedr = Zij * (dphidr / rijs - phi / (rijs**2))
+            dedij = (dedr / rijs)[:, None] * graph["vec"]
+            fi = (energy_unit * au.BOHR) * jax.ops.segment_sum(
+                dedij, edge_src, species.shape[0]
+            )
             output[self.direct_forces_key] = fi
 
         return output
