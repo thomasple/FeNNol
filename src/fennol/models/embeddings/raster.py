@@ -250,7 +250,7 @@ class RaSTER(nn.Module):
         
 
         if self.keep_all_layers:
-            fis = []
+            xis = []
 
         ### START MESSAGE PASSING ITERATIONS
         for layer in range(self.nlayers):
@@ -408,10 +408,10 @@ class RaSTER(nn.Module):
 
             if self.keep_all_layers:
                 ## STORE ALL LAYERS
-                fis.append(xi)
+                xis.append(xi)
 
 
         output = {**inputs, self.embedding_key: xi, self.embedding_key + "_tensor": Vi}
         if self.keep_all_layers:
-            output[self.embedding_key+'_layers'] = jnp.stack(fis,axis=1)
+            output[self.embedding_key+'_layers'] = jnp.stack(xis,axis=1)
         return output
