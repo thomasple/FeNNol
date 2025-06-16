@@ -124,7 +124,7 @@ class GraphGenerator:
         else:
             cells = np.array(inputs["cells"], dtype=np.float32)
             reciprocal_cells = np.array(inputs["reciprocal_cells"], dtype=np.float32)
-            minimage = state.get("minimum_image", True)
+            minimage = "minimum_image" in inputs.get("flags", {})
             if minimage:
                 ## MINIMUM IMAGE CONVENTION
                 vec = coords[p2] - coords[p1]
@@ -407,7 +407,8 @@ class GraphGenerator:
         else:
             cells = inputs["cells"]
             reciprocal_cells = inputs["reciprocal_cells"]
-            minimage = state.get("minimum_image", True)
+            # minimage = state.get("minimum_image", True)
+            minimage = "minimum_image" in inputs.get("flags", {})
 
             def compute_pbc(vec, reciprocal_cell, cell, mode="round"):
                 vecpbc = jnp.dot(vec, reciprocal_cell)

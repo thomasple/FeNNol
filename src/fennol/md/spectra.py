@@ -37,8 +37,6 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
         layer_state = []
         for st in preproc_state["layers_state"]:
             stnew = unfreeze(st)
-            if pbc_data is not None:
-                stnew["minimum_image"] = pbc_data["minimum_image"]
             if nblist_skin > 0:
                 stnew["nblist_skin"] = nblist_skin
             if "nblist_mult_size" in simulation_parameters:

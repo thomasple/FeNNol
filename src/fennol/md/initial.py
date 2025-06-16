@@ -84,6 +84,8 @@ def load_system_data(simulation_parameters, fprec):
         "energy_unit": energy_unit,
         "energy_unit_str": energy_unit_str,
     }
+    input_flags = simulation_parameters.get("model_flags", [])
+    flags = {f:None for f in input_flags}
 
     ### Set boundary conditions
     cell = simulation_parameters.get("cell", None)
@@ -112,6 +114,8 @@ def load_system_data(simulation_parameters, fprec):
             "minimum_image": minimum_image,
             "estimate_pressure": estimate_pressure,
         }
+        if minimum_image:
+            flags["minimum_image"] = None
     else:
         pbc_data = None
     system_data["pbc"] = pbc_data
@@ -187,6 +191,8 @@ def load_system_data(simulation_parameters, fprec):
     additional_keys = simulation_parameters.get("additional_keys", {})
     for key, value in additional_keys.items():
         conformation[key] = value
+    
+    conformation["flags"] = flags
 
     return system_data, conformation
 
@@ -194,15 +200,12 @@ def load_system_data(simulation_parameters, fprec):
 def initialize_preprocessing(simulation_parameters, model, conformation, system_data):
     nblist_verbose = simulation_parameters.get("nblist_verbose", False)
     nblist_skin = simulation_parameters.get("nblist_skin", -1.0)
-    pbc_data = system_data.get("pbc", None)
 
     ### CONFIGURE PREPROCESSING
     preproc_state = unfreeze(model.preproc_state)
     layer_state = []
     for st in preproc_state["layers_state"]:
         stnew = unfreeze(st)
-        if pbc_data is not None:
-            stnew["minimum_image"] = pbc_data["minimum_image"]
         if nblist_skin > 0:
             stnew["nblist_skin"] = nblist_skin
         if "nblist_mult_size" in simulation_parameters:

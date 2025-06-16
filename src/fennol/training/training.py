@@ -431,7 +431,6 @@ def train(
     if gpu_preprocessing:
         print("GPU preprocessing activated.")
 
-    minimum_image = training_parameters.get("minimum_image", False)
     preproc_state = unfreeze(model.preproc_state)
     layer_state = []
     for st in preproc_state["layers_state"]:
@@ -440,8 +439,6 @@ def train(
         #     if nblist_stride > 1:
         #         st["skin_stride"] = nblist_stride
         #         st["skin_count"] = nblist_stride
-        if pbc_training:
-            stnew["minimum_image"] = minimum_image
         if "nblist_mult_size" in training_parameters:
             stnew["nblist_mult_size"] = training_parameters["nblist_mult_size"]
         if "nblist_add_neigh" in training_parameters:
