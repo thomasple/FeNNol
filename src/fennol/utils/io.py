@@ -1,10 +1,10 @@
 import time
 import numpy as np
-
+from . import cell_vectors_to_lengths_angles, parse_cell
 
 def xyz_reader(
     filename,
-    has_comment_line=False,
+    has_comment_line=True,
     indexed=False,
     start=1,
     stop=-1,
@@ -47,6 +47,7 @@ def xyz_reader(
                 nat = int(line.split()[0])
                 nat_read = True
                 iat = 0
+                at_count = 0
                 inside_frame = not has_comment_line
                 xyz = np.zeros((nat, 3))
                 symbols = []
@@ -63,10 +64,18 @@ def xyz_reader(
         if not nat_read:
             raise Exception("Error: nat not read!")
         ls = line.split()
-        iat, s = (int(ls[0]), 1) if indexed else (iat + 1, 0)
+        at_count += 1
+        try:
+            iat,s = (int(ls[0]),1)
+            indexed = True
+        except ValueError:
+            if indexed:
+                raise Exception("Error: line does not start with an integer index!")
+            iat, s = (iat+1, 0)
+        # iat, s = (int(ls[0]), 1) if indexed else (iat + 1, 0)
         symbols.append(ls[s])
         xyz[iat - 1, :] = np.array([ls[s + 1], ls[s + 2], ls[s + 3]], dtype="float")
-        if iat == nat:
+        if at_count == nat:
             iframe += 1
             inside_frame = False
             nat_read = False
@@ -85,7 +94,7 @@ def xyz_reader(
 
 def read_xyz(
     filename,
-    has_comment_line=False,
+    has_comment_line=True,
     indexed=False,
     start=1,
     stop=-1,
@@ -100,7 +109,7 @@ def read_xyz(
     ]
 
 
-def last_xyz_frame(filename, has_comment_line=False, indexed=False):
+def last_xyz_frame(filename, has_comment_line=True, indexed=False):
     last_frame = None
     for frame in xyz_reader(
         filename, has_comment_line, indexed, start=-1, stop=-1, step=1, max_frames=1
@@ -122,7 +131,8 @@ def write_arc_frame(
     nat = len(symbols)
     f.write(f"{nat}\n")
     if cell is not None:
-        f.write(" ".join([f"{x: 15.5f}" for x in cell.flatten()]) + "\n")
+        box = cell_vectors_to_lengths_angles(parse_cell(cell))
+        f.write(" ".join([f"{x: 15.5f}" for x in box]) + "\n")
     # f.write(f'{axis} {axis} {axis} 90.0 90.0 90.0 \n')
     for i in range(nat):
         line = f"{i+1} {symbols[i]:3} {coordinates[i,0]: 15.3f} {coordinates[i,1]: 15.3f} {coordinates[i,2]: 15.3f}"
@@ -141,6 +151,7 @@ def write_extxyz_frame(
     f.write(f"{nat}\n")
     comment_line = ""
     if cell is not None:
+        cell = parse_cell(cell)
         comment_line += (
             'Lattice="' + " ".join([f"{x:.3f}" for x in cell.flatten()]) + '" '
         )
@@ -163,7 +174,8 @@ def write_xyz_frame(f, symbols, coordinates,cell=None, **kwargs):
     nat = len(symbols)
     f.write(f"{nat}\n")
     if cell is not None:
-        f.write(" ".join([f"{x:.3f}" for x in cell.flatten()]))
+        box = cell_vectors_to_lengths_angles(parse_cell(cell))
+        f.write(" ".join([f"{x:.3f}" for x in box]))
     f.write("\n")
     for i in range(nat):
         f.write(

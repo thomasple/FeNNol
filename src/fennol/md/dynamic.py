@@ -17,7 +17,7 @@ from ..utils.io import (
     human_time_duration,
 )
 from .utils import wrapbox, save_dynamics_restart
-from ..utils import minmaxone, AtomicUnits as au
+from ..utils import minmaxone, AtomicUnits as au,read_tinker_interval
 from ..utils.input_parser import parse_input,convert_dict_units, InputFile
 from .integrate import initialize_dynamics
 
@@ -127,10 +127,39 @@ def dynamic(simulation_parameters, device, fprec):
         cell = system["cell"]
         reciprocal_cell = np.linalg.inv(cell)
         do_wrap_box = simulation_parameters.get("wrap_box", False)
+        if do_wrap_box:
+            wrap_groups_def = simulation_parameters.get("wrap_groups",None)
+            if wrap_groups_def is None:
+                wrap_groups = None
+            else:
+                wrap_groups = {}
+                assert isinstance(wrap_groups_def, dict), "wrap_groups must be a dictionary"
+                for k, v in wrap_groups_def.items():
+                    wrap_groups[k]=read_tinker_interval(v)
+                # check that pairwise intersection of wrap groups is empty
+                wrap_groups_keys = list(wrap_groups.keys())
+                for i in range(len(wrap_groups_keys)):
+                    i_key = wrap_groups_keys[i]
+                    w1 = set(wrap_groups[i_key])
+                    for j in range(i + 1, len(wrap_groups_keys)):
+                        j_key = wrap_groups_keys[j]
+                        w2 = set(wrap_groups[j_key])
+                        if  w1.intersection(w2):
+                            raise ValueError(
+                                f"Wrap groups {i_key} and {j_key} have common atoms: {w1.intersection(w2)}"
+                            )
+                group_all = np.concatenate(list(wrap_groups.values()))
+                # get all atoms that are not in any wrap group
+                group_none = np.setdiff1d(np.arange(nat), group_all)
+                print(f"# Wrap groups: {wrap_groups}")
+                wrap_groups["__other"] = group_none
+                wrap_groups = ((k, v) for k, v in wrap_groups.items())
+
     else:
         cell = None
         reciprocal_cell = None
         do_wrap_box = False
+        wrap_groups = None
 
     ### Energy units and print initial energy
     per_atom_energy = simulation_parameters.get("per_atom_energy", True)
@@ -368,11 +397,11 @@ def dynamic(simulation_parameters, device, fprec):
                 reciprocal_cell = np.linalg.inv(cell)
             if do_wrap_box:
                 if pimd:
-                    centroid = wrapbox(system["coordinates"][0], cell, reciprocal_cell)
+                    centroid = wrapbox(system["coordinates"][0], cell, reciprocal_cell,wrap_groups=wrap_groups)
                     system["coordinates"] = system["coordinates"].at[0].set(centroid)
                 else:
                     system["coordinates"] = wrapbox(
-                        system["coordinates"], cell, reciprocal_cell
+                        system["coordinates"], cell, reciprocal_cell,wrap_groups=wrap_groups
                     )
                 conformation = update_conformation(conformation, system)
                 line += " (atoms have been wrapped into the box)"
