@@ -11,6 +11,7 @@ from ..misc.e3 import  ChannelMixing
 from ..misc.nets import FullyConnectedNet,BlockIndexNet
 from ...utils.activations import activation_from_str
 from ...utils import AtomicUnits as au
+from ...utils.initializers import initializer_from_str
 
 class RaSTER(nn.Module):
     """ Range-Separated Transformer with Equivariant Representations
@@ -92,6 +93,7 @@ class RaSTER(nn.Module):
     """Whether to normalize queries and keys in the attention mechanism."""
     keep_all_layers: bool = False
     """Whether to return the stacked scalar embeddings from all message-passing layers."""
+    kernel_init: Optional[str] = None
     
     FID: ClassVar[str] = "RASTER"
 
@@ -117,6 +119,8 @@ class RaSTER(nn.Module):
         else:
             ln_qk = lambda x: x
 
+        kernel_init = initializer_from_str(self.kernel_init)
+
         ## SPECIES ENCODING
         if isinstance(self.species_encoding, str):
             Zi = inputs[self.species_encoding]
@@ -124,7 +128,7 @@ class RaSTER(nn.Module):
             Zi = SpeciesEncoding(**self.species_encoding)(species)
 
         ## INITIALIZE SCALAR FEATURES
-        xi = layer_norm(nn.Dense(self.dim, use_bias=False,name="species_linear")(Zi))
+        xi = layer_norm(nn.Dense(self.dim, use_bias=False,name="species_linear",kernel_init=kernel_init)(Zi))
 
         # RADIAL GRAPH
         graph = inputs[self.graph_key]
@@ -281,14 +285,14 @@ class RaSTER(nn.Module):
 
 
             ## QUERY, KEY, VALUE
-            q = ln_qk(nn.Dense((self.scal_heads + nls*self.tens_heads) * self.att_dim, use_bias=False,name=f"queries_{layer}")(
+            q = ln_qk(nn.Dense((self.scal_heads + nls*self.tens_heads) * self.att_dim, use_bias=False,name=f"queries_{layer}",kernel_init=kernel_init)(
                 xi
             ).reshape(xi.shape[0], self.scal_heads + nls*self.tens_heads, self.att_dim))
-            k = nn.Dense((self.scal_heads + nls*self.tens_heads) * self.att_dim, use_bias=False, name=f"keys_{layer}")(
+            k = nn.Dense((self.scal_heads + nls*self.tens_heads) * self.att_dim, use_bias=False, name=f"keys_{layer}",kernel_init=kernel_init)(
                 xi
             ).reshape(xi.shape[0], self.scal_heads + nls*self.tens_heads, self.att_dim)
 
-            v = nn.Dense(self.scal_heads * self.att_dim, use_bias=False, name=f"values_{layer}")(xi).reshape(
+            v = nn.Dense(self.scal_heads * self.att_dim, use_bias=False, name=f"values_{layer}",kernel_init=kernel_init)(xi).reshape(
                 xi.shape[0], self.scal_heads, self.att_dim
             )
 
@@ -334,7 +338,7 @@ class RaSTER(nn.Module):
             Vi = Vi + jax.ops.segment_sum(uij, edge_src, num_segments=Zi.shape[0])
 
             ## SELF SCALAR FEATURES
-            si = nn.Dense(self.att_dim, use_bias=False, name=f"self_values_{layer}")(xi)
+            si = nn.Dense(self.att_dim, use_bias=False, name=f"self_values_{layer}",kernel_init=kernel_init)(xi)
 
             components = [si, vai]
 
@@ -352,7 +356,7 @@ class RaSTER(nn.Module):
             ### LODE (~ LONG-RANGE ATTENTION)
             if do_lode and layer == self.nlayers - 1:
                 assert self.lode_channels <= self.tens_heads
-                zj = nn.Dense(self.lode_channels*dim_lr, use_bias=False, name=f"lode_values_{layer}")(xi).reshape(
+                zj = nn.Dense(self.lode_channels*dim_lr, use_bias=False, name=f"lode_values_{layer}",kernel_init=kernel_init)(xi).reshape(
                     xi.shape[0], self.lode_channels, dim_lr
                 )
                 if nextra_powers > 0:
@@ -391,6 +395,7 @@ class RaSTER(nn.Module):
                         activation=self.activation,
                         use_bias=self.update_bias,
                         name=f"update_net_{layer}",
+                        kernel_init=kernel_init,
                     )((species,components, block_index))
             else:
                 updi = FullyConnectedNet(
@@ -398,6 +403,7 @@ class RaSTER(nn.Module):
                         activation=self.activation,
                         use_bias=self.update_bias,
                         name=f"update_net_{layer}",
+                        kernel_init=kernel_init,
                     )(components)
                 
             ## UPDATE ATOM FEATURES

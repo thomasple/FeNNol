@@ -6,6 +6,7 @@ import numpy as np
 from ...utils.periodic_table import (
     VALENCE_ELECTRONS,
 )
+from ...utils.initializers import initializer_from_str
 
 class ChargeHypothesis(nn.Module):
     """Embedding with total charge constraint vi Multiple Neural Charge Equilibration.
@@ -25,6 +26,7 @@ class ChargeHypothesis(nn.Module):
     mode: str = "qeq"
     """Charge distribution mode. Only 'qeq' available for now."""
     squeeze: bool = True
+    kernel_init: Optional[str] = None
 
     FID: ClassVar[str] = "CHARGE_HYPOTHESIS"
 
@@ -32,8 +34,9 @@ class ChargeHypothesis(nn.Module):
     def __call__(self, inputs):
         embedding = inputs[self.embedding_key].astype(inputs["coordinates"].dtype)
 
+        kernel_init = initializer_from_str(self.kernel_init)
         wi = jax.nn.softplus(
-            nn.Dense(self.ncharges, use_bias=True, name="wi")(embedding)
+            nn.Dense(self.ncharges, use_bias=True, name="wi",kernel_init=kernel_init)(embedding)
         )
 
         batch_index = inputs["batch_index"]
@@ -49,7 +52,7 @@ class ChargeHypothesis(nn.Module):
             Qtot = Qtot * jnp.ones(nsys, dtype=wi.dtype)
 
         
-        qtilde = nn.Dense(self.ncharges, use_bias=True, name="qi")(embedding)
+        qtilde = nn.Dense(self.ncharges, use_bias=True, name="qi",kernel_init=kernel_init)(embedding)
         qtot = jax.ops.segment_sum(qtilde, batch_index, nsys)
         dq = Qtot[:, None] - qtot
         f = (dq / wtot)[batch_index]
