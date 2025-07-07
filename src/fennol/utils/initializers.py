@@ -30,7 +30,9 @@ def scaled_orthogonal(
     return init
 
 
-def initializer_from_str(name: Union[str,Callable])->Callable:
+def initializer_from_str(name: Union[str,Callable,None])->Callable:
+    if name is None:
+        return nn.initializers.lecun_normal()
     if callable(name):
         return name
     if not isinstance(name, str):
