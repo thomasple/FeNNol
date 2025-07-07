@@ -7,8 +7,10 @@ from ..utils import read_tinker_interval
 
 
 def build_colvar_distance(colvar_name, colvar_def, global_colvars={}):
-    atom1 = colvar_def["atom1"] - 1
-    atom2 = colvar_def["atom2"] - 1
+    atoms = colvar_def["atoms"]
+    assert len(atoms) == 2, f"Colvar {colvar_name} must have exactly 2 atoms defined"
+    atom1 = int(atoms[0]) - 1
+    atom2 = int(atoms[1]) - 1
     assert atom1 != atom2, f"atom1 and atom2 must be different for colvar {colvar_name}"
     assert (
         atom1 >= 0 and atom2 >= 0
@@ -21,9 +23,11 @@ def build_colvar_distance(colvar_name, colvar_def, global_colvars={}):
 
 
 def build_colvar_angle(colvar_name, colvar_def, global_colvars={}):
-    atom1 = colvar_def["atom1"] - 1
-    atom2 = colvar_def["atom2"] - 1
-    atom3 = colvar_def["atom3"] - 1
+    atoms = colvar_def["atoms"]
+    assert len(atoms) == 3, f"Colvar {colvar_name} must have exactly 3 atoms defined"
+    atom1 = int(atoms[0]) - 1
+    atom2 = int(atoms[1]) - 1
+    atom3 = int(atoms[2]) - 1
     assert (
         atom1 != atom2 and atom2 != atom3 and atom1 != atom3
     ), f"atom1, atom2 and atom3 must be different for colvar {colvar_name}"
@@ -44,10 +48,13 @@ def build_colvar_angle(colvar_name, colvar_def, global_colvars={}):
 
 
 def build_colvar_dihedral(colvar_name, colvar_def, global_colvars={}):
-    atom1 = colvar_def["atom1"] - 1
-    atom2 = colvar_def["atom2"] - 1
-    atom3 = colvar_def["atom3"] - 1
-    atom4 = colvar_def["atom4"] - 1
+    atoms = colvar_def["atoms"]
+    assert len(atoms) == 4, f"Colvar {colvar_name} must have exactly 4 atoms defined"
+    atom1 = int(atoms[0]) - 1
+    atom2 = int(atoms[1]) - 1
+    atom3 = int(atoms[2]) - 1
+    atom4 = int(atoms[3]) - 1
+    # Check that atoms are different and >= 0
     assert (
         atom1 != atom2 and atom2 != atom3 and atom3 != atom4 and atom1 != atom4
     ), f"atom1, atom2, atom3 and atom4 must be different for colvar {colvar_name}"
@@ -58,14 +65,17 @@ def build_colvar_dihedral(colvar_name, colvar_def, global_colvars={}):
     fact = 1.0 if use_radians else 180.0 / np.pi
 
     def colvar_dihedral(coordinates):
-        v1 = coordinates[atom1] - coordinates[atom2]
-        v2 = coordinates[atom3] - coordinates[atom2]
-        v3 = coordinates[atom4] - coordinates[atom3]
-        n1 = jnp.cross(v1, v2)
-        n2 = jnp.cross(v2, v3)
+        v12 = coordinates[atom2] - coordinates[atom1]
+        v23 = coordinates[atom3] - coordinates[atom2]
+        v34 = coordinates[atom4] - coordinates[atom3]
+        n1 = jnp.cross(v12, v23)
+        n2 = jnp.cross(v23, v34)
         n1 = n1 / jnp.linalg.norm(n1)
         n2 = n2 / jnp.linalg.norm(n2)
-        return jnp.arccos(jnp.dot(n1, n2)) * fact
+        cos_phi = (n1*n2).sum()
+        sin_phi = (n1*v34).sum()*jnp.linalg.norm(v23)
+        phi = jnp.arctan2(sin_phi, cos_phi)
+        return phi * fact
 
     return colvar_dihedral
 
