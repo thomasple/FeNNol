@@ -64,12 +64,28 @@ def get_file_reader(input_file,file_format=None,has_comment_line=True, periodic=
                 frames = data["training"]
                 if "validation" in data:
                     frames.extend(data["validation"])
+            elif "coordinates" in data or "output_keys" in data:
+                # data comes from fennol_analyze or fennol_md
+                frames = []
+                with open(input_file, "rb") as f:
+                    if "output_keys" in data: # skip metadata
+                        frame = pickle.load(f)
+                    try:
+                        while True:
+                            frame = pickle.load(f)
+                            frames.append(frame)
+                    except EOFError:
+                        pass
             else:
                 raise ValueError("No frames found in the input file")
         else:
             frames = data
 
         def reader():
+            _periodic = periodic
+            cell_key = "cells" if "cells" in frames[0] else "cell"
+            if cell_key in frames[0]:
+                _periodic = True
             for frame in frames:
                 species = np.array(frame["species"])
                 coordinates = np.array(frame["coordinates"])
@@ -79,7 +95,8 @@ def get_file_reader(input_file,file_format=None,has_comment_line=True, periodic=
                     "natoms": species.shape[0],
                     "total_charge": frame.get("total_charge", 0),
                 }
-                if periodic:
+                cell_key = "cells" if "cells" in frame else "cell"
+                if _periodic:
                     cell_key = "cells" if "cells" in frame else "cell"
                     cell = np.array(frame[cell_key]).reshape(3, 3)
                     inputs["cell"] = cell
@@ -88,7 +105,7 @@ def get_file_reader(input_file,file_format=None,has_comment_line=True, periodic=
     return reader
 
 
-def fennix_analyzer(input_file, model, output_keys,file_format=None,periodic=False,has_comment_line=True,batch_size=1):
+def fennix_analyzer(input_file, model, output_keys,file_format=None,periodic=False,flags={},has_comment_line=True,batch_size=1):
     
     reader = get_file_reader(input_file,file_format=file_format,periodic=periodic,has_comment_line=has_comment_line)
 
@@ -106,9 +123,12 @@ def fennix_analyzer(input_file, model, output_keys,file_format=None,periodic=Fal
             "natoms": natoms,
             "total_charge": total_charge,
         }
-        if periodic:
+        if "cell" in batch[0]:
             cells = np.stack([frame["cell"] for frame in batch], axis=0)
             inputs["cells"] = cells
+            inputs["reciprocal_cells"] = np.linalg.inv(cells)
+        
+        inputs["flags"] = flags
 
         if "forces" in output_keys:
             e, f, output = model.energy_and_forces(**inputs,gpu_preprocessing=True)
@@ -120,7 +140,8 @@ def fennix_analyzer(input_file, model, output_keys,file_format=None,periodic=Fal
     def process_batch(batch):
         output = model_predict(batch)
         natoms = np.array([frame["natoms"] for frame in batch])
-        if periodic:
+        _periodic = "cells" in output
+        if _periodic:
             cells = np.array(output["cells"])
         species = np.array(output["species"])
         coordinates = np.array(output["coordinates"])
@@ -132,7 +153,7 @@ def fennix_analyzer(input_file, model, output_keys,file_format=None,periodic=Fal
                 "coordinates": coordinates[natshift[i] : natshift[i + 1]],
                 "total_charge": int(output["total_charge"][i]),
             }
-            if periodic:
+            if _periodic:
                 frame_data["cell"] = cells[i]
 
             for k in output_keys:
@@ -140,10 +161,12 @@ def fennix_analyzer(input_file, model, output_keys,file_format=None,periodic=Fal
                     raise ValueError(f"Output key {k} not found")
                 v = np.asarray(output[k])
                 # if scalar or only 1 element, convert to float
-                if v.ndim == 0:
-                    v = float(v)
-                if v.size == 1:
-                    v = v.flatten()[0]
+                # if v.ndim == 0:
+                #     v = float(v)
+                #     print(k,v)
+                # if v.size == 1:
+                #     v = v.flatten()[0]
+                #     print(k,v)
                 if v.shape[0] == species.shape[0]:
                     frame_data[k] = v[natshift[i] : natshift[i + 1]]
                 elif v.shape[0] == natoms.shape[0]:
@@ -226,6 +249,13 @@ def main():
         action="store_true",
         help="add metadata as a first frame.",
     )
+    parser.add_argument(
+        "--flags",
+        type=str,
+        nargs="*",
+        default=[],
+        help="additional flags to pass to the model. These will be added to the inputs as a dictionary with the flag name as key and None as value.",
+    )
     args = parser.parse_args()
 
     # set the device
@@ -307,12 +337,14 @@ def main():
             "mpk",
         ], f"Unsupported output file format {output_file.suffix}"
 
+    flags = {flag.strip(): None for flag in args.flags}
     # print metadata
     metadata = {
         "input_file": str(args.input_file),
         "model_file": str(model_file),
         "output_keys": output_keys,
         "energy_unit": model.energy_unit,
+        "flags": flags,
     }
     print("metadata:")
     for k, v in metadata.items():
@@ -381,6 +413,8 @@ def main():
     if args.metadata and args.outfile is not None:
         queue.put(metadata)
 
+   
+
     error = None
     try:
         time_start = time.time()
@@ -391,6 +425,7 @@ def main():
             output_keys=output_keys,
             file_format=args.format,
             periodic=args.periodic,
+            flags=flags,
             has_comment_line=not args.nocomment,
             batch_size=args.batch_size,
         )):
@@ -402,7 +437,8 @@ def main():
                 # output_data.extend(frames_data)
     except KeyboardInterrupt:
         print("# Interrupted by user. Exiting...")
-    except Exception as error:
+    except Exception as err:
+        error = err
         print(f"# Exiting with Exception: {error}")
 
     # wait for the process to finish
