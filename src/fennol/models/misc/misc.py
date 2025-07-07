@@ -383,6 +383,49 @@ class Activation(nn.Module):
         output_key = self.output_key if self.output_key is not None else self.key
         return {**inputs, output_key: output}
 
+class LayerNorm(nn.Module):
+    """Layer normalization module.
+
+    FID: LAYER_NORM
+    """
+
+    key: Optional[str] = None
+    """The key of the input."""
+    output_key: Optional[str] = None
+    """The key of the output. If None, it is the same as the key."""
+    axis: Union[int, Sequence[int]] = -1
+    """The axis to normalize."""
+    epsilon: float = 1e-6
+    """The epsilon for numerical stability."""
+    scale: float = 1.0
+    """The scale for the normalization."""
+    shift: float = 0.0
+    """The shift for the normalization."""
+
+    FID: ClassVar[str] = "LAYER_NORM"
+
+    @nn.compact
+    def __call__(self, inputs):
+        if isinstance(inputs, dict):
+            if self.key is None:
+                raise ValueError("Key must be specified for LayerNorm")
+            x = inputs[self.key]
+        else:
+            x = inputs
+        mu = jnp.mean(x, axis=self.axis, keepdims=True)
+        dx = x-mu
+        var = jnp.mean(dx ** 2, axis=self.axis, keepdims=True)
+        sig = (self.epsilon + var) ** (-0.5)
+        out = self.scale * (sig * dx) + self.shift
+
+        output_key = self.output_key if self.output_key is not None else self.key
+        
+        if isinstance(inputs, dict):
+            return {**inputs, output_key: out}
+        
+        return out
+        
+
 
 class Scale(nn.Module):
     """Scale an array by a constant factor.
