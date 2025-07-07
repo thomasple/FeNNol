@@ -38,10 +38,9 @@ from .utils import (
     get_validation_function,
     linear_schedule,
 )
-from .optimizers import get_optimizer, get_lr_schedule
+from .optimizers import get_optimizer, get_lr_schedule, multi_ema
 from ..utils import deep_update, AtomicUnits as au
 from ..utils.io import human_time_duration
-from ..models.preprocessing import AtomPadding, check_input, convert_to_jax
 
 def save_restart_checkpoint(output_directory,stage,training_state,preproc_state,metrics_state):
     with open(output_directory + "/restart_checkpoint.pkl", "wb") as f:
@@ -340,19 +339,28 @@ def train(
     nbatch_per_validation = training_parameters.get("nbatch_per_validation", 20)
 
     schedule, sch_state, schedule_metrics,adaptive_scheduler = get_lr_schedule(max_epochs,nbatch_per_epoch,training_parameters)
-    optimizer = get_optimizer(
+    optimizer,ilr = get_optimizer(
         training_parameters, model.variables, schedule(sch_state)[0]
     )
     opt_st = optimizer.init(model.variables)
 
     ### exponential moving average of the parameters ###
-    ema_decay = training_parameters.get("ema_decay", -1.0)
-    if ema_decay > 0.0:
-        assert ema_decay < 1.0, "ema_decay must be in (0,1)"
-        ema = optax.ema(decay=ema_decay)
+    ema_decay = training_parameters.get("ema_decay", None)
+    if ema_decay is not None:
+        if isinstance(ema_decay,float):
+            ema_decay = [ema_decay]
+        for decay in ema_decay:
+            assert isinstance(decay, float), "ema_decay must be a float or a list of floats"
+            assert 0. <= decay < 1.0, "ema_decay must be in (0,1)"
+        
+        power_ema = training_parameters.get("ema_power", False)
+        ema_ival = int(training_parameters.get("ema_validate", 0))
+        ema = multi_ema(decays=ema_decay,power=power_ema)  
     else:
-        ema = optax.identity()
+        ema = multi_ema(decays=[]) # no ema
+        ema_ival = 0
     ema_st = ema.init(model.variables)
+    variables_ema, _ = ema.update(model.variables, ema_st)
 
     #### end event ####
     end_event = training_parameters.get("end_event", None)
@@ -531,7 +539,7 @@ def train(
             "ema_state": ema_st,
             "sch_state": sch_state,
             "variables": model.variables,
-            "variables_ema": model.variables,
+            "variables_ema": variables_ema,
             "step": 0,
             "restore_count": 0,
             "restore_scale": 1,
@@ -547,7 +555,7 @@ def train(
                 "nsmooth": nsmooth,
             }
     
-    del opt_st, ema_st, sch_state, preproc_state
+    del opt_st, ema_st, sch_state, preproc_state, variables_ema
     variables_save = training_state['variables']
     variables_ema_save = training_state['variables_ema']
 
@@ -571,7 +579,7 @@ def train(
             # adjust learning rate
             current_lr, training_state["sch_state"] = schedule(training_state["sch_state"])
             current_lr *= training_state["restore_scale"]
-            training_state["opt_state"].inner_states["trainable"].inner_state[-1].hyperparams[
+            training_state["opt_state"].inner_states["trainable"].inner_state[ilr].hyperparams[
                 "step_size"
             ] = current_lr 
 
@@ -592,7 +600,7 @@ def train(
             rmses, maes, output_val = validation(
                 data=data,
                 inputs=inputs,
-                variables=training_state["variables_ema"],
+                variables=training_state["variables_ema"][ema_ival],
             )
             for k, v in rmses.items():
                 rmses_avg[k] += v
@@ -636,11 +644,11 @@ def train(
         rmse_tot = 0.0
         mae_tot = 0.0
         for k in rmses_avg.keys():
-            mult = loss_definition[k]["mult"]
+            mult = loss_definition[k]["display_mult"]
             loss_prms = loss_definition[k]
             rmse_tot = rmse_tot + rmses_avg[k] * loss_prms["weight"] ** 0.5
             mae_tot = mae_tot + maes_avg[k] * loss_prms["weight"]
-            unit = "(" + loss_prms["unit"] + ")" if "unit" in loss_prms else ""
+            unit = "(" + loss_prms["display_unit"] + ")" if "display_unit" in loss_prms else ""
 
             weight_str = ""
             if "weight_schedule" in loss_prms:
@@ -676,11 +684,13 @@ def train(
                     break
 
         epoch_time_str = time.strftime("%Y-%m-%d-%H-%M-%S")
-        model.variables = training_state["variables_ema"]
         if epoch in save_model_at_epochs:
-            filename = output_directory + f"model{stage_prefix}_epoch{epoch:0{epoch_format}}_{epoch_time_str}.fnx"
-            print("Scheduled model save :", filename)
-            model.save(filename)
+            for i,v in enumerate(training_state["variables_ema"]):
+                model.variables = v
+                ema_str = f"_ema{i+1}" if len(training_state["variables_ema"]) > 1 else ""
+                filename = output_directory + f"model{stage_prefix}_epoch{epoch:0{epoch_format}}{ema_str}_{epoch_time_str}.fnx"
+                print("Scheduled model save :", filename)
+                model.save(filename)
 
         if restore:
             training_state["restore_count"] += 1
@@ -695,7 +705,6 @@ def train(
 
             training_state["variables"] = deepcopy(variables_save)
             training_state["variables_ema"] = deepcopy(variables_ema_save)
-            model.variables = training_state["variables_ema"]
             training_state["restore_scale"] *= restore_scaling
             print(f"Restored previous model after divergence. Restore scale: {training_state['restore_scale']:.3f}")
             if reinit:
@@ -712,6 +721,7 @@ def train(
         maes_prev = maes_avg
 
         ### SAVE MODEL ###
+        model.variables = training_state["variables_ema"][ema_ival]
         model.save(output_directory + "latest_model.fnx")
 
         # save metrics
@@ -771,14 +781,8 @@ def train(
         if metric_for_best <  training_state["best_metric"]:
             training_state["best_metric"] = metric_for_best
             metrics["best_metric"] = training_state["best_metric"]
-            if keep_all_bests:
-                best_name = (
-                    output_directory
-                    + f"best_model{stage_prefix}_epoch{epoch:0{epoch_format}}_{epoch_time_str}.fnx"
-                )
-                model.save(best_name)
-
-            best_name = output_directory + f"best_model{stage_prefix}.fnx"
+            best_epoch_str = f"_epoch{epoch:0{epoch_format}}_{epoch_time_str}" if keep_all_bests else ""
+            best_name = output_directory + f"best_model{stage_prefix}{best_epoch_str}.fnx"
             model.save(best_name)
             print("New best model saved to:", best_name)
         else:

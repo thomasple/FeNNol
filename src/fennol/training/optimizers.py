@@ -1,4 +1,14 @@
-from typing import Callable, Optional, Dict, List, Tuple, Union, Any, NamedTuple
+from typing import (
+    Callable,
+    Optional,
+    Dict,
+    List,
+    Tuple,
+    Union,
+    Any,
+    NamedTuple,
+    Sequence,
+)
 import optax
 import jax
 import jax.numpy as jnp
@@ -10,53 +20,58 @@ import re
 
 from optax._src import base
 from optax._src import wrappers
-
+import chex
+from optax import tree_utils as otu
 
 
 class AddWeightDiffState(NamedTuple):
     ref_weights: Any
 
+
 def add_weights_difference(
     weight_decay: Union[float, jax.Array] = 0.0,
-    mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None
+    mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None,
 ) -> base.GradientTransformation:
-  """weight decay toward initial weights."""
-  def init_fn(params):
-    return AddWeightDiffState(ref_weights=params)
+    """weight decay toward initial weights."""
 
-  def update_fn(updates, state, params):
-    if params is None:
-      raise ValueError(base.NO_PARAMS_MSG)
-    updates = jax.tree_util.tree_map(
-        lambda g, p, pref: g + weight_decay * (p-pref), updates, params,state.ref_weights)
-    return updates, state
+    def init_fn(params):
+        return AddWeightDiffState(ref_weights=params)
 
-  # If mask is not `None`, apply mask to the gradient transformation.
-  # E.g. it is common to skip weight decay on bias units and batch stats.
-  if mask is not None:
-    return wrappers.masked(
-        base.GradientTransformation(init_fn, update_fn), mask)
-  return base.GradientTransformation(init_fn, update_fn)
+    def update_fn(updates, state, params):
+        if params is None:
+            raise ValueError(base.NO_PARAMS_MSG)
+        updates = jax.tree_util.tree_map(
+            lambda g, p, pref: g + weight_decay * (p - pref),
+            updates,
+            params,
+            state.ref_weights,
+        )
+        return updates, state
 
+    # If mask is not `None`, apply mask to the gradient transformation.
+    # E.g. it is common to skip weight decay on bias units and batch stats.
+    if mask is not None:
+        return wrappers.masked(base.GradientTransformation(init_fn, update_fn), mask)
+    return base.GradientTransformation(init_fn, update_fn)
 
 
 def add_grokfast(
     alpha: float = 0.9,
-    l: float = 1.,
-)-> base.GradientTransformation:
+    l: float = 1.0,
+) -> base.GradientTransformation:
     """Grokfast: amplify slow gradients by exponential moving average."""
 
-    ema: base.GradientTransformation = optax.ema(decay=alpha,debias=False)
+    ema: base.GradientTransformation = optax.ema(decay=alpha, debias=False)
+
     def init_fn(params):
         return ema.init(params)
-    
+
     def update_fn(updates, state, params=None):
         dupdates, state = ema.update(updates, state, params)
         # updates = updates + l*dupdates
-        updates = jax.tree_util.tree_map(
-            lambda g,d: g+l*d, updates, dupdates)
+        updates = jax.tree_util.tree_map(lambda g, d: g + l * d, updates, dupdates)
         return updates, state
-    
+
     return base.GradientTransformation(init_fn, update_fn)
 
 
@@ -66,31 +81,31 @@ class PROFITState(NamedTuple):
     main_opt_state: Any
     internal_opt_state: Any
 
+
 def profit(
     learning_rate: base.ScalarOrSchedule,
     nsteps_ref: int = 1,
-    main_opt: str = 'adam',
+    main_opt: str = "adam",
     main_opt_params: Dict[str, Any] = {},
-    internal_opt: str = 'sgd',
+    internal_opt: str = "sgd",
     internal_opt_params: Dict[str, Any] = {},
-    **kwargs
-)-> base.GradientTransformation:
+    **kwargs,
+) -> base.GradientTransformation:
     """PROFIT optimizer for fine-tuning https://arxiv.org/pdf/2412.01930"""
 
-    main_opt_params = {'learning_rate': learning_rate,**main_opt_params}
+    main_opt_params = {"learning_rate": learning_rate, **main_opt_params}
     main_opt = eval(
         main_opt,
         {"__builtins__": None},
         {**optax.__dict__},
     )(**main_opt_params)
 
-    internal_opt_params = {'learning_rate': .1,**internal_opt_params}
+    internal_opt_params = {"learning_rate": 0.1, **internal_opt_params}
     internal_opt = eval(
         internal_opt,
         {"__builtins__": None},
         {**optax.__dict__},
     )(**internal_opt_params)
-
 
     def init_fn(params):
         return PROFITState(
@@ -99,55 +114,126 @@ def profit(
             main_opt_state=main_opt.init(params),
             internal_opt_state=internal_opt.init(params),
         )
-    
 
-    def update_main(gradients,main_opt_state,internal_opt_state,params,params_ref):
-        delta = jax.tree_util.tree_map(lambda p, pref: p-pref, params, params_ref)
+    def update_main(gradients, main_opt_state, internal_opt_state, params, params_ref):
+        delta = jax.tree_util.tree_map(lambda p, pref: p - pref, params, params_ref)
         dot = jax.tree.reduce(
-           operator.add,
-           jax.tree_util.tree_map(lambda g,d: (g*d).sum(), gradients, delta)
+            operator.add,
+            jax.tree_util.tree_map(lambda g, d: (g * d).sum(), gradients, delta),
         )
         delta2 = jax.tree.reduce(
-           operator.add,
-           jax.tree_util.tree_map(lambda d: (d**2).sum(), delta)
+            operator.add, jax.tree_util.tree_map(lambda d: (d**2).sum(), delta)
         )
-        proj = dot/(delta2+1.e-6)
+        proj = dot / (delta2 + 1.0e-6)
 
-        gradients = jax.lax.cond(dot>=0,
-            lambda g,d: g,
-            lambda g,d: jax.tree_util.tree_map(lambda x: proj*x, d),
-            gradients,delta
+        gradients = jax.lax.cond(
+            dot >= 0,
+            lambda g, d: g,
+            lambda g, d: jax.tree_util.tree_map(lambda x: proj * x, d),
+            gradients,
+            delta,
         )
-        updates,main_opt_state = main_opt.update(gradients,main_opt_state,params)
-        updates = jax.tree_util.tree_map(lambda g,d: g-d, updates, delta)
-        return updates,main_opt_state,internal_opt_state
-    
-    def update_internal(gradients,main_opt_state,internal_opt_state,params,params_ref):
-        updates,internal_opt_state = internal_opt.update(gradients,internal_opt_state,params)
-        return updates,main_opt_state,internal_opt_state
-    
+        updates, main_opt_state = main_opt.update(gradients, main_opt_state, params)
+        updates = jax.tree_util.tree_map(lambda g, d: g - d, updates, delta)
+        return updates, main_opt_state, internal_opt_state
+
+    def update_internal(
+        gradients, main_opt_state, internal_opt_state, params, params_ref
+    ):
+        updates, internal_opt_state = internal_opt.update(
+            gradients, internal_opt_state, params
+        )
+        return updates, main_opt_state, internal_opt_state
+
     def update_fn(gradients, state, params):
-        istep = state.istep % (nsteps_ref+1)
+        istep = state.istep % (nsteps_ref + 1)
         # jax.debug.print("{i} {j}",i=istep,j=state.istep)
 
-        params_ref = jax.lax.cond(istep==0, lambda a,b: a, lambda a,b: b, params, state.ref_weights)
+        params_ref = jax.lax.cond(
+            istep == 0, lambda a, b: a, lambda a, b: b, params, state.ref_weights
+        )
 
-        updates,main_opt_state,internal_opt_state = jax.lax.cond(
-            istep==nsteps_ref,
+        updates, main_opt_state, internal_opt_state = jax.lax.cond(
+            istep == nsteps_ref,
             update_main,
             update_internal,
-            gradients,state.main_opt_state,state.internal_opt_state,params,params_ref
+            gradients,
+            state.main_opt_state,
+            state.internal_opt_state,
+            params,
+            params_ref,
         )
 
         new_state = PROFITState(
             ref_weights=params_ref,
-            istep=state.istep+1,
+            istep=state.istep + 1,
             main_opt_state=main_opt_state,
-            internal_opt_state=internal_opt_state
+            internal_opt_state=internal_opt_state,
         )
         return updates, new_state
 
     return base.GradientTransformation(init_fn, update_fn)
+
+
+class MultiEmaState(NamedTuple):
+    """Holds an exponential moving average of past updates."""
+
+    count: int
+    ema: Sequence[base.Params]
+
+
+def multi_ema(
+    decays: Sequence[float],
+    debias: bool = True,
+    power: Union[bool,Sequence[bool]] = False,
+) -> base.GradientTransformation:
+    """Compute mutliple power moving averages of past updates."""
+
+    if len(decays) == 0:
+        def init_fn(params):
+            return base.EmptyState()
+        def update_fn(updates, state, params=None):
+            return [updates], state
+        return base.GradientTransformation(init_fn, update_fn)
+
+    if isinstance(power, bool):
+        power = [power] * len(decays)
+    assert len(power) == len(decays), "power and decays must have the same length"
+
+    gammas = []
+    for decay,p in zip(decays,power):
+        if not p:
+            gammas.append(None)
+            continue
+        t = decay**-2
+        gamma = np.roots([1, 7, 16 - t, 12 - t]).real.max()
+        assert gamma > 0, f"Invalid gamma for decay {decay}: {gamma}"
+        gammas.append(gamma)
+
+    def init_fn(params):
+        return MultiEmaState(
+            count=0,
+            ema=[otu.tree_zeros_like(params)] * len(decays),
+        )
+
+    def update_fn(params, state, other=None):
+        count_inc = state.count + 1
+        updates = []
+        state_ema = []
+        for decay,gamma,ema in zip(decays, gammas,state.ema):
+            if gamma is not None:
+                decay = (1.0 - 1.0 / count_inc) ** (gamma + 1)
+            update = new_ema = otu.tree_update_moment(
+                params, ema, decay, order=1
+            )
+            if debias and gamma is None:
+                update = otu.tree_bias_correction(update, decay, count_inc)
+            updates.append(update)
+            state_ema.append(new_ema)
+        return updates, MultiEmaState(count=count_inc, ema=state_ema)
+
+    return base.GradientTransformation(init_fn, update_fn)
+
 
 def get_optimizer(
     training_parameters: Dict[str, any], variables: Dict, initial_lr: float
@@ -208,19 +294,17 @@ def get_optimizer(
         l_grokfast = training_parameters.get("l_grokfast", 1.0)
         grad_processing.append(add_grokfast(alpha=alpha_grokfast, l=l_grokfast))
 
-
-    # gradient clipping
-    clip_threshold = training_parameters.get("gradient_clipping", -1.0)
-    if clip_threshold > 0.0:
-        print("Adaptive gradient clipping threshold:", clip_threshold)
-        grad_processing.append(optax.adaptive_grad_clip(clip_threshold))
+    
 
     # OPTIMIZER
     optimizer_name = training_parameters.get("optimizer", "adabelief")
     optimizer = eval(
         optimizer_name,
         {"__builtins__": None},
-        {**optax.__dict__,"profit":profit},
+        {
+            **optax.__dict__,
+            "profit": profit,
+        },
     )
     print("Optimizer:", optimizer_name)
     optimizer_configuration = training_parameters.get("optimizer_config", {})
@@ -250,30 +334,44 @@ def get_optimizer(
         grad_processing.append(
             optax.add_decayed_weights(weight_decay=-weight_decay, mask=decay_mask)
         )
-    
-    regularize_init_weight = training_parameters.get("regularize_init_weights", 0.)
+
+    regularize_init_weight = training_parameters.get("regularize_init_weights", 0.0)
     if regularize_init_weight > 0.0:
-        print("Regularizing toward initial weights with L2 norm:", 
-        regularize_init_weight)
-        if weight_decay <=0.:
+        print(
+            "Regularizing toward initial weights with L2 norm:", regularize_init_weight
+        )
+        if weight_decay <= 0.0:
             print(json.dumps(decay_mask, indent=2, sort_keys=False))
 
-        grad_processing.append(add_weights_difference(weight_decay=-regularize_init_weight, mask=decay_mask))
+        grad_processing.append(
+            add_weights_difference(
+                weight_decay=-regularize_init_weight, mask=decay_mask
+            )
+        )
 
     if zero_nans:
         grad_processing.append(optax.zero_nans())
 
     # learning rate
     grad_processing.append(optax.inject_hyperparams(optax.scale)(step_size=initial_lr))
+    ilr = -1
+
+    # gradient clipping
+    clip_threshold = training_parameters.get("gradient_clipping", -1.0)
+    if clip_threshold > 0.0:
+        print("Adaptive gradient clipping threshold:", clip_threshold)
+        grad_processing.append(optax.adaptive_grad_clip(clip_threshold))
+        ilr -= 1
 
     ## define optimizer chain
     optimizer_ = optax.chain(
         *grad_processing,
     )
     partition_optimizer = {"trainable": optimizer_, "frozen": optax.set_to_zero()}
-    return optax.multi_transform(partition_optimizer, params_partition)
+    return optax.multi_transform(partition_optimizer, params_partition),ilr
 
-def get_lr_schedule(max_epochs,nbatch_per_epoch,training_parameters):
+
+def get_lr_schedule(max_epochs, nbatch_per_epoch, training_parameters):
     lr = training_parameters.get("lr", 1.0e-3)
     init_lr = training_parameters.get("init_lr", lr / 25)
     final_lr = training_parameters.get("final_lr", lr / 10000)
@@ -304,13 +402,14 @@ def get_lr_schedule(max_epochs,nbatch_per_epoch,training_parameters):
                 new_state["count"] += 1
             new_state["lr"] = lr
             return lr, new_state
-    
+
     elif schedule_type == "piecewise_interpolate":
         schedule_params = training_parameters.get("scheduler_parameters", {})
         schedule_ = optax.piecewise_interpolate_schedule(
-            **{"init_value":lr,"interpolate_type":"linear",**schedule_params}
+            **{"init_value": lr, "interpolate_type": "linear", **schedule_params}
         )
         sch_state = {"count": 0, "best": np.inf, "lr": schedule_(0)}
+
         def schedule(state, rmse=None):
             new_state = {**state}
             lr = schedule_(state["count"])
@@ -393,5 +492,5 @@ def get_lr_schedule(max_epochs,nbatch_per_epoch,training_parameters):
                 new_state["lr_max"] = lr_max
 
             return new_state["lr"], new_state
-    
+
     return schedule, sch_state, schedule_metrics, adaptive_scheduler
