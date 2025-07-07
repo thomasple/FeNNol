@@ -37,13 +37,13 @@ def load_model(simulation_parameters):
 
 def load_system_data(simulation_parameters, fprec):
     ## LOAD SYSTEM CONFORMATION FROM FILES
-    system_name = str(simulation_parameters.get("system", "system")).strip()
+    system_name = str(simulation_parameters.get("system_name", "system")).strip()
     indexed = simulation_parameters.get("xyz_input/indexed", False)
     has_comment_line = simulation_parameters.get("xyz_input/has_comment_line", True)
     xyzfile = Path(simulation_parameters.get("xyz_input/file", system_name + ".xyz"))
     if not xyzfile.exists():
         raise FileNotFoundError(f"xyz file {xyzfile} not found")
-    system_name = str(simulation_parameters.get("system", xyzfile.stem)).strip()
+    system_name = str(simulation_parameters.get("system_name", xyzfile.stem)).strip()
     symbols, coordinates, _ = last_xyz_frame(
         xyzfile, indexed=indexed, has_comment_line=has_comment_line
     )
@@ -111,7 +111,7 @@ def load_system_data(simulation_parameters, fprec):
     ### Set boundary conditions
     cell = simulation_parameters.get("cell", None)
     if cell is not None:
-        cell = parse_cell(cell)
+        cell = parse_cell(cell).astype(fprec)
         # cell = np.array(cell, dtype=fprec).reshape(3, 3)
         reciprocal_cell = np.linalg.inv(cell)
         volume = np.abs(np.linalg.det(cell))
@@ -141,6 +141,7 @@ def load_system_data(simulation_parameters, fprec):
     else:
         pbc_data = None
     system_data["pbc"] = pbc_data
+    system_data["initial_coordinates"] = coordinates.copy()
 
     ### TOPOLOGY
     topology_key = simulation_parameters.get("topology", None)

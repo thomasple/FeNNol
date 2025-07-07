@@ -27,12 +27,18 @@ def main():
     sys.stdout = io.TextIOWrapper(
         open(sys.stdout.fileno(), "wb", 0), write_through=True
     )
+    
     ### Read the parameter file
     parser = argparse.ArgumentParser(prog="fennol_md")
     parser.add_argument("param_file", type=Path, help="Parameter file")
     args = parser.parse_args()
-
     param_file = args.param_file
+
+    return config_and_run_dynamic(param_file)
+
+def config_and_run_dynamic(param_file: Path):
+    """ Run the dynamic simulation based on the provided parameter file."""
+
     if not param_file.exists() and not param_file.is_file():
         raise FileNotFoundError(f"Parameter file {param_file} not found")
     
@@ -41,7 +47,7 @@ def main():
             simulation_parameters = convert_dict_units(yaml.safe_load(f))
             simulation_parameters = InputFile(**simulation_parameters)
     elif param_file.suffix == ".fnl":
-        simulation_parameters = parse_input(args.param_file)
+        simulation_parameters = parse_input(param_file)
     else:
         raise ValueError(
             f"Unknown parameter file format '{param_file.suffix}'. Supported formats are '.yaml', '.yml' and '.fnl'"
@@ -87,7 +93,7 @@ def main():
     jax.config.update("jax_default_matmul_precision", matmul_precision)
 
     # with jax.default_device(_device):
-    dynamic(simulation_parameters, device, fprec)
+    return dynamic(simulation_parameters, device, fprec)
 
 
 def dynamic(simulation_parameters, device, fprec):
@@ -217,18 +223,19 @@ def dynamic(simulation_parameters, device, fprec):
     print(
         f"# Running {nsteps:_} steps of {thermostat_name} {dyn_name} simulation on {device}"
     )
-    header = "#     Step   Time[ps]        Etot        Epot        Ekin    Temp[K]"
+    header = f"#{'Step':>9} {'Time[ps]':>10} {'Etot':>10} {'Epot':>10} {'Ekin':>10} {'Temp[K]':>10}"
     if pimd:
-        header += "  Temp_c[K]"
+        header += f" {'Temp_c[K]':>10}"
     if include_thermostat_energy:
-        header += "      Etherm"
+        header += f" {'Etherm':>10}"
     if estimate_pressure:
         print_aniso_pressure = simulation_parameters.get("print_aniso_pressure", False)
         pressure_unit_str = simulation_parameters.get("pressure_unit", "atm")
         pressure_unit = au.get_multiplier(pressure_unit_str) * au.BOHR**3
-        header += f"  Press[{pressure_unit_str}]"
+        p_str = f"  Press[{pressure_unit_str}]"
+        header += f" {p_str:>10}"
     if variable_cell:
-        header += "   Density"
+        header += f" {'Density':>10}"
     print(header)
 
     ### Open trajectory file
@@ -315,11 +322,11 @@ def dynamic(simulation_parameters, device, fprec):
 
             ### construct line of properties
             simulated_time = start_time_ps + istep * dt / 1000
-            line = f"{istep:10.6g} {simulated_time: 10.3f}  {etot*atom_energy_unit: #10.4f}  {epot*atom_energy_unit: #10.4f}  {ek*atom_energy_unit: #10.4f} {temper: 10.2f}"
+            line = f"{istep:10.6g} {simulated_time:10.3f} {etot*atom_energy_unit:#10.4f}  {epot*atom_energy_unit:#10.4f} {ek*atom_energy_unit:#10.4f} {temper:10.2f}"
             if pimd:
-                line += f" {temper_c: 10.2f}"
+                line += f" {temper_c:10.2f}"
             if include_thermostat_energy:
-                line += f"  {etherm*atom_energy_unit: #10.4f}"
+                line += f" {etherm*atom_energy_unit:#10.4f}"
                 properties_traj[f"Etherm[{atom_energy_unit_str}]"].append(
                     etherm * atom_energy_unit
                 )
@@ -516,6 +523,8 @@ def dynamic(simulation_parameters, device, fprec):
         fkeys.close()
     if write_centroid:
         fcentroid.close()
+
+    return 0
 
 
 if __name__ == "__main__":

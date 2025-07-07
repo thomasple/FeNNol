@@ -12,7 +12,7 @@ from .barostats import get_barostat
 from .colvars import setup_colvars
 from .spectra import initialize_ir_spectrum
 
-from .utils import load_dynamics_restart, get_restart_file
+from .utils import load_dynamics_restart, get_restart_file,optimize_fire2
 from .initial import load_model, load_system_data, initialize_preprocessing
 
 
@@ -27,7 +27,8 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
     system_data["model_energy_unit_str"] = model.energy_unit
 
     ### FINISH BUILDING conformation
-    if os.path.exists(get_restart_file(system_data)):
+    do_restart = os.path.exists(get_restart_file(system_data))
+    if do_restart:
         ### RESTART FROM PREVIOUS DYNAMICS
         restart_data = load_dynamics_restart(system_data)
         print("# RESTARTING FROM PREVIOUS DYNAMICS")
@@ -41,6 +42,41 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
         simulation_parameters, model, conformation, system_data
     )
 
+    minimize = simulation_parameters.get("xyz_input/minimize", False)
+    if minimize and not do_restart:
+        assert system_data["nreplicas"] == 1, "Minimization is only supported for single replica systems"
+        model.preproc_state = preproc_state
+        convert = au.KCALPERMOL / model.Ha_to_model_energy
+        nat = system_data["nat"]
+        def energy_force_fn(coordinates):
+            inputs = {**conformation, "coordinates": coordinates}
+            e, f, _ = model.energy_and_forces(
+                **inputs, gpu_preprocessing=True
+            )
+            e = float(e[0]) * convert / nat
+            f = np.array(f) * convert
+            return e, f
+        tol = simulation_parameters.get("xyz_input/minimize_ftol", 1e-1*au.BOHR/au.KCALPERMOL)*au.KCALPERMOL/au.BOHR
+        print(f"# Minimizing initial configuration with RMS force tolerance = {tol:.1e} kcal/mol/A")
+        conformation["coordinates"], success = optimize_fire2(
+            conformation["coordinates"],
+            energy_force_fn,
+            atol=tol,
+            max_disp=0.02,
+        )
+        if success:
+            print("# Minimization successful")
+        else:
+            print("# Warning: Minimization failed, continuing with last configuration")
+        # write the minimized coordinates as an xyz file
+        from ..utils.io import write_xyz_frame
+        with open(system_data["name"]+".opt.xyz", "w") as f:
+            write_xyz_frame(f, system_data["symbols"],np.array(conformation["coordinates"]),cell=conformation.get("cells", None))
+        print("# Minimized configuration written to", system_data["name"]+".opt.xyz")
+        preproc_state = model.preproc_state
+        conformation = model.preprocessing.process(preproc_state, conformation)
+        system_data["initial_coordinates"] = np.array(conformation["coordinates"]).copy()
+
     ### get dynamics parameters
     dt = simulation_parameters.get("dt") * au.FS
     dt2 = 0.5 * dt
@@ -48,6 +84,7 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
     densmass = system_data["totmass_Da"]*(au.MPROT*au.GCM3)
     nat = system_data["nat"]
     dtm = jnp.asarray(dt / mass[:, None], dtype=fprec)
+    ek_avg = 0.5 * nat * system_data["kT"] * np.eye(3)
 
     nreplicas = system_data.get("nreplicas", 1)
     nbeads = system_data.get("nbeads", None)
@@ -113,6 +150,15 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
     dyn_state["estimate_pressure"] = estimate_pressure
     dyn_state["variable_cell"] = variable_cell
     thermo_updates.append(thermo_update_ensemble)
+
+    if estimate_pressure:
+        use_average_Pkin = simulation_parameters.get("use_average_Pkin", False)
+        is_qtb = dyn_state["thermostat_name"].endswith("QTB")
+        if is_qtb and use_average_Pkin:
+            raise ValueError(
+                "use_average_Pkin is not compatible with QTB thermostat, please set use_average_Pkin to False"
+            )
+
 
     ### ENERGY ENSEMBLE
     ensemble_key = simulation_parameters.get("etot_ensemble_key", None)
@@ -258,7 +304,9 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
         system["ek_tensor"] = ek
 
         if estimate_pressure:
-            if pressure_o_weight != 1.0:
+            if use_average_Pkin:
+                ek = ek_avg
+            elif pressure_o_weight != 1.0:
                 v = system["vel"] + 0.5 * dtm * system["forces"]
                 if nbeads is None:
                     corr_kin = system["thermostat"].get("corr_kin", 1.0)

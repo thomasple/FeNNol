@@ -20,6 +20,7 @@ def minmaxone_jax(x, name=""):
     )
 
 def cell_vectors_to_lengths_angles(cell):
+    cell = cell.reshape(3, 3)
     a = np.linalg.norm(cell[0])
     b = np.linalg.norm(cell[1])
     c = np.linalg.norm(cell[2])
@@ -155,6 +156,7 @@ def detect_topology(species,coordinates, cell=None):
     """
     Detects the topology of a system based on species and coordinates.
     Returns a np.ndarray of shape [nbonds,2] containing the two indices for each bond.
+    Inspired by OpenBabel's ConnectTheDots in mol.cpp
     """
     from .periodic_table import COV_RADII, UFF_MAX_COORDINATION
     radii = (COV_RADII* AtomicUnits.BOHR)[species]
@@ -192,9 +194,9 @@ def detect_topology(species,coordinates, cell=None):
         mci, mcj = max_coord[i], max_coord[j]
         if ci <= mci and cj <= mcj:
             true_bonds.append((i, j))
-            continue
-        coord[i] -= 1
-        coord[j] -= 1
+        else:
+            coord[i] -= 1
+            coord[j] -= 1
 
     true_bonds = np.array(true_bonds, dtype=np.int32)
     sorted_indices = np.lexsort((true_bonds[:, 1], true_bonds[:, 0]))

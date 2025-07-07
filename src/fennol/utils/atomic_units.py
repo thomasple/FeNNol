@@ -35,6 +35,8 @@ class AtomicUnits:
         "KCALPERMOL": KCALPERMOL,
         "KJPERMOL": KJPERMOL,
         "ANGSTROM": BOHR,
+        "ANG": BOHR,
+        "A": BOHR,
         "BOHR": 1.0 / BOHR,
         "AMU": 1.0 / MPROT,
         "FEMTOSECONDS": FS,

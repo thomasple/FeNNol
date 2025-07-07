@@ -110,3 +110,105 @@ def test_pressure_fd(system_data, conformation, model, verbose=True):
             f"# Initial pressure: {Pkin+Pvir:.3f} (virial); {Pkin+Pvir_fd:.3f} (finite difference) ; Pkin: {Pkin:.3f} ; Pvir: {Pvir:.3f} ; Pvir_fd: {Pvir_fd:.3f}"
         )
     return Pkin, Pvir, Pvir_fd
+
+
+def optimize_fire2(
+    x0,
+    ef_func,
+    atol=1e-4,
+    dt=0.002,
+    logoutput=True,
+    Nmax=10000,
+    keep_every=-1,
+    max_disp=None,
+):
+    """Fast inertial relaxation engine (FIRE)
+    adapted from https://github.com/elvissoares/PyFIRE
+    """
+    # global variables
+    alpha0 = 0.1
+    Ndelay = 5
+    finc = 1.1
+    fdec = 0.5
+    fa = 0.99
+    Nnegmax = Nmax // 5
+
+    error = 10 * atol
+    dtmax = dt * 10.0
+    dtmin = 0.02 * dt
+    alpha = alpha0
+    Npos = 0
+    Nneg = 0
+
+    nat = x0.shape[0]
+    x = x0.copy()
+    e, F = ef_func(x)
+    V = -0.5 * dt * F  # initial velocity
+    P=0.
+    maxF = np.max(np.abs(F))
+    rmsF = np.sqrt(3 * np.mean(F**2))
+    error = rmsF
+    if error < atol:
+        return x
+
+    if logoutput:
+        print(
+            f"{'#Step':>10} {'Energy':>15} {'RMS Force':>15} {'MAX Force':>15} {'dt':>15} {'Power':>15}"
+        )
+    if logoutput:
+        print(f"{0:10d} {e:15.5f} {rmsF:15.5f} {maxF:15.5f} {dt:15.5f} {0:15.5f}")
+
+    if keep_every > 0:
+        x_keep = [x.copy()]
+
+    if max_disp is not None:
+        assert max_disp > 0, "max_disp must be positive"
+
+    success = False
+    for i in range(Nmax):
+
+        V = V + dt * F
+        V = (1 - alpha) * V + alpha * F * np.linalg.norm(V) / np.linalg.norm(F)
+        if max_disp is not None:
+            V = np.clip(V, -max_disp / dt, max_disp / dt)
+        x = x + dt * V
+        e, F = ef_func(x)
+
+        maxF = np.max(np.abs(F))
+        rmsF = np.sqrt(3 * np.mean(F**2))
+        error = rmsF
+
+        if logoutput:
+            print(f"{i+1:10d} {e:15.5f} {rmsF:15.5f} {maxF:15.5f} {dt:15.5f} {P:15.5f}")
+
+        if error <= atol:
+            success = True
+            break
+        
+        P = (F * V).sum()  # dissipated power
+
+        if P > 0:
+            Npos = Npos + 1
+            Nneg = 0
+            if Npos > Ndelay:
+                dt = min(dt * finc, dtmax)
+                alpha = alpha * fa
+        else:
+            Npos = 0
+            Nneg = Nneg + 1
+            if Nneg > Nnegmax:
+                break
+            if i >= Ndelay:
+                dt = max(dt * fdec, dtmin)
+                alpha = alpha0
+            x = x - 0.5 * dt * V
+            V = np.zeros(x.shape)
+        
+        if keep_every > 0 and (i + 1) % keep_every == 0:
+            x_keep.append(x.copy())
+
+    if keep_every > 0:
+        x_keep.append(x.copy())
+        return x, success, x_keep
+    return x, success
+
