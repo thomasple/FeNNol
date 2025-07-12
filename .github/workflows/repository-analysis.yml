@@ -1,0 +1,50 @@
+name: Repository Analysis
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  analyze-repository:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Generate repository tree and content analysis
+      run: |
+        echo "Repository Analysis - $(date)" > repository-analysis.txt
+        echo "=======================================" >> repository-analysis.txt
+        echo "Repository: ${{ github.repository }}" >> repository-analysis.txt
+        echo "Branch: ${{ github.ref_name }}" >> repository-analysis.txt
+        echo "Commit: ${{ github.sha }}" >> repository-analysis.txt
+        echo "=======================================" >> repository-analysis.txt
+        echo "" >> repository-analysis.txt
+        
+        # Run show_tree.py with content display and hide .xyz files
+        python scripts/show_tree.py --show-content --hide '*.xyz' --hide '*.dat' --hide '*.dat.*'  --ignore 'pdoc*' --ignore test --ignore ruff.toml --ignore '*.bak' >> repository-analysis.txt 2>&1
+    
+    - name: Upload repository analysis as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: repository-analysis-${{ github.sha }}
+        path: repository-analysis.txt
+        retention-days: 30
+    
+    - name: Display analysis summary
+      run: |
+        echo "Repository analysis completed successfully!"
+        echo "File size: $(wc -c < repository-analysis.txt) bytes"
+        echo "Lines: $(wc -l < repository-analysis.txt) lines"
+        echo ""
+        echo "First 20 lines of analysis:"
+        head -20 repository-analysis.txt
