@@ -22,29 +22,33 @@ jobs:
     
     - name: Generate repository tree and content analysis
       run: |
-        echo "Repository Analysis - $(date)" > repository-analysis.txt
-        echo "=======================================" >> repository-analysis.txt
-        echo "Repository: ${{ github.repository }}" >> repository-analysis.txt
-        echo "Branch: ${{ github.ref_name }}" >> repository-analysis.txt
-        echo "Commit: ${{ github.sha }}" >> repository-analysis.txt
-        echo "=======================================" >> repository-analysis.txt
-        echo "" >> repository-analysis.txt
+        FILENAME="fennol_codebase_$(date +%Y-%m-%d).txt"
+        echo "Repository Analysis - $(date)" > "$FILENAME"
+        echo "=======================================" >> "$FILENAME"
+        echo "Repository: ${{ github.repository }}" >> "$FILENAME"
+        echo "Branch: ${{ github.ref_name }}" >> "$FILENAME"
+        echo "Commit: ${{ github.sha }}" >> "$FILENAME"
+        echo "=======================================" >> "$FILENAME"
+        echo "" >> "$FILENAME"
         
         # Run show_tree.py with content display and hide .xyz files
-        python scripts/show_tree.py --show-content --hide '*.xyz' --hide '*.dat' --hide '*.dat.*'  --ignore 'pdoc*' --ignore test --ignore ruff.toml --ignore '*.bak' >> repository-analysis.txt 2>&1
+        python scripts/show_tree.py --show-content --hide '*.xyz' --hide '*.dat' --hide '*.dat.*'  --ignore 'pdoc*' --ignore test --ignore ruff.toml --ignore '*.bak' >> "$FILENAME" 2>&1
+        
+        # Export filename for use in subsequent steps
+        echo "ANALYSIS_FILE=$FILENAME" >> $GITHUB_ENV
     
     - name: Upload repository analysis as artifact
       uses: actions/upload-artifact@v4
       with:
-        name: repository-analysis-${{ github.sha }}
-        path: repository-analysis.txt
+        name: fennol_codebase_${{ github.sha }}
+        path: ${{ env.ANALYSIS_FILE }}
         retention-days: 30
     
     - name: Display analysis summary
       run: |
         echo "Repository analysis completed successfully!"
-        echo "File size: $(wc -c < repository-analysis.txt) bytes"
-        echo "Lines: $(wc -l < repository-analysis.txt) lines"
+        echo "File size: $(wc -c < "$ANALYSIS_FILE") bytes"
+        echo "Lines: $(wc -l < "$ANALYSIS_FILE") lines"
         echo ""
         echo "First 20 lines of analysis:"
-        head -20 repository-analysis.txt
+        head -20 "$ANALYSIS_FILE"
