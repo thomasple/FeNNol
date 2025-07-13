@@ -17,7 +17,7 @@ def main():
         "--cell",
         type=float,
         nargs="+",
-        help="PBC cell. If 9 floats, it corresponds to the sequence of the three cell vectors. If 6 floats, it corresponds to the lengths and angles (in rad) of the cell vectors. If 3 floats, it corresponds to the lengths of the cell vectors. If 1 float, it corresponds to the length of a cubic cell.",
+        help="PBC cell. If 9 floats, it corresponds to the sequence of the three cell vectors. If 6 floats, it corresponds to the lengths and angles (in degrees) of the cell vectors. If 3 floats, it corresponds to the lengths of the cell vectors. If 1 float, it corresponds to the length of a cubic cell.",
     )
 
     parser.add_argument(
