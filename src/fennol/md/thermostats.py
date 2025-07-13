@@ -22,18 +22,34 @@ def get_thermostat(simulation_parameters, dt, system_data, fprec, rng_key=None, 
     
 
     thermostat_name = str(simulation_parameters.get("thermostat", "LGV")).upper()
+    """@keyword[fennol_md] thermostat
+    Thermostat type. Options: 'NVE', 'LGV', 'NOSE', 'ADQTB'.
+    Default: "LGV"
+    """
     compute_thermostat_energy = simulation_parameters.get(
         "include_thermostat_energy", False
     )
+    """@keyword[fennol_md] include_thermostat_energy
+    Include thermostat energy in total energy calculations.
+    Default: False
+    """
 
     kT = system_data.get("kT", None)
     nbeads = system_data.get("nbeads", None)
     mass = system_data["mass"]
     gamma = simulation_parameters.get("gamma", 1.0 / au.THZ) / au.FS
+    """@keyword[fennol_md] gamma
+    Friction coefficient for Langevin thermostat (THz units: gamma[THz] = value).
+    Default: 1.0 THz
+    """
     species = system_data["species"]
 
     if nbeads is not None:
         trpmd_lambda = simulation_parameters.get("trpmd_lambda", 1.0)
+        """@keyword[fennol_md] trpmd_lambda
+        Lambda parameter for TRPMD (Thermostatted Ring Polymer MD).
+        Default: 1.0
+        """
         gamma = np.maximum(trpmd_lambda * system_data["omk"], gamma)
 
     if thermostat_name in ["LGV", "LANGEVIN", "FFLGV"]:
@@ -209,6 +225,10 @@ def get_thermostat(simulation_parameters, dt, system_data, fprec, rng_key=None, 
     elif thermostat_name in ["QTB", "ADQTB"]:
         assert nbeads is None, "QTB is not compatible with PIMD"
         qtb_parameters = simulation_parameters.get("qtb", None)
+        """@keyword[fennol_md] qtb
+        Parameters for Quantum Thermal Bath thermostat configuration.
+        Required for QTB/ADQTB thermostats
+        """
         assert (
             qtb_parameters is not None
         ), "qtb_parameters must be provided for QTB thermostat"
@@ -246,21 +266,49 @@ def get_thermostat(simulation_parameters, dt, system_data, fprec, rng_key=None, 
         a2 = jnp.asarray(((1 - a1 * a1) * kT / mass[:, None]) ** 0.5, dtype=fprec)
 
         anneal_parameters = simulation_parameters.get("annealing", {})
+        """@keyword[fennol_md] annealing
+        Parameters for simulated annealing schedule configuration.
+        Required for ANNEAL/ANNEALING thermostat
+        """
         init_factor = anneal_parameters.get("init_factor", 1.0 / 25.0)
+        """@keyword[fennol_md] annealing/init_factor
+        Initial temperature factor for annealing schedule.
+        Default: 0.04 (1/25)
+        """
         assert init_factor > 0.0, "init_factor must be positive"
         final_factor = anneal_parameters.get("final_factor", 1.0 / 10000.0)
+        """@keyword[fennol_md] annealing/final_factor
+        Final temperature factor for annealing schedule.
+        Default: 0.0001 (1/10000)
+        """
         assert final_factor > 0.0, "final_factor must be positive"
         nsteps = simulation_parameters.get("nsteps")
+        """@keyword[fennol_md] nsteps
+        Total number of simulation steps for annealing schedule calculation.
+        Required parameter
+        """
         anneal_steps = anneal_parameters.get("anneal_steps", 1.0)
+        """@keyword[fennol_md] annealing/anneal_steps
+        Fraction of total steps for annealing process.
+        Default: 1.0
+        """
         assert (
             anneal_steps < 1.0 and anneal_steps > 0.0
         ), "warmup_steps must be between 0 and nsteps"
         pct_start = anneal_parameters.get("warmup_steps", 0.3)
+        """@keyword[fennol_md] annealing/warmup_steps
+        Fraction of annealing steps for warmup phase.
+        Default: 0.3
+        """
         assert (
             pct_start < 1.0 and pct_start > 0.0
         ), "warmup_steps must be between 0 and nsteps"
 
         anneal_type = anneal_parameters.get("type", "cosine").lower()
+        """@keyword[fennol_md] annealing/type
+        Type of annealing schedule (linear, cosine_onecycle).
+        Default: cosine
+        """
         if anneal_type == "linear":
             schedule = optax.linear_onecycle_schedule(
                 peak_value=1.0,
@@ -326,6 +374,10 @@ def initialize_qtb(
     state = {}
     post_state = {}
     verbose = qtb_parameters.get("verbose", False)
+    """@keyword[fennol_md] qtb/verbose
+    Print verbose QTB thermostat information.
+    Default: False
+    """
     if compute_thermostat_energy:
         state["thermostat_energy"] = 0.0
 
@@ -345,8 +397,20 @@ def initialize_qtb(
     mass_idx = jax.ops.segment_sum(mass, type_idx, nspecies) / n_of_type
 
     niter_deconv_kin = qtb_parameters.get("niter_deconv_kin", 7)
+    """@keyword[fennol_md] qtb/niter_deconv_kin
+    Number of iterations for kinetic energy deconvolution.
+    Default: 7
+    """
     niter_deconv_pot = qtb_parameters.get("niter_deconv_pot", 20)
+    """@keyword[fennol_md] qtb/niter_deconv_pot
+    Number of iterations for potential energy deconvolution.
+    Default: 20
+    """
     corr_kin = qtb_parameters.get("corr_kin", -1)
+    """@keyword[fennol_md] qtb/corr_kin
+    Kinetic energy correction factor for QTB (-1 for automatic).
+    Default: -1
+    """
     do_corr_kin = corr_kin <= 0
     if do_corr_kin:
         corr_kin = 1.0
@@ -358,10 +422,18 @@ def initialize_qtb(
     # spectra parameters
     omegasmear = np.pi / dt / 100.0
     Tseg = qtb_parameters.get("tseg", 1.0 / au.PS) * au.FS
+    """@keyword[fennol_md] qtb/tseg
+    Time segment length for QTB spectrum calculation (in ps).
+    Default: 1.0
+    """
     nseg = int(Tseg / dt)
     Tseg = nseg * dt
     dom = 2 * np.pi / (3 * Tseg)
     omegacut = qtb_parameters.get("omegacut", 15000.0 / au.CM1) / au.FS
+    """@keyword[fennol_md] qtb/omegacut
+    Cutoff frequency for QTB spectrum (in cm⁻¹).
+    Default: 15000.0
+    """
     nom = int(omegacut / dom)
     omega = dom * np.arange((3 * nseg) // 2 + 1)
     cutoff = jnp.asarray(
@@ -376,6 +448,10 @@ def initialize_qtb(
         gamma < 0.5 * omegacut
     ), "gamma must be much smaller than omegacut (at most 0.5*omegacut)"
     gammar_min = qtb_parameters.get("gammar_min", 0.1)
+    """@keyword[fennol_md] qtb/gammar_min
+    Minimum value for QTB gamma ratio coefficients.
+    Default: 0.1
+    """
     # post_state["gammar"] = jnp.asarray(np.ones((nspecies, nom)), dtype=fprec)
     gammar = np.ones((nspecies, nom), dtype=float)
     try:
@@ -398,7 +474,15 @@ def initialize_qtb(
 
     # hbar schedule
     classical_kernel = qtb_parameters.get("classical_kernel", False)
+    """@keyword[fennol_md] qtb/classical_kernel
+    Use classical instead of quantum kernel for QTB.
+    Default: False
+    """
     hbar = qtb_parameters.get("hbar", 1.0) * au.FS
+    """@keyword[fennol_md] qtb/hbar
+    Reduced Planck constant scaling factor for quantum effects.
+    Default: 1.0
+    """
     u = 0.5 * hbar * np.abs(omega) / kT
     theta = kT * np.ones_like(omega)
     if hbar > 0:
@@ -412,12 +496,20 @@ def initialize_qtb(
     )
 
     startsave = qtb_parameters.get("startsave", 1)
+    """@keyword[fennol_md] qtb/startsave
+    Start saving QTB statistics after this many segments.
+    Default: 1
+    """
     counter = Counter(nseg, startsave=startsave)
     state["istep"] = 0
     post_state["nadapt"] = 0
     post_state["nsample"] = 0
 
     write_spectra = qtb_parameters.get("write_spectra", True)
+    """@keyword[fennol_md] qtb/write_spectra
+    Write QTB spectral analysis output files.
+    Default: True
+    """
     do_compute_spectra = write_spectra or adaptive
 
     if do_compute_spectra:
@@ -437,16 +529,28 @@ def initialize_qtb(
     else:
         # adaptation parameters
         skipseg = qtb_parameters.get("skipseg", 1)
+        """@keyword[fennol_md] qtb/skipseg
+        Number of segments to skip before starting adaptive QTB.
+        Default: 1
+        """
 
         adaptation_method = (
             str(qtb_parameters.get("adaptation_method", "ADABELIEF")).upper().strip()
         )
+        """@keyword[fennol_md] qtb/adaptation_method
+        Method for adaptive QTB (SIMPLE, RATIO, ADABELIEF).
+        Default: ADABELIEF
+        """
         authorized_methods = ["SIMPLE", "RATIO", "ADABELIEF"]
         assert (
             adaptation_method in authorized_methods
         ), f"adaptation_method must be one of {authorized_methods}"
         if adaptation_method == "SIMPLE":
             agamma = qtb_parameters.get("agamma", 1.0e-3) / au.FS
+            """@keyword[fennol_md] qtb/agamma
+            Learning rate for adaptive QTB gamma update.
+            Default: 1.0e-3 (SIMPLE), 0.1 (ADABELIEF)
+            """
             assert agamma > 0, "agamma must be positive"
             a1_ad = agamma * Tseg  #  * gamma
             print(f"# ADQTB SIMPLE: agamma = {agamma*au.FS:.3f}")
@@ -459,7 +563,15 @@ def initialize_qtb(
 
         elif adaptation_method == "RATIO":
             tau_ad = qtb_parameters.get("tau_ad", 5.0 / au.PS) * au.FS
+            """@keyword[fennol_md] qtb/tau_ad
+            Adaptation time constant for momentum averaging (in ps).
+            Default: 5.0 (RATIO), 1.0 (ADABELIEF)
+            """
             tau_s = qtb_parameters.get("tau_s", 10 * tau_ad) * au.FS
+            """@keyword[fennol_md] qtb/tau_s
+            Second moment time constant for variance averaging (in ps).
+            Default: 10*tau_ad (RATIO), 100*tau_ad (ADABELIEF)
+            """
             assert tau_ad > 0, "tau_ad must be positive"
             print(
                 f"# ADQTB RATIO: tau_ad = {tau_ad*1e-3:.2f} ps, tau_s = {tau_s*1e-3:.2f} ps"

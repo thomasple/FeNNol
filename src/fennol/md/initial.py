@@ -17,11 +17,19 @@ from ..utils import detect_topology,parse_cell
 
 def load_model(simulation_parameters):
     model_file = simulation_parameters.get("model_file")
+    """@keyword[fennol_md] model_file
+    Path to the machine learning model file (.fnx format). Required parameter.
+    Type: str, Required
+    """
     model_file = Path(str(model_file).strip())
     if not model_file.exists():
         raise FileNotFoundError(f"model file {model_file} not found")
     else:
         graph_config = simulation_parameters.get("graph_config", {})
+        """@keyword[fennol_md] graph_config
+        Advanced graph configuration for model initialization.
+        Default: {}
+        """
         model = FENNIX.load(model_file, graph_config=graph_config)  # \
         print(f"# model_file: {model_file}")
 
@@ -38,9 +46,25 @@ def load_model(simulation_parameters):
 def load_system_data(simulation_parameters, fprec):
     ## LOAD SYSTEM CONFORMATION FROM FILES
     system_name = str(simulation_parameters.get("system_name", "system")).strip()
+    """@keyword[fennol_md] system_name
+    Name prefix for output files. If not specified, uses the xyz filename stem.
+    Default: "system"
+    """
     indexed = simulation_parameters.get("xyz_input/indexed", False)
+    """@keyword[fennol_md] xyz_input/indexed
+    Whether first column contains atom indices (Tinker format).
+    Default: False
+    """
     has_comment_line = simulation_parameters.get("xyz_input/has_comment_line", True)
+    """@keyword[fennol_md] xyz_input/has_comment_line
+    Whether file contains comment lines.
+    Default: True
+    """
     xyzfile = Path(simulation_parameters.get("xyz_input/file", system_name + ".xyz"))
+    """@keyword[fennol_md] xyz_input/file
+    Path to xyz/arc coordinate file. Required parameter.
+    Type: str, Required
+    """
     if not xyzfile.exists():
         raise FileNotFoundError(f"xyz file {xyzfile} not found")
     system_name = str(simulation_parameters.get("system_name", xyzfile.stem)).strip()
@@ -54,6 +78,10 @@ def load_system_data(simulation_parameters, fprec):
     ## GET MASS
     mass_Da = np.array(ATOMIC_MASSES, dtype=fprec)[species]
     deuterate = simulation_parameters.get("deuterate", False)
+    """@keyword[fennol_md] deuterate
+    Replace hydrogen masses with deuterium masses.
+    Default: False
+    """
     if deuterate:
         print("# Replacing all hydrogens with deuteriums")
         mass_Da[species == 1] *= 2.0
@@ -62,6 +90,10 @@ def load_system_data(simulation_parameters, fprec):
 
     mass = mass_Da.copy()
     hmr = simulation_parameters.get("hmr", 0)
+    """@keyword[fennol_md] hmr
+    Hydrogen mass repartitioning factor. 0 = no repartitioning.
+    Default: 0
+    """
     if hmr > 0:
         print(f"# Adding {hmr} Da to H masses and repartitioning on others for total mass conservation.")
         Hmask = species == 1
@@ -76,10 +108,18 @@ def load_system_data(simulation_parameters, fprec):
 
     ### GET TEMPERATURE
     temperature = np.clip(simulation_parameters.get("temperature", 300.0), 1.0e-6, None)
+    """@keyword[fennol_md] temperature
+    Target temperature in Kelvin.
+    Default: 300.0
+    """
     kT = temperature / au.KELVIN
 
     ### GET TOTAL CHARGE
     total_charge = simulation_parameters.get("total_charge", None)
+    """@keyword[fennol_md] total_charge
+    Total system charge for charged systems.
+    Default: None (interpreted as 0)
+    """
     if total_charge is None:
         total_charge = 0
     else:
@@ -88,6 +128,10 @@ def load_system_data(simulation_parameters, fprec):
 
     ### ENERGY UNIT
     energy_unit_str = simulation_parameters.get("energy_unit", "kcal/mol")
+    """@keyword[fennol_md] energy_unit
+    Energy unit for output. Common options: 'kcal/mol', 'eV', 'Ha', 'kJ/mol'.
+    Default: "kcal/mol"
+    """
     energy_unit = au.get_multiplier(energy_unit_str)
 
     ## SYSTEM DATA
@@ -106,10 +150,18 @@ def load_system_data(simulation_parameters, fprec):
         "energy_unit_str": energy_unit_str,
     }
     input_flags = simulation_parameters.get("model_flags", [])
+    """@keyword[fennol_md] model_flags
+    Additional flags to pass to the model.
+    Default: []
+    """
     flags = {f:None for f in input_flags}
 
     ### Set boundary conditions
     cell = simulation_parameters.get("cell", None)
+    """@keyword[fennol_md] cell
+    Unit cell vectors as 9 values: [ax ay az bx by bz cx cy cz]. Required for PBC.
+    Default: None
+    """
     if cell is not None:
         cell = parse_cell(cell).astype(fprec)
         # cell = np.array(cell, dtype=fprec).reshape(3, 3)
@@ -122,10 +174,22 @@ def load_system_data(simulation_parameters, fprec):
         dens = totmass_Da * (au.MPROT*au.GCM3) / volume
         print("# density: ", dens.item(), " g/cm^3")
         minimum_image = simulation_parameters.get("minimum_image", True)
+        """@keyword[fennol_md] minimum_image
+        Use minimum image convention for neighbor lists in periodic systems.
+        Default: True
+        """
         estimate_pressure = simulation_parameters.get("estimate_pressure", False)
+        """@keyword[fennol_md] estimate_pressure
+        Calculate and print pressure during simulation.
+        Default: False
+        """
         print("# minimum_image: ", minimum_image)
 
         crystal_input = simulation_parameters.get("xyz_input/crystal", False)
+        """@keyword[fennol_md] xyz_input/crystal
+        Use crystal coordinates.
+        Default: False
+        """
         if crystal_input:
             coordinates = coordinates @ cell
 
@@ -145,6 +209,10 @@ def load_system_data(simulation_parameters, fprec):
 
     ### TOPOLOGY
     topology_key = simulation_parameters.get("topology", None)
+    """@keyword[fennol_md] topology
+    Topology specification for molecular systems. Use "detect" for automatic detection.
+    Default: None
+    """
     if topology_key is not None:
         topology_key = str(topology_key).strip()
         if topology_key.lower() == "detect":
@@ -163,7 +231,15 @@ def load_system_data(simulation_parameters, fprec):
 
     ### PIMD
     nbeads = simulation_parameters.get("nbeads", None)
+    """@keyword[fennol_md] nbeads
+    Number of beads for Path Integral MD.
+    Default: None
+    """
     nreplicas = simulation_parameters.get("nreplicas", None)
+    """@keyword[fennol_md] nreplicas
+    Number of replicas for independent replica simulations.
+    Default: None
+    """
     if nbeads is not None:
         nbeads = int(nbeads)
         print("# nbeads: ", nbeads)
@@ -230,6 +306,10 @@ def load_system_data(simulation_parameters, fprec):
         conformation["reciprocal_cells"] = reciprocal_cell
 
     additional_keys = simulation_parameters.get("additional_keys", {})
+    """@keyword[fennol_md] additional_keys
+    Additional custom keys for model input.
+    Default: {}
+    """
     for key, value in additional_keys.items():
         conformation[key] = value
     
@@ -240,7 +320,15 @@ def load_system_data(simulation_parameters, fprec):
 
 def initialize_preprocessing(simulation_parameters, model, conformation, system_data):
     nblist_verbose = simulation_parameters.get("nblist_verbose", False)
+    """@keyword[fennol_md] nblist_verbose
+    Print detailed neighbor list information.
+    Default: False
+    """
     nblist_skin = simulation_parameters.get("nblist_skin", -1.0)
+    """@keyword[fennol_md] nblist_skin
+    Neighbor list skin distance in Angstroms.
+    Default: -1.0 (automatic)
+    """
 
     ### CONFIGURE PREPROCESSING
     preproc_state = unfreeze(model.preproc_state)
@@ -251,8 +339,16 @@ def initialize_preprocessing(simulation_parameters, model, conformation, system_
             stnew["nblist_skin"] = nblist_skin
         if "nblist_mult_size" in simulation_parameters:
             stnew["nblist_mult_size"] = simulation_parameters["nblist_mult_size"]
+            """@keyword[fennol_md] nblist_mult_size
+            Multiplier for neighbor list size.
+            Default: None
+            """
         if "nblist_add_neigh" in simulation_parameters:
             stnew["add_neigh"] = simulation_parameters["nblist_add_neigh"]
+            """@keyword[fennol_md] nblist_add_neigh
+            Additional neighbors to include in lists.
+            Default: None
+            """
         layer_state.append(freeze(stnew))
     preproc_state["layers_state"] = layer_state
     preproc_state = freeze(preproc_state)
@@ -270,6 +366,10 @@ def initialize_preprocessing(simulation_parameters, model, conformation, system_
 
     ### print model
     if simulation_parameters.get("print_model", False):
+        """@keyword[fennol_md] print_model
+        Print detailed model information at startup.
+        Default: False
+        """
         print(model.summarize(example_data=conformation))
 
     return preproc_state, conformation

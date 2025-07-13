@@ -21,6 +21,10 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
     state = {}
 
     parameters = simulation_parameters.get("ir_parameters", {})
+    """@keyword[fennol_md] ir_parameters
+    Parameters for infrared spectrum calculation including dipole model settings.
+    Required for ir_spectrum=True
+    """
     dipole_model = parameters["dipole_model"]
     dipole_model = Path(str(dipole_model).strip())
     if not dipole_model.exists():
@@ -30,6 +34,10 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
         dipole_model = FENNIX.load(dipole_model)
 
         nblist_skin = simulation_parameters.get("nblist_skin", -1.0)
+        """@keyword[fennol_md] nblist_skin
+        Neighbor list skin distance for dipole model preprocessing (in Angstroms).
+        Default: -1.0
+        """
         pbc_data = system_data.get("pbc", None)
 
         ### CONFIGURE PREPROCESSING
@@ -49,10 +57,18 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
 
 
     Tseg = parameters.get("tseg", 1.0 / au.PS) * au.FS
+    """@keyword[fennol_md] ir_parameters/tseg
+    Time segment length for IR spectrum calculation (in ps).
+    Default: 1.0
+    """
     nseg = int(Tseg / dt)
     Tseg = nseg * dt
     dom = 2 * np.pi / (3 * Tseg)
     omegacut = parameters.get("omegacut", 15000.0 / au.CM1) / au.FS
+    """@keyword[fennol_md] ir_parameters/omegacut
+    Cutoff frequency for IR spectrum (in cm⁻¹).
+    Default: 15000.0
+    """
     nom = int(omegacut / dom)
     omega = dom * np.arange((3 * nseg) // 2 + 1)
 
@@ -61,12 +77,20 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
     ), f"omegacut must be smaller than {omega[-1]*au.CM1} CM-1"
 
     startsave = parameters.get("startsave", 1)
+    """@keyword[fennol_md] ir_parameters/startsave
+    Start saving IR statistics after this many segments.
+    Default: 1
+    """
     counter = Counter(nseg, startsave=startsave)
     state["istep"] = 0
     state["nsample"] = 0
     state["nadapt"] = 0
 
     use_qvel = parameters.get("use_qvel", False)
+    """@keyword[fennol_md] ir_parameters/use_qvel
+    Use quantum velocity correction for IR spectrum calculation.
+    Default: False
+    """
     if use_qvel:
         state["qvel"] = jnp.zeros((3,), dtype=fprec)
     else:
@@ -88,9 +112,21 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
         kubo_fact[1:] = np.tanh(uu)/uu
 
     do_deconvolution = parameters.get("deconvolution", False)
+    """@keyword[fennol_md] ir_parameters/deconvolution
+    Apply deconvolution to IR spectrum for better resolution.
+    Default: False
+    """
     if do_deconvolution:
         gamma = simulation_parameters.get("gamma", 1.0 / au.THZ) / au.FS
+        """@keyword[fennol_md] gamma
+        Friction coefficient for deconvolution of IR spectra (in THz).
+        Default: 1.0
+        """
         niter_deconv = parameters.get("niter_deconv", 20)
+        """@keyword[fennol_md] ir_parameters/niter_deconv
+        Number of iterations for IR spectrum deconvolution.
+        Default: 20
+        """
         print("# Deconvolution of IR spectra with gamma=", gamma*1000,"ps-1 and niter=",niter_deconv)
     
 

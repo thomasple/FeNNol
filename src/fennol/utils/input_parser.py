@@ -1,3 +1,31 @@
+"""
+FeNNol Input Parameter Parser
+
+This module provides parsing capabilities for FeNNol input files in .fnl format.
+It supports hierarchical parameter organization, automatic unit conversion,
+and various data types including booleans, numbers, strings, and lists.
+
+The main components are:
+- InputFile: Dictionary-like container for hierarchical parameters
+- parse_input: Parser function for .fnl files  
+- convert_dict_units: Unit conversion utility for YAML/dict inputs
+
+Supported input formats:
+- .fnl: Native FeNNol format with hierarchical sections
+- .yaml/.yml: YAML format (processed through convert_dict_units)
+
+Unit conversion:
+- Units specified in brackets: dt[fs] = 0.5
+- Units specified in braces: gamma{THz} = 10.0
+- All units converted to atomic units internally
+
+Boolean representations:
+- True: true, yes, .true.
+- False: false, no, .false.
+
+For complete parameter documentation, see fennol.md.dynamic module.
+"""
+
 import re
 from typing import Dict, Any
 from .atomic_units import AtomicUnits as au
@@ -9,6 +37,25 @@ _false_repr = ["false", "no", ".false."]
 
 
 class InputFile(dict):
+    """
+    Dictionary-like container for hierarchical input parameters.
+    
+    This class extends dict to provide path-based access to nested parameters
+    using '/' as a separator. It supports case-insensitive keys and automatic
+    unit conversion from parameter names with bracket notation.
+    
+    Attributes:
+        case_insensitive (bool): Whether keys are case-insensitive (default: True)
+    
+    Examples:
+        >>> params = InputFile()
+        >>> params.store("xyz_input/file", "system.xyz")
+        >>> params.get("xyz_input/file")
+        'system.xyz'
+        >>> params["temperature"] = 300.0
+        >>> params.get("temperature")
+        300.0
+    """
     case_insensitive = True
 
     def __init__(self, *args, **kwargs):
@@ -96,8 +143,38 @@ class InputFile(dict):
 
 
 def parse_input(input_file):
-    # parse an input file and return a nested dictionary
-    # containing the categories, keys and values
+    """
+    Parse a FeNNol input file (.fnl format) into a hierarchical parameter structure.
+    
+    The parser supports:
+    - Hierarchical sections using curly braces {}
+    - Comments starting with # or !
+    - Unit specifications in brackets [unit] or {unit}
+    - Boolean values (yes/no, true/false, .true./.false.)
+    - Numeric values (int/float)
+    - String values
+    - Lists of values
+    
+    Parameters:
+        input_file (str): Path to the input file
+        
+    Returns:
+        InputFile: Hierarchical dictionary containing parsed parameters
+        
+    Example input file::
+    
+        device cuda:0
+        temperature = 300.0
+        dt[fs] = 0.5
+        
+        xyz_input{
+            file system.xyz
+            indexed yes
+        }
+        
+        thermostat LGV
+        gamma[THz] = 10.0
+    """
     f = open(input_file, "r")
     struct = InputFile()
     path = []
@@ -206,6 +283,21 @@ def _get_unit_from_key(word):
 def convert_dict_units(d: Dict[str, Any]) -> Dict[str, Any]:
     """
     Convert all values in a dictionary from specified units to atomic units.
+    
+    This function recursively processes a dictionary and converts any values
+    with unit specifications (indicated by keys containing [unit] or {unit})
+    to atomic units. The unit specification is removed from the key name.
+    
+    Parameters:
+        d (Dict[str, Any]): Dictionary with potentially unit-specified keys
+        
+    Returns:
+        Dict[str, Any]: Dictionary with values converted to atomic units
+        
+    Examples:
+        >>> d = {"dt[fs]": 0.5, "temperature": 300.0}
+        >>> convert_dict_units(d)
+        {"dt": 20.67..., "temperature": 300.0}
     """
 
     d2 = {}

@@ -23,6 +23,19 @@ from .integrate import initialize_dynamics
 
 
 def main():
+    """
+    Main entry point for the fennol_md command-line interface.
+    
+    Parses command-line arguments and runs a molecular dynamics simulation
+    based on the provided parameter file.
+    
+    Command-line Usage:
+        fennol_md input.fnl
+        fennol_md config.yaml
+    
+    Returns:
+        int: Exit code (0 for success)
+    """
     # os.environ["OMP_NUM_THREADS"] = "1"
     sys.stdout = io.TextIOWrapper(
         open(sys.stdout.fileno(), "wb", 0), write_through=True
@@ -37,7 +50,26 @@ def main():
     return config_and_run_dynamic(param_file)
 
 def config_and_run_dynamic(param_file: Path):
-    """ Run the dynamic simulation based on the provided parameter file."""
+    """
+    Configure and run a molecular dynamics simulation.
+    
+    This function loads simulation parameters from a configuration file,
+    sets up the computation device and precision, and runs the MD simulation.
+    
+    Parameters:
+        param_file (Path): Path to the parameter file (.fnl, .yaml, or .yml)
+    
+    Returns:
+        int: Exit code (0 for success)
+        
+    Raises:
+        FileNotFoundError: If the parameter file doesn't exist
+        ValueError: If the parameter file format is unsupported
+        
+    Supported file formats:
+        - .fnl: FeNNol native format
+        - .yaml/.yml: YAML format
+    """
 
     if not param_file.exists() and not param_file.is_file():
         raise FileNotFoundError(f"Parameter file {param_file} not found")
@@ -59,6 +91,10 @@ def config_and_run_dynamic(param_file: Path):
         print(f"# Setting device from env FENNOL_DEVICE={device}")
     else:
         device = simulation_parameters.get("device", "cpu").lower()
+        """@keyword[fennol_md] device
+        Computation device. Options: 'cpu', 'cuda:N', 'gpu:N' where N is device number.
+        Default: 'cpu'
+        """
     if device == "cpu":
         jax.config.update('jax_platforms', 'cpu')
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -75,10 +111,18 @@ def config_and_run_dynamic(param_file: Path):
 
     ### Set the precision
     enable_x64 = simulation_parameters.get("double_precision", False)
+    """@keyword[fennol_md] double_precision
+    Enable double precision (64-bit) calculations. Default is single precision (32-bit).
+    Default: False
+    """
     jax.config.update("jax_enable_x64", enable_x64)
     fprec = "float64" if enable_x64 else "float32"
 
     matmul_precision = simulation_parameters.get("matmul_prec", "highest").lower()
+    """@keyword[fennol_md] matmul_prec
+    Matrix multiplication precision. Options: 'default', 'high', 'highest'.
+    Default: "highest"
+    """
     assert matmul_precision in [
         "default",
         "high",
@@ -97,11 +141,30 @@ def config_and_run_dynamic(param_file: Path):
 
 
 def dynamic(simulation_parameters, device, fprec):
+    """
+    Execute the molecular dynamics simulation loop.
+    
+    This function performs the main MD simulation using the initialized
+    system, integrator, and thermostats/barostats. It handles trajectory
+    output, property monitoring, and restart file generation.
+    
+    Parameters:
+        simulation_parameters: Parsed simulation parameters
+        device (str): Computation device ('cpu' or 'gpu')
+        fprec (str): Floating point precision ('float32' or 'float64')
+        
+    Returns:
+        int: Exit code (0 for success)
+    """
     tstart_dyn = time.time()
 
     random_seed = simulation_parameters.get(
         "random_seed", np.random.randint(0, 2**32 - 1)
     )
+    """@keyword[fennol_md] random_seed
+    Random seed for reproducible simulations. If not specified, a random seed is generated.
+    Default: Random integer between 0 and 2^32-1
+    """
     print(f"# random_seed: {random_seed}")
     rng_key = jax.random.PRNGKey(random_seed)
 
@@ -115,10 +178,18 @@ def dynamic(simulation_parameters, device, fprec):
     dt = dyn_state["dt"]
     ## get number of steps
     nsteps = int(simulation_parameters.get("nsteps"))
+    """@keyword[fennol_md] nsteps
+    Total number of MD steps to perform. Required parameter.
+    Type: int, Required
+    """
     start_time_ps = dyn_state.get("start_time_ps", 0.0)
 
     ### Set I/O parameters
     Tdump = simulation_parameters.get("tdump", 1.0 / au.PS) * au.FS
+    """@keyword[fennol_md] tdump
+    Time interval between trajectory frames.
+    Default: 1.0 ps
+    """
     ndump = int(Tdump / dt)
     system_name = system_data["name"]
     estimate_pressure = dyn_state["estimate_pressure"]
@@ -133,8 +204,16 @@ def dynamic(simulation_parameters, device, fprec):
         cell = system["cell"]
         reciprocal_cell = np.linalg.inv(cell)
         do_wrap_box = simulation_parameters.get("wrap_box", False)
+        """@keyword[fennol_md] wrap_box
+        Wrap coordinates into primary unit cell.
+        Default: False
+        """
         if do_wrap_box:
             wrap_groups_def = simulation_parameters.get("wrap_groups",None)
+            """@keyword[fennol_md] wrap_groups
+            Specific atom groups to wrap independently. Dictionary mapping group names to atom indices.
+            Default: None
+            """
             if wrap_groups_def is None:
                 wrap_groups = None
             else:
@@ -171,6 +250,10 @@ def dynamic(simulation_parameters, device, fprec):
     model_energy_unit = system_data["model_energy_unit"]
     model_energy_unit_str = system_data["model_energy_unit_str"]
     per_atom_energy = simulation_parameters.get("per_atom_energy", True)
+    """@keyword[fennol_md] per_atom_energy
+    Print energies per atom instead of total energies.
+    Default: True
+    """
     energy_unit_str = system_data["energy_unit_str"]
     energy_unit = system_data["energy_unit"]
     print("# Energy unit: ", energy_unit_str)
@@ -187,13 +270,24 @@ def dynamic(simulation_parameters, device, fprec):
     minmaxone(jnp.abs(f * energy_unit), "# forces min/max/rms:")
 
     ## printing options
-    print_timings = simulation_parameters.get("print_timings", False)
     nprint = int(simulation_parameters.get("nprint", 10))
+    """@keyword[fennol_md] nprint
+    Number of steps between energy/property printing.
+    Default: 10
+    """
     assert nprint > 0, "nprint must be > 0"
     nsummary = simulation_parameters.get("nsummary", 100 * nprint)
+    """@keyword[fennol_md] nsummary
+    Number of steps between summary statistics.
+    Default: 100 * nprint
+    """
     assert nsummary > nprint, "nsummary must be > nprint"
 
     save_keys = simulation_parameters.get("save_keys", [])
+    """@keyword[fennol_md] save_keys
+    Additional model output keys to save to trajectory.
+    Default: []
+    """
     if save_keys:
         print(f"# Saving keys: {save_keys}")
         fkeys = open(f"{system_name}.traj.pkl", "wb+")
@@ -230,7 +324,15 @@ def dynamic(simulation_parameters, device, fprec):
         header += f" {'Etherm':>10}"
     if estimate_pressure:
         print_aniso_pressure = simulation_parameters.get("print_aniso_pressure", False)
+        """@keyword[fennol_md] print_aniso_pressure
+        Print anisotropic pressure tensor components.
+        Default: False
+        """
         pressure_unit_str = simulation_parameters.get("pressure_unit", "atm")
+        """@keyword[fennol_md] pressure_unit
+        Pressure unit for output. Options: 'atm', 'bar', 'Pa', 'GPa'.
+        Default: "atm"
+        """
         pressure_unit = au.get_multiplier(pressure_unit_str) * au.BOHR**3
         p_str = f"  Press[{pressure_unit_str}]"
         header += f" {p_str:>10}"
@@ -240,6 +342,10 @@ def dynamic(simulation_parameters, device, fprec):
 
     ### Open trajectory file
     traj_format = simulation_parameters.get("traj_format", "arc").lower()
+    """@keyword[fennol_md] traj_format
+    Trajectory file format. Options: 'arc' (Tinker), 'xyz' (standard), 'extxyz' (extended).
+    Default: "arc"
+    """
     if traj_format == "xyz":
         traj_ext = ".traj.xyz"
         write_frame = write_xyz_frame
@@ -255,6 +361,10 @@ def dynamic(simulation_parameters, device, fprec):
         )
 
     write_all_beads = simulation_parameters.get("write_all_beads", False) and pimd
+    """@keyword[fennol_md] write_all_beads
+    Write all PIMD beads to separate trajectory files.
+    Default: False
+    """
 
     if write_all_beads:
         fout = [
@@ -264,10 +374,18 @@ def dynamic(simulation_parameters, device, fprec):
         fout = open(system_name + traj_ext, "a")
 
     ensemble_key = simulation_parameters.get("etot_ensemble_key", None)
+    """@keyword[fennol_md] etot_ensemble_key
+    Key for ensemble weighting in enhanced sampling.
+    Default: None
+    """
     if ensemble_key is not None:
         fens = open(f"{system_name}.ensemble_weights.traj", "a")
 
     write_centroid = simulation_parameters.get("write_centroid", False) and pimd
+    """@keyword[fennol_md] write_centroid
+    Write PIMD centroid coordinates to separate file.
+    Default: False
+    """
     if write_centroid:
         fcentroid = open(f"{system_name}_centroid" + traj_ext, "a")
 

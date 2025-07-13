@@ -21,10 +21,18 @@ def get_barostat(
     state = {}
 
     barostat_name = str(simulation_parameters.get("barostat", "NONE")).upper()
+    """@keyword[fennol_md] barostat
+    Type of barostat for pressure control (NONE, LGV, LANGEVIN).
+    Default: NONE
+    """
 
     kT = system_data.get("kT", None)
     assert kT is not None, "kT must be specified for NPT/NPH simulations"
     target_pressure = simulation_parameters.get("target_pressure")
+    """@keyword[fennol_md] target_pressure
+    Target pressure for NPT ensemble simulations.
+    Required for barostat != NONE
+    """
     if barostat_name != "NONE":
         assert (
             target_pressure is not None
@@ -35,11 +43,19 @@ def get_barostat(
     variable_cell = True
 
     anisotropic = simulation_parameters.get("aniso_barostat", False)
+    """@keyword[fennol_md] aniso_barostat
+    Use anisotropic barostat allowing independent cell parameter scaling.
+    Default: False
+    """
     
     isotropic = not anisotropic
 
     pbc_data = system_data["pbc"]
     start_barostat = simulation_parameters.get("start_barostat", 0.0)*au.FS
+    """@keyword[fennol_md] start_barostat
+    Time delay before starting barostat pressure coupling (in fs).
+    Default: 0.0
+    """
     start_time = restart_data.get("simulation_time_ps",0.) * 1e3
     start_barostat = max(0.,start_barostat-start_time)
     istart_barostat = int(round(start_barostat / dt))
@@ -53,7 +69,15 @@ def get_barostat(
     if barostat_name in ["LGV", "LANGEVIN"]:
         assert rng_key is not None, "rng_key must be provided for QTB barostat"
         gamma = simulation_parameters.get("gamma_piston", 20.0 / au.THZ) / au.FS
+        """@keyword[fennol_md] gamma_piston
+        Piston friction coefficient for Langevin barostat (in THz).
+        Default: 20.0
+        """
         tau_piston = simulation_parameters.get("tau_piston", 200.0 / au.FS) * au.FS
+        """@keyword[fennol_md] tau_piston
+        Piston time constant for barostat coupling (in fs).
+        Default: 200.0
+        """
         nat = system_data["nat"]
         masspiston = 3 * nat * kT * tau_piston**2
         print(f"# LANGEVIN barostat with piston mass={masspiston:.1e} Ha.fs^2")
@@ -73,6 +97,10 @@ def get_barostat(
             aniso_mask = simulation_parameters.get(
                 "aniso_mask", [True, True, True, True, True, True]
             )
+            """@keyword[fennol_md] aniso_mask
+            Mask for anisotropic barostat degrees of freedom [xx, yy, zz, xy, xz, yz].
+            Default: [True, True, True, True, True, True]
+            """
             assert len(aniso_mask) == 6, "aniso_mask must have 6 elements"
             aniso_mask = np.array(aniso_mask, dtype=bool).astype(np.int32)
             ndof_piston = np.sum(aniso_mask)

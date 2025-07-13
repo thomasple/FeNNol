@@ -43,6 +43,10 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
     )
 
     minimize = simulation_parameters.get("xyz_input/minimize", False)
+    """@keyword[fennol_md] xyz_input/minimize
+    Perform energy minimization before dynamics.
+    Default: False
+    """
     if minimize and not do_restart:
         assert system_data["nreplicas"] == 1, "Minimization is only supported for single replica systems"
         model.preproc_state = preproc_state
@@ -57,6 +61,10 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
             f = np.array(f) * convert
             return e, f
         tol = simulation_parameters.get("xyz_input/minimize_ftol", 1e-1*au.BOHR/au.KCALPERMOL)*au.KCALPERMOL/au.BOHR
+        """@keyword[fennol_md] xyz_input/minimize_ftol
+        Force tolerance for minimization.
+        Default: 0.1 kcal/mol/Å
+        """
         print(f"# Minimizing initial configuration with RMS force tolerance = {tol:.1e} kcal/mol/A")
         conformation["coordinates"], success = optimize_fire2(
             conformation["coordinates"],
@@ -79,6 +87,10 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
 
     ### get dynamics parameters
     dt = simulation_parameters.get("dt") * au.FS
+    """@keyword[fennol_md] dt
+    Integration time step. Required parameter (use dt[fs] = value).
+    Type: float, Required
+    """
     dt2 = 0.5 * dt
     mass = system_data["mass"]
     densmass = system_data["totmass_Da"]*(au.MPROT*au.GCM3)
@@ -134,6 +146,10 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
         system["cell"] = conformation["cells"][0]
         if estimate_pressure:
             pressure_o_weight = simulation_parameters.get("pressure_o_weight", 0.0)
+            """@keyword[fennol_md] pressure_o_weight
+            Weight factor for mixing instantaneous and averaged kinetic pressure contributions.
+            Default: 0.0
+            """
             assert (
                 0.0 <= pressure_o_weight <= 1.0
             ), "pressure_o_weight must be between 0 and 1"
@@ -153,6 +169,10 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
 
     if estimate_pressure:
         use_average_Pkin = simulation_parameters.get("use_average_Pkin", False)
+        """@keyword[fennol_md] use_average_Pkin
+        Use time-averaged kinetic energy for pressure estimation instead of instantaneous values.
+        Default: False
+        """
         is_qtb = dyn_state["thermostat_name"].endswith("QTB")
         if is_qtb and use_average_Pkin:
             raise ValueError(
@@ -162,9 +182,17 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
 
     ### ENERGY ENSEMBLE
     ensemble_key = simulation_parameters.get("etot_ensemble_key", None)
+    """@keyword[fennol_md] etot_ensemble_key
+    Key for energy ensemble calculation. Enables computation of ensemble weights.
+    Default: None
+    """
 
     ### COLVARS
     colvars_definitions = simulation_parameters.get("colvars", None)
+    """@keyword[fennol_md] colvars
+    Collective variables definitions for enhanced sampling or monitoring.
+    Default: None
+    """
     use_colvars = colvars_definitions is not None
     if use_colvars:
         colvars_calculators, colvars_names = setup_colvars(colvars_definitions)
@@ -172,6 +200,10 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
 
     ### IR SPECTRUM
     do_ir_spectrum = simulation_parameters.get("ir_spectrum", False)
+    """@keyword[fennol_md] ir_spectrum
+    Calculate infrared spectrum from molecular dipole moment time series.
+    Default: False
+    """
     assert isinstance(do_ir_spectrum, bool), "ir_spectrum must be a boolean"
     if do_ir_spectrum:
         is_qtb = dyn_state["thermostat_name"].endswith("QTB")
@@ -198,6 +230,10 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
     ### RING POLYMER INITIALIZATION
     if nbeads is not None:
         cay_correction = simulation_parameters.get("cay_correction", True)
+        """@keyword[fennol_md] cay_correction
+        Use Cayley propagator for ring polymer molecular dynamics instead of standard propagation.
+        Default: True
+        """
         omk = system_data["omk"]
         eigmat = system_data["eigmat"]
         cayfact = 1.0 / (4.0 + (dt * omk[1:, None, None]) ** 2) ** 0.5
@@ -442,10 +478,26 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
     ### GRAPH UPDATES
 
     nblist_verbose = simulation_parameters.get("nblist_verbose", False)
+    """@keyword[fennol_md] nblist_verbose
+    Print verbose information about neighbor list updates and reallocations.
+    Default: False
+    """
     nblist_stride = int(simulation_parameters.get("nblist_stride", -1))
+    """@keyword[fennol_md] nblist_stride
+    Number of steps between full neighbor list rebuilds. Auto-calculated from skin if <= 0.
+    Default: -1
+    """
     nblist_warmup_time = simulation_parameters.get("nblist_warmup_time", -1.0) * au.FS
+    """@keyword[fennol_md] nblist_warmup_time
+    Time period for neighbor list warmup before using skin updates (in fs).
+    Default: -1.0
+    """
     nblist_warmup = int(nblist_warmup_time / dt) if nblist_warmup_time > 0 else 0
     nblist_skin = simulation_parameters.get("nblist_skin", -1.0)
+    """@keyword[fennol_md] nblist_skin
+    Neighbor list skin distance for efficient updates (in Angstroms).
+    Default: -1.0
+    """
     if nblist_skin > 0:
         if nblist_stride <= 0:
             ## reference skin parameters at 300K (from Tinker-HP)
