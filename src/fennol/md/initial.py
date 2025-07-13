@@ -159,7 +159,11 @@ def load_system_data(simulation_parameters, fprec):
     ### Set boundary conditions
     cell = simulation_parameters.get("cell", None)
     """@keyword[fennol_md] cell
-    Unit cell vectors as 9 values: [ax ay az bx by bz cx cy cz]. Required for PBC.
+    Unit cell vectors. Required for PBC. It is a sequence of floats:
+    - 9 floats: components of cell vectors [ax, ay, az, bx, by, bz, cx, cy, cz]
+    - 6 floats: lengths and angles [a, b, c, alpha, beta, gamma]
+    - 3 floats: lengths of cell vectors [a, b, c] (orthorhombic)
+    - 1 float: length of cell vectors (cubic cell)
     Default: None
     """
     if cell is not None:
