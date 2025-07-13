@@ -164,6 +164,7 @@ def load_system_data(simulation_parameters, fprec):
     - 6 floats: lengths and angles [a, b, c, alpha, beta, gamma]
     - 3 floats: lengths of cell vectors [a, b, c] (orthorhombic)
     - 1 float: length of cell vectors (cubic cell)
+    Lengths are in Angstroms, angles in degrees.
     Default: None
     """
     if cell is not None:
