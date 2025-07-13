@@ -58,16 +58,16 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
 
     Tseg = parameters.get("tseg", 1.0 / au.PS) * au.FS
     """@keyword[fennol_md] ir_parameters/tseg
-    Time segment length for IR spectrum calculation (in ps).
-    Default: 1.0
+    Time segment length for IR spectrum calculation.
+    Default: 1.0 ps
     """
     nseg = int(Tseg / dt)
     Tseg = nseg * dt
     dom = 2 * np.pi / (3 * Tseg)
     omegacut = parameters.get("omegacut", 15000.0 / au.CM1) / au.FS
     """@keyword[fennol_md] ir_parameters/omegacut
-    Cutoff frequency for IR spectrum (in cm⁻¹).
-    Default: 15000.0
+    Cutoff frequency for IR spectrum.
+    Default: 15000.0 cm⁻¹
     """
     nom = int(omegacut / dom)
     omega = dom * np.arange((3 * nseg) // 2 + 1)
@@ -119,8 +119,8 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
     if do_deconvolution:
         gamma = simulation_parameters.get("gamma", 1.0 / au.THZ) / au.FS
         """@keyword[fennol_md] gamma
-        Friction coefficient for deconvolution of IR spectra (in THz).
-        Default: 1.0
+        Friction coefficient for deconvolution of IR spectra.
+        Default: 1.0 ps^-1
         """
         niter_deconv = parameters.get("niter_deconv", 20)
         """@keyword[fennol_md] ir_parameters/niter_deconv

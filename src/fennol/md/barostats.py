@@ -53,7 +53,7 @@ def get_barostat(
     pbc_data = system_data["pbc"]
     start_barostat = simulation_parameters.get("start_barostat", 0.0)*au.FS
     """@keyword[fennol_md] start_barostat
-    Time delay before starting barostat pressure coupling (in fs).
+    Time delay before starting barostat pressure coupling.
     Default: 0.0
     """
     start_time = restart_data.get("simulation_time_ps",0.) * 1e3
@@ -70,13 +70,13 @@ def get_barostat(
         assert rng_key is not None, "rng_key must be provided for QTB barostat"
         gamma = simulation_parameters.get("gamma_piston", 20.0 / au.THZ) / au.FS
         """@keyword[fennol_md] gamma_piston
-        Piston friction coefficient for Langevin barostat (in THz).
-        Default: 20.0
+        Piston friction coefficient for Langevin barostat.
+        Default: 20.0 ps^-1
         """
         tau_piston = simulation_parameters.get("tau_piston", 200.0 / au.FS) * au.FS
         """@keyword[fennol_md] tau_piston
-        Piston time constant for barostat coupling (in fs).
-        Default: 200.0
+        Piston time constant for barostat coupling.
+        Default: 200.0 fs
         """
         nat = system_data["nat"]
         masspiston = 3 * nat * kT * tau_piston**2

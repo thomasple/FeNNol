@@ -39,8 +39,8 @@ def get_thermostat(simulation_parameters, dt, system_data, fprec, rng_key=None, 
     mass = system_data["mass"]
     gamma = simulation_parameters.get("gamma", 1.0 / au.THZ) / au.FS
     """@keyword[fennol_md] gamma
-    Friction coefficient for Langevin thermostat (THz units: gamma[THz] = value).
-    Default: 1.0 THz
+    Friction coefficient for Langevin thermostat.
+    Default: 1.0 ps^-1
     """
     species = system_data["species"]
 
@@ -423,16 +423,16 @@ def initialize_qtb(
     omegasmear = np.pi / dt / 100.0
     Tseg = qtb_parameters.get("tseg", 1.0 / au.PS) * au.FS
     """@keyword[fennol_md] qtb/tseg
-    Time segment length for QTB spectrum calculation (in ps).
-    Default: 1.0
+    Time segment length for QTB spectrum calculation.
+    Default: 1.0 ps
     """
     nseg = int(Tseg / dt)
     Tseg = nseg * dt
     dom = 2 * np.pi / (3 * Tseg)
     omegacut = qtb_parameters.get("omegacut", 15000.0 / au.CM1) / au.FS
     """@keyword[fennol_md] qtb/omegacut
-    Cutoff frequency for QTB spectrum (in cm⁻¹).
-    Default: 15000.0
+    Cutoff frequency for QTB spectrum.
+    Default: 15000.0 cm⁻¹
     """
     nom = int(omegacut / dom)
     omega = dom * np.arange((3 * nseg) // 2 + 1)
@@ -481,7 +481,7 @@ def initialize_qtb(
     hbar = qtb_parameters.get("hbar", 1.0) * au.FS
     """@keyword[fennol_md] qtb/hbar
     Reduced Planck constant scaling factor for quantum effects.
-    Default: 1.0
+    Default: 1.0 a.u.
     """
     u = 0.5 * hbar * np.abs(omega) / kT
     theta = kT * np.ones_like(omega)
@@ -564,12 +564,12 @@ def initialize_qtb(
         elif adaptation_method == "RATIO":
             tau_ad = qtb_parameters.get("tau_ad", 5.0 / au.PS) * au.FS
             """@keyword[fennol_md] qtb/tau_ad
-            Adaptation time constant for momentum averaging (in ps).
-            Default: 5.0 (RATIO), 1.0 (ADABELIEF)
+            Adaptation time constant for momentum averaging.
+            Default: 5.0 ps (RATIO), 1.0 ps (ADABELIEF)
             """
             tau_s = qtb_parameters.get("tau_s", 10 * tau_ad) * au.FS
             """@keyword[fennol_md] qtb/tau_s
-            Second moment time constant for variance averaging (in ps).
+            Second moment time constant for variance averaging.
             Default: 10*tau_ad (RATIO), 100*tau_ad (ADABELIEF)
             """
             assert tau_ad > 0, "tau_ad must be positive"

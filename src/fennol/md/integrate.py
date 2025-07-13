@@ -88,7 +88,7 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
     ### get dynamics parameters
     dt = simulation_parameters.get("dt") * au.FS
     """@keyword[fennol_md] dt
-    Integration time step. Required parameter (use dt[fs] = value).
+    Integration time step. Required parameter.
     Type: float, Required
     """
     dt2 = 0.5 * dt
@@ -489,7 +489,7 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
     """
     nblist_warmup_time = simulation_parameters.get("nblist_warmup_time", -1.0) * au.FS
     """@keyword[fennol_md] nblist_warmup_time
-    Time period for neighbor list warmup before using skin updates (in fs).
+    Time period for neighbor list warmup before using skin updates.
     Default: -1.0
     """
     nblist_warmup = int(nblist_warmup_time / dt) if nblist_warmup_time > 0 else 0

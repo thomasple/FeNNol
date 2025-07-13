@@ -69,6 +69,10 @@ def config_and_run_dynamic(param_file: Path):
     Supported file formats:
         - .fnl: FeNNol native format
         - .yaml/.yml: YAML format
+    
+    Unit conversion in the parameter file:
+        - Units specified in brackets: dt[fs] = 0.5
+        - All units converted to atomic units internally
     """
 
     if not param_file.exists() and not param_file.is_file():

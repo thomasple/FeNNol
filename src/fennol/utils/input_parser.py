@@ -23,7 +23,6 @@ Boolean representations:
 - True: true, yes, .true.
 - False: false, no, .false.
 
-For complete parameter documentation, see fennol.md.dynamic module.
 """
 
 import re
