@@ -144,10 +144,10 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
         system["barostat"] = barostat_state
         system["cell"] = conformation["cells"][0]
         if estimate_pressure:
-            pressure_o_weight = simulation_parameters.get("pressure_o_weight", 0.0)
+            pressure_o_weight = simulation_parameters.get("pressure_o_weight", 1.0)
             """@keyword[fennol_md] pressure_o_weight
-            Weight factor for mixing instantaneous and averaged kinetic pressure contributions.
-            Default: 0.0
+            Weight factor for mixing middle (O) and outer time step kinetic energies in pressure estimator.
+            Default: 1.0
             """
             assert (
                 0.0 <= pressure_o_weight <= 1.0

@@ -549,11 +549,11 @@ def initialize_qtb(
         """
 
         adaptation_method = (
-            str(qtb_parameters.get("adaptation_method", "ADABELIEF")).upper().strip()
+            str(qtb_parameters.get("adaptation_method", "SIMPLE")).upper().strip()
         )
         """@keyword[fennol_md] qtb/adaptation_method
         Method for adaptive QTB (SIMPLE, RATIO, ADABELIEF).
-        Default: ADABELIEF
+        Default: SIMPLE
         """
         if adaptation_method == "SIMPLE":
             agamma = qtb_parameters.get("agamma", 0.1)
