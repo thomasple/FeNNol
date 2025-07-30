@@ -5,7 +5,7 @@ import numpy as np
 
 # from jaxopt.linear_solve import solve_cg, solve_iterative_refinement, solve_gmres
 from typing import Any, Dict, Union, Callable, Sequence, Optional, ClassVar
-from ...utils import AtomicUnits as au
+from ...utils.atomic_units import au
 import dataclasses
 from ...utils.periodic_table import (
     D3_ELECTRONEGATIVITIES,
@@ -42,8 +42,8 @@ def prepare_reciprocal_space(
     expfac = jnp.exp(-a2 * m2) / m2  # nsys x nk
 
     volume = jnp.abs(jnp.linalg.det(cells))  # nsys
-    phiscale = (au.BOHR / jnp.pi) / volume
-    selfscale = bewald * (2 * au.BOHR / jnp.pi**0.5)
+    phiscale = (au.ANG / jnp.pi) / volume
+    selfscale = bewald * (2 * au.ANG / jnp.pi**0.5)
     return batch_index, k_points, phiscale, selfscale, expfac, ks
 
 
@@ -95,8 +95,8 @@ def ewald_reciprocal(q, batch_index, k_points, phiscale, selfscale, expfac, ks):
 
 #     ### compute reciprocal Coulomb potential (https://arxiv.org/abs/1805.10363)
 #     phi = jnp.real((expfac[batch_index] * jnp.exp(-ks)).sum(axis=-1)) * (
-#         (au.BOHR / jnp.pi) / volume[batch_index]
-#     ) - q * (bewald * (2 * au.BOHR / jnp.pi**0.5))
+#         (au.ANG / jnp.pi) / volume[batch_index]
+#     ) - q * (bewald * (2 * au.ANG / jnp.pi**0.5))
 
 #     return 0.5 * q * phi, phi
 
@@ -140,7 +140,7 @@ class Coulomb(nn.Module):
         distances = graph["distances"]
         switch = graph["switch"]
 
-        rij = distances / au.BOHR
+        rij = distances / au.ANG
         q = inputs[self.charges_key]
         if q.shape[-1] == 1:
             q = jnp.squeeze(q, axis=-1)
@@ -449,7 +449,7 @@ class QeqD4(nn.Module):
         edge_src, edge_dst = graph["edge_src"], graph["edge_dst"]
         switch = graph["switch"]
 
-        rij = graph["distances"] / au.BOHR
+        rij = graph["distances"] / au.ANG
 
         do_recip = "k_points" in graph
         if do_recip:

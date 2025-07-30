@@ -11,7 +11,7 @@ from ..utils.io import last_xyz_frame
 from ..models import FENNIX
 
 from ..utils.periodic_table import PERIODIC_TABLE_REV_IDX, ATOMIC_MASSES
-from ..utils.atomic_units import AtomicUnits as au
+from .utils import us
 from ..utils import detect_topology,parse_cell
 
 
@@ -104,7 +104,8 @@ def load_system_data(simulation_parameters, fprec):
 
         assert np.isclose(mass.sum(), totmass_Da), "Mass conservation failed"
 
-    mass = mass * (au.MPROT * (au.FS / au.BOHR) ** 2)
+    # convert to internal units
+    mass = mass / us.DA
 
     ### GET TEMPERATURE
     temperature = np.clip(simulation_parameters.get("temperature", 300.0), 1.0e-6, None)
@@ -112,7 +113,7 @@ def load_system_data(simulation_parameters, fprec):
     Target temperature in Kelvin.
     Default: 300.0
     """
-    kT = temperature / au.KELVIN
+    kT = us.K_B * temperature 
 
     ### GET TOTAL CHARGE
     total_charge = simulation_parameters.get("total_charge", None)
@@ -132,7 +133,7 @@ def load_system_data(simulation_parameters, fprec):
     Energy unit for output. Common options: 'kcal/mol', 'eV', 'Ha', 'kJ/mol'.
     Default: "kcal/mol"
     """
-    energy_unit = au.get_multiplier(energy_unit_str)
+    energy_unit = us.get_multiplier(energy_unit_str)
 
     ## SYSTEM DATA
     system_data = {
@@ -176,7 +177,7 @@ def load_system_data(simulation_parameters, fprec):
         for l in cell:
             print("# ", l)
         # print(cell)
-        dens = totmass_Da * (au.MPROT*au.GCM3) / volume
+        dens = (totmass_Da/volume) * (us.MOL/us.CM**3)
         print("# density: ", dens.item(), " g/cm^3")
         minimum_image = simulation_parameters.get("minimum_image", True)
         """@keyword[fennol_md] minimum_image
@@ -264,7 +265,7 @@ def load_system_data(simulation_parameters, fprec):
         eigmat[-1, 0] = -1.0
         omk, eigmat = np.linalg.eigh(eigmat)
         omk[0] = 0.0
-        omk = nbeads * kT * omk**0.5 / au.FS
+        omk = (nbeads * kT / us.HBAR) * omk**0.5
         for i in range(nbeads):
             if eigmat[i, 0] < 0:
                 eigmat[i] *= -1.0

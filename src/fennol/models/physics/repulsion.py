@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import flax.linen as nn
 import numpy as np
 from typing import Any, Dict, Union, Callable, Sequence, Optional, ClassVar
-from ...utils import AtomicUnits as au
+from ...utils.atomic_units import au
 from ...utils.periodic_table import D3_COV_RADII, UFF_VDW_RADII
 
 
@@ -28,7 +28,7 @@ class RepulsionZBL(nn.Module):
     _energy_unit: str = "Ha"
     """The energy unit of the model. **Automatically set by FENNIX**"""
     proportional_regularization: bool = True
-    d: float = 0.46850 / au.BOHR
+    d: float = 0.46850 / au.ANG
     p: float = 0.23
     alphas: Sequence[float] = (3.19980, 0.94229, 0.40290, 0.20162)
     cs: Sequence[float] = (0.18175273, 0.5098655, 0.28021213, 0.0281697)
@@ -44,7 +44,7 @@ class RepulsionZBL(nn.Module):
 
         training = "training" in inputs.get("flags", {})
 
-        rijs = graph["distances"] / au.BOHR
+        rijs = graph["distances"] / au.ANG
 
         d_ = self.d
         p_ = self.p
@@ -241,7 +241,7 @@ class RepulsionNLH(nn.Module):
         ereppair = Zij * phi / rijs
 
         energy_unit = au.get_multiplier(self._energy_unit)
-        erep_atomic = (energy_unit * 0.5 * au.BOHR) * jax.ops.segment_sum(
+        erep_atomic = (energy_unit * 0.5 * au.ANG) * jax.ops.segment_sum(
             ereppair, edge_src, species.shape[0]
         )
 
@@ -252,7 +252,7 @@ class RepulsionNLH(nn.Module):
             dphidr = -(alphas * cs * jnp.exp(-alphas * rijs[:, None])).sum(axis=-1)
             dedr = Zij * (dphidr / rijs - phi / (rijs**2))
             dedij = (dedr / rijs)[:, None] * graph["vec"]
-            fi = (energy_unit * au.BOHR) * jax.ops.segment_sum(
+            fi = (energy_unit * au.ANG) * jax.ops.segment_sum(
                 dedij, edge_src, species.shape[0]
             )
             output[self.direct_forces_key] = fi

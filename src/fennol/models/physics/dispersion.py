@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import flax.linen as nn
 import numpy as np
 from typing import Any, Dict, Union, Callable, Sequence, Optional, ClassVar
-from ...utils import AtomicUnits as au
+from ...utils.atomic_units import au
 from ...utils.periodic_table import (
     D3_ELECTRONEGATIVITIES,
     D3_HARDNESSES,
@@ -51,7 +51,7 @@ class VdwOQDO(nn.Module):
         species = inputs["species"]
         graph = inputs[self.graph_key]
         edge_src, edge_dst = graph["edge_src"], graph["edge_dst"]
-        rij = graph["distances"] / au.BOHR
+        rij = graph["distances"] / au.ANG
         switch = graph["switch"]
 
         c6 = jnp.asarray(C6_FREE)[species]
@@ -190,7 +190,7 @@ class DispersionD3(nn.Module):
         switch = graph["switch"]
         species = inputs["species"]
 
-        rij = jnp.clip(graph["distances"] / au.BOHR, 1e-6, None)
+        rij = jnp.clip(graph["distances"] / au.ANG, 1e-6, None)
 
         ## RADII (in BOHR)
         rcov = jnp.array(DATA_D3["COV_D3"])[species]

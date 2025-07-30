@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Test for the polarisation model in FENNOL."""
+"""Test for the polarization model in FENNOL."""
 import jax
 import jax.numpy as jnp
 from fennol import FENNIX
 from jax.random import PRNGKey
-from fennol.utils import AtomicUnits as Au
+from fennol.utils.atomic_units import au
 
 ###############################
 # Test using Tinker reference #
@@ -23,7 +23,7 @@ modules = {
             'H': 0.27912273
         },
     },
-    'polarisability': {
+    'polarizability': {
     'module_name': 'CHEMICAL_CONSTANT',
         'value': {
             'O': 0.9479157,
@@ -33,8 +33,8 @@ modules = {
     'electric_field': {
         'module_name': 'ELECTRIC_FIELD',
     },
-    'polarisation': {
-        'module_name': 'POLARISATION'
+    'polarization': {
+        'module_name': 'POLARIZATION'
     },
 }
 
@@ -71,7 +71,7 @@ output_tinker = model_tinker(
 
 
 def test_tmu():
-    """Test the T@mu output of the polarisation model."""
+    """Test the T@mu output of the polarization model."""
     t_tinker = jnp.array(
         [
             [1.055, 0.000, 0.000, -0.125, 0.000, 0.000, -0.125, 0.000, 0.000],
@@ -84,14 +84,14 @@ def test_tmu():
             [0.000, 0.250, 0.000, 0.000, 0.022, -0.066, 0.000, 2.405, 0.000],
             [0.000, 0.000, -0.125, 0.000, -0.066, 0.022, 0.000, 0.000, 2.405]
         ]
-    ) * Au.BOHR**3
+    ) * au.ANG**3
     electric_field = jnp.array(
         [
             [0, -0.06404562, -0.06404562],
             [0, -0.02453007, -0.10356116],
             [0, -0.10356116, -0.02453007]
         ]
-    ).flatten() * Au.BOHR**2
+    ).flatten() * au.ANG**2
     mu_tinker = jax.scipy.linalg.solve(t_tinker, electric_field)
 
     assert jnp.allclose(  # noqa: S101
@@ -102,8 +102,8 @@ def test_tmu():
 
 
 def test_energy():
-    """Test the energy output of the polarisation model."""
-    predicted_energy = output_tinker['polarisation'].sum().item()
+    """Test the energy output of the polarization model."""
+    predicted_energy = output_tinker['polarization'].sum().item()
     expected_energy = -0.004109111148864031
     assert jnp.allclose(predicted_energy, expected_energy, atol=1e-6)  # noqa: S101
 
@@ -128,7 +128,7 @@ model_water = FENNIX(
                 'H': 0.25
             },
         },
-        'polarisability': {
+        'polarizability': {
         'module_name': 'CHEMICAL_CONSTANT',
             'value': {
                 'O': 1.0,
@@ -138,8 +138,8 @@ model_water = FENNIX(
         'electric_field': {
             'module_name': 'ELECTRIC_FIELD',
         },
-        'polarisation': {
-            'module_name': 'POLARISATION'
+        'polarization': {
+            'module_name': 'POLARIZATION'
         },
     }
 )
@@ -167,7 +167,7 @@ t_water = jnp.array(
         [0, 2, 0, b, a, 0, 0, ah, 0],
         [0, 0, -1, 0, 0, c, 0, 0, ah]
     ]
-) * Au.BOHR**3
+) * au.ANG**3
 
 coordinates_water = jnp.array(
     [
@@ -188,13 +188,13 @@ output_water = model_water(
 
 
 def test_tmu_water():
-    """Test the T@mu output of the polarisation model."""
+    """Test the T@mu output of the polarization model."""
     electric_field = jnp.array(
         [
             [-0.12585367, -0.12585367, 0.],
             [-0.19055352, -0.06115383, 0.],
             [-0.06115383, -0.19055352, 0.]]
-    ).flatten() * Au.BOHR**2
+    ).flatten() * au.ANG**2
     mu_water = jax.scipy.linalg.solve(t_water, electric_field)
 
     assert jnp.allclose(  # noqa: S101

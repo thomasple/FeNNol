@@ -1,5 +1,5 @@
 from .spherical_harmonics import CG_SO3, generate_spherical_harmonics
-from .atomic_units import AtomicUnits
+from .atomic_units import AtomicUnits, UnitSystem
 from typing import Dict, Any,Sequence, Union
 import jax
 import jax.numpy as jnp

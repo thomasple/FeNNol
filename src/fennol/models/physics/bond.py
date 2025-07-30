@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import flax.linen as nn
 import numpy as np
 from typing import Any, Dict, Union, Callable, Sequence, Optional, ClassVar
-from ...utils import AtomicUnits as au
+from ...utils.atomic_units import au
 import dataclasses
 from ...utils.periodic_table import (
     D3_ELECTRONEGATIVITIES,
@@ -48,7 +48,7 @@ class CND4(nn.Module):
         else:
             rc = jnp.asarray(D3_COV_RADII)[species]
         rcij = rc[edge_src] + rc[edge_dst]
-        rij = graph["distances"] / au.BOHR
+        rij = graph["distances"] / au.ANG
 
         if self.trainable:
             k0 = self.k0 * jnp.abs(self.param("k0", lambda key: jnp.asarray(1.0)))
@@ -241,7 +241,7 @@ class FlatBottom(nn.Module):
         graph = inputs[self.graph_key]
         edge_src, edge_dst = graph["edge_src"], graph["edge_dst"]
         distances = graph["distances"]
-        rij = distances / au.BOHR
+        rij = distances / au.ANG
         training = "training" in inputs.get("flags", {})
 
         output = {}
@@ -255,7 +255,7 @@ class FlatBottom(nn.Module):
         rcov = jnp.asarray(D3_COV_RADII)[species]
         req = self.r_eq_factor * (rcov[edge_src] + rcov[edge_dst])
 
-        alpha = inputs.get("alpha", self.alpha)/ au.KCALPERMOL*au.BOHR**2
+        alpha = inputs.get("alpha", self.alpha)/ au.KCALPERMOL*au.ANG**2
 
         flat_bottom_energy = jnp.where(
             rij > req, alpha  * (rij - req) ** 2, 0.

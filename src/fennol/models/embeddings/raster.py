@@ -10,7 +10,7 @@ from ...utils.spherical_harmonics import generate_spherical_harmonics
 from ..misc.e3 import  ChannelMixing
 from ..misc.nets import FullyConnectedNet,BlockIndexNet
 from ...utils.activations import activation_from_str
-from ...utils import AtomicUnits as au
+from ...utils.atomic_units import au
 from ...utils.initializers import initializer_from_str
 
 class RaSTER(nn.Module):
@@ -147,7 +147,7 @@ class RaSTER(nn.Module):
             use_switch_cov = True
             assert self.switch_cov_start < self.switch_cov_end, f"switch_cov_start {self.switch_cov_start} must be smaller than switch_cov_end {self.switch_cov_end}"
             assert self.switch_cov_start > 0 and self.switch_cov_end < 1, f"switch_cov_start {self.switch_cov_start} and switch_cov_end {self.switch_cov_end} must be between 0 and 1"
-            rc = jnp.array(D3_COV_RADII*au.BOHR)[species]
+            rc = jnp.array(D3_COV_RADII*au.ANG)[species]
             rcij = rc[edge_src] + rc[edge_dst]
             rstart = rcij * self.switch_cov_start
             rend = rcij * self.switch_cov_end

@@ -2,7 +2,7 @@ import flax.linen as nn
 import jax.numpy as jnp
 from typing import Sequence, Callable
 import numpy as np
-from .atomic_units import AtomicUnits as au
+from .atomic_units import au
 from .xenonpy_props import XENONPY_PROPS
 
 PERIODIC_TABLE_STR = """
@@ -282,7 +282,7 @@ COV_RADII = np.array(
         + [1.0]
     )
 
-COV_RADII = COV_RADII / au.BOHR
+COV_RADII = COV_RADII / au.ANG
 
 
 EL_STRUCT = [[0] * 19] * len(PERIODIC_TABLE)
@@ -1176,7 +1176,7 @@ D3_COV_RADII = np.array(
     ]
     + [1.0]
 )
-D3_COV_RADII = D3_COV_RADII/ au.BOHR
+D3_COV_RADII = D3_COV_RADII/ au.ANG
 
 # free atom vdw radii in bohr from Tkatchenko-Scheffler
 VDW_RADII_TS = np.array([
@@ -2762,7 +2762,7 @@ UFF_MAX_COV_RADII[102]=1.679
 UFF_MAX_COV_RADII[103]=1.698
 
 # Convert UFF radii to Bohr
-UFF_MAX_COV_RADII = UFF_MAX_COV_RADII/au.BOHR
+UFF_MAX_COV_RADII = UFF_MAX_COV_RADII/au.ANG
 
 # Van der Waals radii from UFF (in Angstrom)
 UFF_VDW_RADII = np.ones(len(PERIODIC_TABLE),dtype=float) # [1.]*len(PERIODIC_TABLE)
@@ -2871,7 +2871,7 @@ UFF_VDW_RADII[102]=3.248
 UFF_VDW_RADII[103]=3.236
 
 # Convert UFF radii to Bohr
-UFF_VDW_RADII = UFF_VDW_RADII/au.BOHR
+UFF_VDW_RADII = UFF_VDW_RADII/au.ANG
 
 UFF_EFFECTIVE_CHARGE = np.zeros(len(PERIODIC_TABLE),dtype=float) #[0.0] * len(PERIODIC_TABLE)
 UFF_EFFECTIVE_CHARGE[1]=0.712
@@ -3336,7 +3336,7 @@ UFF_COV_RADII[101][0]=1.689
 UFF_COV_RADII[102][0]=1.679
 UFF_COV_RADII[103][0]=1.698
 
-UFF_COV_RADII = UFF_COV_RADII/au.BOHR
+UFF_COV_RADII = UFF_COV_RADII/au.ANG
 
 
 UFF_COV_ANGLE = 180.*np.ones((len(PERIODIC_TABLE),5),dtype=float)

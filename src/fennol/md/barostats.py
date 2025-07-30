@@ -6,14 +6,7 @@ import math
 import optax
 from enum import Enum
 
-from ..utils.atomic_units import AtomicUnits as au  # CM1,THZ,BOHR,MPROT
-from ..utils import Counter
-from ..utils.deconvolution import (
-    deconvolute_spectrum,
-    kernel_lorentz_pot,
-    kernel_lorentz,
-)
-
+from .utils import us
 
 def get_barostat(
     thermostat, simulation_parameters, dt, system_data, fprec, rng_key=None, restart_data={}
@@ -37,7 +30,6 @@ def get_barostat(
         assert (
             target_pressure is not None
         ), "target_pressure must be specified for NPT/NPH simulations"
-        target_pressure = target_pressure / au.BOHR**3
 
     nbeads = system_data.get("nbeads", None)
     variable_cell = True
@@ -51,36 +43,36 @@ def get_barostat(
     isotropic = not anisotropic
 
     pbc_data = system_data["pbc"]
-    start_barostat = simulation_parameters.get("start_barostat", 0.0)*au.FS
+    start_barostat = simulation_parameters.get("start_barostat", 0.0)
     """@keyword[fennol_md] start_barostat
     Time delay before starting barostat pressure coupling.
     Default: 0.0
     """
-    start_time = restart_data.get("simulation_time_ps",0.) * 1e3
+    start_time = restart_data.get("simulation_time_ps",0.) / us.PS
     start_barostat = max(0.,start_barostat-start_time)
     istart_barostat = int(round(start_barostat / dt))
     if istart_barostat > 0 and barostat_name not in ["NONE"]:
         print(
-            f"# BAROSTAT will start at {start_barostat/1000:.3f} ps ({istart_barostat} steps)"
+            f"# BAROSTAT will start at {start_barostat*us.PS:.3f} ps ({istart_barostat} steps)"
         )
     else:
         istart_barostat = 0
 
     if barostat_name in ["LGV", "LANGEVIN"]:
         assert rng_key is not None, "rng_key must be provided for QTB barostat"
-        gamma = simulation_parameters.get("gamma_piston", 20.0 / au.THZ) / au.FS
+        gamma = simulation_parameters.get("gamma_piston", 20.0 / us.THZ)
         """@keyword[fennol_md] gamma_piston
         Piston friction coefficient for Langevin barostat.
         Default: 20.0 ps^-1
         """
-        tau_piston = simulation_parameters.get("tau_piston", 200.0 / au.FS) * au.FS
+        tau_piston = simulation_parameters.get("tau_piston", 200.0 / us.FS)
         """@keyword[fennol_md] tau_piston
         Piston time constant for barostat coupling.
         Default: 200.0 fs
         """
         nat = system_data["nat"]
         masspiston = 3 * nat * kT * tau_piston**2
-        print(f"# LANGEVIN barostat with piston mass={masspiston:.1e} Ha.fs^2")
+        print(f"# LANGEVIN barostat with piston mass={masspiston*us.get_multiplier('KCALPERMOL*PS^{2}'):.1e} kcal/mol.ps^2")
         a1 = math.exp(-gamma * dt)
         a2 = ((1 - a1 * a1) * kT / masspiston) ** 0.5
 
@@ -208,7 +200,7 @@ def get_barostat(
                 x = jnp.concatenate((x[None], eigx), axis=0)
                 vel = jnp.concatenate((vel[None], eigv), axis=0)
 
-            piston_temperature = (au.KELVIN * masspiston/ndof_piston) * jnp.sum(vextvol**2)
+            piston_temperature = (us.KELVIN * masspiston/ndof_piston) * jnp.sum(vextvol**2)
             barostat_state = {
                 **barostat_state,
                 "istep": istep,

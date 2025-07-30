@@ -2,8 +2,11 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import pickle
-from ..utils import AtomicUnits as au
+from ..utils import UnitSystem
 from functools import partial
+
+# Define the unit system for fennol_md
+us = UnitSystem(L="ANGSTROM", T="PS", E="KCALPERMOL")  
 
 def get_restart_file(system_data):
     restart_file = system_data["name"] + ".dyn.restart"
@@ -39,7 +42,7 @@ def save_dynamics_restart(system_data, conformation, dyn_state, system):
         "coordinates": conformation["coordinates"],
         "vel": system["vel"],
         "preproc_state": dyn_state["preproc_state"],
-        "simulation_time_ps": dyn_state["start_time_ps"] + (dyn_state["dt"]*1e-3)* dyn_state["istep"],
+        "simulation_time_ps": dyn_state["start_time_ps"] + (dyn_state["dt"]*us.PS)* dyn_state["istep"],
     }
     if "cells" in conformation:
         restart_data["cells"] = conformation["cells"]
@@ -68,17 +71,16 @@ def wrapbox(x, cell, reciprocal_cell, wrap_groups = None):
 
 
 def test_pressure_fd(system_data, conformation, model, verbose=True):
-    model_energy_unit = au.get_multiplier(model.energy_unit)
+    model_energy_unit = us.get_multiplier(model.energy_unit)
     nat = system_data["nat"]
     volume = system_data["pbc"]["volume"]
     coordinates = conformation["coordinates"]
     cell = conformation["cells"][0]
-    # temper = 2 * ek / (3.0 * nat) * au.KELVIN
     ek = 1.5 * nat * system_data["kT"]
-    Pkin = (2 * au.KBAR) * ek / ((3.0 / au.BOHR**3) * volume)
+    Pkin = (2 * us.KBAR / 3.) * ek / volume
     e, f, vir_t, _ = model._energy_and_forces_and_virial(model.variables, conformation)
-    KBAR = au.KBAR / model_energy_unit
-    Pvir = -(np.trace(vir_t[0]) * KBAR) / ((3.0 / au.BOHR**3) * volume)
+    KBAR = us.KBAR / model_energy_unit
+    Pvir = -(np.trace(vir_t[0]) * KBAR) / (3.0 * volume)
     vstep = volume * 0.000001
     scalep = ((volume + vstep) / volume) ** (1.0 / 3.0)
     cellp = cell * scalep
@@ -104,7 +106,7 @@ def test_pressure_fd(system_data, conformation, model, verbose=True):
         }
     )
     em, _ = model._total_energy(model.variables, sysm)
-    Pvir_fd = -(ep[0] * KBAR - em[0] * KBAR) / (2.0 * vstep / au.BOHR**3)
+    Pvir_fd = -(ep[0] * KBAR - em[0] * KBAR) / (2.0 * vstep)
     if verbose:
         print(
             f"# Initial pressure: {Pkin+Pvir:.3f} (virial); {Pkin+Pvir_fd:.3f} (finite difference) ; Pkin: {Pkin:.3f} ; Pvir: {Pvir:.3f} ; Pvir_fd: {Pvir_fd:.3f}"

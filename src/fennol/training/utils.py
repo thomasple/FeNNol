@@ -6,7 +6,8 @@ import optax
 from copy import deepcopy
 from functools import partial
 
-from ..utils import deep_update, AtomicUnits as au
+from ..utils import deep_update
+from ..utils.atomic_units import au
 from ..models import FENNIX
         
 

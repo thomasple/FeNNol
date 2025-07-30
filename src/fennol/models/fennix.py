@@ -9,7 +9,7 @@ import flax.linen as nn
 import numpy as np
 from flax import serialization
 from flax.core.frozen_dict import freeze, unfreeze, FrozenDict
-from ..utils import AtomicUnits as au
+from ..utils.atomic_units import au
 
 from .preprocessing import (
     GraphGenerator,

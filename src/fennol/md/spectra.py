@@ -9,7 +9,7 @@ from pathlib import Path
 from flax.core import freeze, unfreeze
 
 from ..models.fennix import FENNIX
-from ..utils.atomic_units import AtomicUnits as au  # CM1,THZ,BOHR,MPROT
+from .utils import us 
 from ..utils import Counter
 from ..utils.deconvolution import (
     deconvolute_spectrum,
@@ -56,7 +56,7 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
         dipole_model.preproc_state = freeze(preproc_state)
 
 
-    Tseg = parameters.get("tseg", 1.0 / au.PS) * au.FS
+    Tseg = parameters.get("tseg", 1.0 / us.PS)
     """@keyword[fennol_md] ir_parameters/tseg
     Time segment length for IR spectrum calculation.
     Default: 1.0 ps
@@ -64,7 +64,7 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
     nseg = int(Tseg / dt)
     Tseg = nseg * dt
     dom = 2 * np.pi / (3 * Tseg)
-    omegacut = parameters.get("omegacut", 15000.0 / au.CM1) / au.FS
+    omegacut = parameters.get("omegacut", 15000.0 / us.CM1)
     """@keyword[fennol_md] ir_parameters/omegacut
     Cutoff frequency for IR spectrum.
     Default: 15000.0 cm⁻¹
@@ -74,7 +74,7 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
 
     assert (
         omegacut < omega[-1]
-    ), f"omegacut must be smaller than {omega[-1]*au.CM1} CM-1"
+    ), f"omegacut must be smaller than {omega[-1]*us.CM1} CM-1"
 
     startsave = parameters.get("startsave", 1)
     """@keyword[fennol_md] ir_parameters/startsave
@@ -108,7 +108,7 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
     kT = system_data["kT"]
     kubo_fact = np.ones_like(omega)
     if apply_kubo_fact:
-        uu = 0.5*omega[1:]*au.FS/kT
+        uu = 0.5*us.HBAR*omega[1:]/kT
         kubo_fact[1:] = np.tanh(uu)/uu
 
     do_deconvolution = parameters.get("deconvolution", False)
@@ -117,7 +117,7 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
     Default: False
     """
     if do_deconvolution:
-        gamma = simulation_parameters.get("gamma", 1.0 / au.THZ) / au.FS
+        gamma = simulation_parameters.get("gamma", 1.0 / us.THZ)
         """@keyword[fennol_md] gamma
         Friction coefficient for deconvolution of IR spectra.
         Default: 1.0 ps^-1
@@ -127,17 +127,16 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
         Number of iterations for IR spectrum deconvolution.
         Default: 20
         """
-        print("# Deconvolution of IR spectra with gamma=", gamma*1000,"ps-1 and niter=",niter_deconv)
+        print("# Deconvolution of IR spectra with gamma=", gamma*(1./us.PS),"ps^-1 and niter=",niter_deconv)
     
 
-    kelvin = system_data["temperature"]
+    temp_K = system_data["temperature"]
     c=2.99792458e-2 # speed of light in cm/ps
-    # mufact = 1000*4*np.pi**2/(3*kT*c*au.BOHR**2)
-    mufact = 1000*418.40*332.063714*2*np.pi**2/(0.831446215*kelvin*3.*c)
+    mufact = 1000*418.40*332.063714*2*np.pi**2/(0.831446215*temp_K*3.*c)
     pbc_data = system_data.get("pbc", None)
     if pbc_data is not None:
         cell = pbc_data["cell"]
-        volume = np.abs(np.linalg.det(cell)) #/au.BOHR**3
+        volume = np.abs(np.linalg.det(cell))
         mufact = mufact/volume
 
 
@@ -178,7 +177,7 @@ def initialize_ir_spectrum(simulation_parameters,system_data,fprec,dt,apply_kubo
 
         columns = np.column_stack(
             (
-                omega[:nom] * (au.FS * au.CM1),
+                omega[:nom] * us.CM1,
                 *spectra,
             )
         )

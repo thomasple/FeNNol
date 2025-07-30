@@ -16,8 +16,8 @@ from ..utils.io import (
     write_extxyz_frame,
     human_time_duration,
 )
-from .utils import wrapbox, save_dynamics_restart
-from ..utils import minmaxone, AtomicUnits as au,read_tinker_interval
+from .utils import wrapbox, save_dynamics_restart,us
+from ..utils import minmaxone,read_tinker_interval
 from ..utils.input_parser import parse_input,convert_dict_units, InputFile
 from .integrate import initialize_dynamics
 
@@ -70,20 +70,23 @@ def config_and_run_dynamic(param_file: Path):
         - .fnl: FeNNol native format
         - .yaml/.yml: YAML format
     
+    Internal units are specified by UnitSystem(L="ANGSTROM", T="PS", E="KCALPERMOL")
+
     Unit conversion in the parameter file:
         - Units specified in brackets: dt[fs] = 0.5
-        - All units converted to atomic units internally
+        - All specified units converted to internal units
+        - non-specified units are assumed to be in internal units
     """
 
     if not param_file.exists() and not param_file.is_file():
         raise FileNotFoundError(f"Parameter file {param_file} not found")
-    
+
     if param_file.suffix in [".yaml", ".yml"]:
         with open(param_file, "r") as f:
-            simulation_parameters = convert_dict_units(yaml.safe_load(f))
+            simulation_parameters = convert_dict_units(yaml.safe_load(f),us=us)
             simulation_parameters = InputFile(**simulation_parameters)
     elif param_file.suffix == ".fnl":
-        simulation_parameters = parse_input(param_file)
+        simulation_parameters = parse_input(param_file,us=us)
     else:
         raise ValueError(
             f"Unknown parameter file format '{param_file.suffix}'. Supported formats are '.yaml', '.yml' and '.fnl'"
@@ -189,7 +192,7 @@ def dynamic(simulation_parameters, device, fprec):
     start_time_ps = dyn_state.get("start_time_ps", 0.0)
 
     ### Set I/O parameters
-    Tdump = simulation_parameters.get("tdump", 1.0 / au.PS) * au.FS
+    Tdump = simulation_parameters.get("tdump", 1.0 / us.PS)
     """@keyword[fennol_md] tdump
     Time interval between trajectory frames.
     Default: 1.0 ps
@@ -337,7 +340,7 @@ def dynamic(simulation_parameters, device, fprec):
         Pressure unit for output. Options: 'atm', 'bar', 'Pa', 'GPa'.
         Default: "atm"
         """
-        pressure_unit = au.get_multiplier(pressure_unit_str) * au.BOHR**3
+        pressure_unit = us.get_multiplier(pressure_unit_str)
         p_str = f"  Press[{pressure_unit_str}]"
         header += f" {p_str:>10}"
     if variable_cell:
@@ -420,7 +423,7 @@ def dynamic(simulation_parameters, device, fprec):
             ek = system["ek"]
             epot = system["epot"]
             etot = ek + epot
-            temper = 2 * ek / (3.0 * nat) * au.KELVIN
+            temper = 2 * ek / (3.0 * nat) * us.KELVIN
 
             th_state = system["thermostat"]
             if include_thermostat_energy:
@@ -439,12 +442,12 @@ def dynamic(simulation_parameters, device, fprec):
             properties_traj["Temper[Kelvin]"].append(temper)
             if pimd:
                 ek_c = system["ek_c"]
-                temper_c = 2 * ek_c / (3.0 * nat) * au.KELVIN
+                temper_c = 2 * ek_c / (3.0 * nat) * us.KELVIN
                 properties_traj["Temper_c[Kelvin]"].append(temper_c)
 
             ### construct line of properties
-            simulated_time = start_time_ps + istep * dt / 1000
-            line = f"{istep:10.6g} {simulated_time:10.3f} {etot*atom_energy_unit:#10.4f}  {epot*atom_energy_unit:#10.4f} {ek*atom_energy_unit:#10.4f} {temper:10.2f}"
+            simulated_time_ps = start_time_ps + istep * dt * us.PS
+            line = f"{istep:10.6g} {simulated_time_ps:10.3f} {etot*atom_energy_unit:#10.4f}  {epot*atom_energy_unit:#10.4f} {ek*atom_energy_unit:#10.4f} {temper:10.2f}"
             if pimd:
                 line += f" {temper_c:10.2f}"
             if include_thermostat_energy:
@@ -501,7 +504,7 @@ def dynamic(simulation_parameters, device, fprec):
             ### save colvars
             if use_colvars:
                 colvars = system["colvars"]
-                fcolvars.write(f"{simulated_time:.3f} ")
+                fcolvars.write(f"{simulated_time_ps:.3f} ")
                 fcolvars.write(" ".join([f"{colvars[k]:.6f}" for k in colvars_names]))
                 fcolvars.write("\n")
                 fcolvars.flush()
@@ -546,7 +549,7 @@ def dynamic(simulation_parameters, device, fprec):
 
             properties = {
                 "energy": float(system["epot"]) * energy_unit,
-                "Time_ps": start_time_ps + istep * dt / 1000,
+                "Time_ps": start_time_ps + istep * dt * us.PS,
                 "energy_unit": energy_unit_str,
             }
 
@@ -595,15 +598,15 @@ def dynamic(simulation_parameters, device, fprec):
             tfull = time.time() - t0full
             t0full = time.time()
             tperstep = tfull / (nsummary)
-            nsperday = (24 * 60 * 60 / tperstep) * dt / 1e6
+            nsperday = (24 * 60 * 60 / tperstep) * dt * us.NS
             elapsed_time = time.time() - tstart_dyn
             estimated_remaining_time = tperstep * (nsteps - istep)
             estimated_total_time = elapsed_time + estimated_remaining_time
 
             print("#" * 50)
             print(f"# Step {istep:_} of {nsteps:_}  ({istep/nsteps*100:.5g} %)")
-            print(f"# Simulated time      : {istep * dt*1.e-3:.3f} ps")
-            print(f"# Tot. Simu. time     : {start_time_ps + istep * dt*1.e-3:.3f} ps")
+            print(f"# Simulated time      : {istep * dt*us.PS:.3f} ps")
+            print(f"# Tot. Simu. time     : {start_time_ps + istep * dt*us.PS:.3f} ps")
             print(f"# Tot. elapsed time   : {human_time_duration(elapsed_time)}")
             print(
                 f"# Est. total duration   : {human_time_duration(estimated_total_time)}"

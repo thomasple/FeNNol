@@ -27,7 +27,7 @@ Boolean representations:
 
 import re
 from typing import Dict, Any
-from .atomic_units import AtomicUnits as au
+from .atomic_units import au,UnitSystem
 
 _separators = " |,|=|\t|\n"
 _comment_chars = ["#", "!"]
@@ -141,14 +141,14 @@ class InputFile(dict):
         return self.print()
 
 
-def parse_input(input_file):
+def parse_input(input_file,us:UnitSystem=au):
     """
     Parse a FeNNol input file (.fnl format) into a hierarchical parameter structure.
     
     The parser supports:
     - Hierarchical sections using curly braces {}
     - Comments starting with # or !
-    - Unit specifications in brackets [unit] or {unit}
+    - Unit specifications in brackets [unit] => converted to provided UnitSystem (default: atomic units)
     - Boolean values (yes/no, true/false, .true./.false.)
     - Numeric values (int/float)
     - String values
@@ -216,7 +216,7 @@ def parse_input(input_file):
             del path[-1]
             continue
 
-        word0, unit = _get_unit_from_key(word0)
+        word0, unit = _get_unit_from_key(word0,us)
         val = None
         if len(parsed_line) == 1:
             val = True  # keyword only => store True
@@ -252,7 +252,7 @@ def string_to_true_type(word, unit=None):
     return val
 
 
-def _get_unit_from_key(word):
+def _get_unit_from_key(word:str,us:UnitSystem):
     unit_start = max(word.find("{"), word.find("["))
     n = len(word)
     if unit_start < 0:
@@ -274,14 +274,14 @@ def _get_unit_from_key(word):
         if n - unit_start - 2 < 0:
             unit = 1.0
         else:
-            unit = au.get_multiplier(word[unit_start + 1 : -1])
+            unit = us.get_multiplier(word[unit_start + 1 : -1])
             # print(key+" unit= "+str(unit))
     return key, unit
 
 
-def convert_dict_units(d: Dict[str, Any]) -> Dict[str, Any]:
+def convert_dict_units(d: Dict[str, Any],us:UnitSystem=au) -> Dict[str, Any]:
     """
-    Convert all values in a dictionary from specified units to atomic units.
+    Convert all values in a dictionary from specified units to the provided unit system (atomic units by default).
     
     This function recursively processes a dictionary and converts any values
     with unit specifications (indicated by keys containing [unit] or {unit})
@@ -299,12 +299,18 @@ def convert_dict_units(d: Dict[str, Any]) -> Dict[str, Any]:
         {"dt": 20.67..., "temperature": 300.0}
     """
 
+    if not isinstance(d, dict):
+        raise TypeError("Input must be a dictionary")
+    if not d:
+        return d
+    if not isinstance(us, UnitSystem):
+        raise TypeError("Unit system must be an instance of UnitSystem")
     d2 = {}
     for k,v in d.items():
         if isinstance(v, dict):
-            d2[k] = convert_dict_units(v)
+            d2[k] = convert_dict_units(v,us)
             continue
-        key, unit = _get_unit_from_key(k)
+        key, unit = _get_unit_from_key(k,us)
         if unit is None:
             d2[k] = v
             continue

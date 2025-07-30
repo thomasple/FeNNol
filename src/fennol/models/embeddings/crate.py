@@ -352,7 +352,7 @@ class CRATEmbedding(nn.Module):
         radial_basis = radial_basis * switch
 
         # # add covalent indicator
-        # rc = jnp.asarray([d/au.BOHR for d in D3_COV_RADII])[species]
+        # rc = jnp.asarray([d/au.ANG for d in D3_COV_RADII])[species]
         # rcij = rc[edge_src] + rc[edge_dst]
         # fact = graph["switch"]*(2*distances/rcij)*jnp.exp(-0.5 * ((distances - rcij)/(0.1*rcij)) ** 2)
         # radial_basis = jnp.concatenate([radial_basis,fact[:,None]],axis=-1)

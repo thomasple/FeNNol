@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 from typing import ClassVar
 
-from fennol.utils import AtomicUnits as Au
+from fennol.utils.atomic_units import au
 
 
 class ElectricField(nn.Module):
@@ -43,10 +43,10 @@ class ElectricField(nn.Module):
 
         # Distance and vector between each pair of atoms in atomic units
         distances = graph['distances']
-        rij = distances / Au.BOHR
-        vec_ij = graph['vec'] / Au.BOHR
+        rij = distances / au.ANG
+        vec_ij = graph['vec'] / au.ANG
         polarizability = (
-            inputs[self.polarizability_key] / Au.BOHR**3
+            inputs[self.polarizability_key] / au.ANG**3
         )
         pol_src = polarizability[edge_src]
         pol_dst = polarizability[edge_dst]

@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 from typing import Optional, ClassVar
 
-from fennol.utils import AtomicUnits as Au
+from fennol.utils.atomic_units import  au
 
 
 class Polarization(nn.Module):
@@ -54,11 +54,11 @@ class Polarization(nn.Module):
         edge_src, edge_dst = graph['edge_src'], graph['edge_dst']
         # Distances and vector between each pair of atoms in atomic units
         distances = graph['distances']
-        rij = distances / Au.BOHR
-        vec_ij = graph['vec'] / Au.BOHR
+        rij = distances / au.ANG
+        vec_ij = graph['vec'] / au.ANG
         # Polarizability
         polarizability = (
-            inputs[self.polarizability_key] / Au.BOHR**3
+            inputs[self.polarizability_key] / au.ANG**3
         )
 
         pol_src = polarizability[edge_src]
@@ -128,11 +128,11 @@ class Polarization(nn.Module):
 
         # Output
         output[self.electric_field_key] = electric_field.reshape(-1, 3)
-        output[self.induced_dipoles_key] = mu.reshape(-1, 3) * Au.BOHR
+        output[self.induced_dipoles_key] = mu.reshape(-1, 3) * au.ANG
         energy_key = (
             self.energy_key if self.energy_key is not None else self.name
         )
-        energy_unit = Au.get_multiplier(self._energy_unit)
+        energy_unit = au.get_multiplier(self._energy_unit)
         output[energy_key] = pol_energy*energy_unit
         output['tmu'] = tmu.reshape(-1, 3)
 

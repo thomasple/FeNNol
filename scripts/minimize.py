@@ -11,9 +11,8 @@ from fennol.models import FENNIX
 from fennol.utils import parse_cell, cell_vectors_to_lengths_angles
 from fennol.utils.io import last_xyz_frame, write_xyz_frame, write_arc_frame
 from fennol.utils.periodic_table import PERIODIC_TABLE_REV_IDX
-from fennol.utils.atomic_units import AtomicUnits as au
+from fennol.utils.atomic_units import au
 from fennol.md.utils import optimize_fire2
-from scipy.optimize import minimize
 
 
 def main():

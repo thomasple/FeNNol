@@ -6,20 +6,19 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from ..utils.atomic_units import AtomicUnits as au
 from .thermostats import get_thermostat
 from .barostats import get_barostat
 from .colvars import setup_colvars
 from .spectra import initialize_ir_spectrum
 
-from .utils import load_dynamics_restart, get_restart_file,optimize_fire2
+from .utils import load_dynamics_restart, get_restart_file,optimize_fire2, us
 from .initial import load_model, load_system_data, initialize_preprocessing
 
 
 def initialize_dynamics(simulation_parameters, fprec, rng_key):
     ### LOAD MODEL
     model = load_model(simulation_parameters)
-    model_energy_unit = au.get_multiplier(model.energy_unit)
+    model_energy_unit = us.get_multiplier(model.energy_unit)
 
     ### Get the coordinates and species from the xyz file
     system_data, conformation = load_system_data(simulation_parameters, fprec)
@@ -50,7 +49,7 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
     if minimize and not do_restart:
         assert system_data["nreplicas"] == 1, "Minimization is only supported for single replica systems"
         model.preproc_state = preproc_state
-        convert = au.KCALPERMOL / model.Ha_to_model_energy
+        convert = us.KCALPERMOL / model_energy_unit
         nat = system_data["nat"]
         def energy_force_fn(coordinates):
             inputs = {**conformation, "coordinates": coordinates}
@@ -60,7 +59,7 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
             e = float(e[0]) * convert / nat
             f = np.array(f) * convert
             return e, f
-        tol = simulation_parameters.get("xyz_input/minimize_ftol", 1e-1*au.BOHR/au.KCALPERMOL)*au.KCALPERMOL/au.BOHR
+        tol = simulation_parameters.get("xyz_input/minimize_ftol", 1e-1/us.KCALPERMOL)*us.KCALPERMOL
         """@keyword[fennol_md] xyz_input/minimize_ftol
         Force tolerance for minimization.
         Default: 0.1 kcal/mol/Å
@@ -86,14 +85,14 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
         system_data["initial_coordinates"] = np.array(conformation["coordinates"]).copy()
 
     ### get dynamics parameters
-    dt = simulation_parameters.get("dt") * au.FS
+    dt = simulation_parameters.get("dt")
     """@keyword[fennol_md] dt
     Integration time step. Required parameter.
     Type: float, Required
     """
     dt2 = 0.5 * dt
     mass = system_data["mass"]
-    densmass = system_data["totmass_Da"]*(au.MPROT*au.GCM3)
+    densmass = system_data["totmass_Da"] * (us.MOL/us.CM**3)
     nat = system_data["nat"]
     dtm = jnp.asarray(dt / mass[:, None], dtype=fprec)
     ek_avg = 0.5 * nat * system_data["kT"] * np.eye(3)
@@ -487,7 +486,7 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
     Number of steps between full neighbor list rebuilds. Auto-calculated from skin if <= 0.
     Default: -1
     """
-    nblist_warmup_time = simulation_parameters.get("nblist_warmup_time", -1.0) * au.FS
+    nblist_warmup_time = simulation_parameters.get("nblist_warmup_time", -1.0)
     """@keyword[fennol_md] nblist_warmup_time
     Time period for neighbor list warmup before using skin updates.
     Default: -1.0

@@ -6,7 +6,7 @@ import math
 import dataclasses
 import numpy as np
 from .nets import FullyConnectedNet
-from ...utils import AtomicUnits as au
+from ...utils.atomic_units import  au
 from functools import partial
 from ...utils.periodic_table import (
     PERIODIC_TABLE_REV_IDX,
@@ -326,7 +326,7 @@ class RadialBasis(nn.Module):
     """ Whether the basis parameters are trainable or fixed."""
     enforce_positive: bool = False
     """ Whether to enforce distance-start to be positive"""
-    gamma: float = 1.0 / (2 * au.BOHR)
+    gamma: float = 1.0 / (2 * au.ANG)
     """ The gamma parameter for the "spooky" basis."""
     n_levels: int = 10
     """ The number of levels for the "levels" basis."""
@@ -519,7 +519,7 @@ class RadialBasis(nn.Module):
             # n = jnp.asarray(n[None,:], dtype=x.dtype)
             # k = jnp.asarray(k[None,:], dtype=x.dtype)
 
-            # gamma = 1.0 / (2 * au.BOHR)
+            # gamma = 1.0 / (2 * au.ANG)
             # if self.trainable:
             #     gamma = jnp.abs(
             #         self.param("gamma", lambda key: jnp.asarray(gamma, dtype=x.dtype))

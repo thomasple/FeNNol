@@ -8,7 +8,7 @@ from .models.preprocessing import convert_to_jax
 from typing import Sequence, Union, Optional
 from ase.stress import full_3x3_to_voigt_6_stress
 import jax
-from .utils import AtomicUnits as au
+from .utils.atomic_units import au
 
 class FENNIXCalculator(ase.calculators.calculator.Calculator):
     """FENNIX calculator for ASE.

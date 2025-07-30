@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 from fennol import FENNIX
 from jax.random import PRNGKey
-from fennol.utils import AtomicUnits as Au
+from fennol.utils.atomic_units import au
 
 ###############################
 # Test using Tinker reference #
@@ -22,7 +22,7 @@ modules = {
             'H': 0.27912273
         },
     },
-    'polarisability': {
+    'polarizability': {
     'module_name': 'CHEMICAL_CONSTANT',
         'value': {
             'O': 0.9479157,
@@ -74,7 +74,7 @@ def test_electric_field():
             [0, -0.02453007, -0.10356116],
             [0, -0.10356116, -0.02453007]
         ]
-    ).flatten() * Au.BOHR**2
+    ).flatten() * au.ANG**2
 
     assert jnp.allclose(  # noqa: S101
         output_tinker['electric_field'].flatten(),
@@ -103,7 +103,7 @@ model_water = FENNIX(
                 'H': 0.25
             },
         },
-        'polarisability': {
+        'polarizability': {
         'module_name': 'CHEMICAL_CONSTANT',
             'value': {
                 'O': 1.0,
@@ -166,7 +166,7 @@ def test_electric_field_water():
             [-0.12585367, -0.12585367, 0.],
             [-0.19055352, -0.06115383, 0.],
             [-0.06115383, -0.19055352, 0.]]
-    ).flatten() * Au.BOHR**2
+    ).flatten() * au.ANG**2
 
     assert jnp.allclose(  # noqa: S101
         output_water['electric_field'].flatten(),

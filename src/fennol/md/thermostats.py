@@ -7,7 +7,7 @@ import optax
 import os
 import pickle
 
-from ..utils.atomic_units import AtomicUnits as au  # CM1,THZ,BOHR,MPROT
+from .utils import us 
 from ..utils import Counter
 from ..utils.deconvolution import (
     deconvolute_spectrum,
@@ -37,7 +37,7 @@ def get_thermostat(simulation_parameters, dt, system_data, fprec, rng_key=None, 
     kT = system_data.get("kT", None)
     nbeads = system_data.get("nbeads", None)
     mass = system_data["mass"]
-    gamma = simulation_parameters.get("gamma", 1.0 / au.THZ) / au.FS
+    gamma = simulation_parameters.get("gamma", 1.0 / us.THZ)
     """@keyword[fennol_md] gamma
     Friction coefficient for Langevin thermostat.
     Default: 1.0 ps^-1
@@ -334,7 +334,7 @@ def get_thermostat(simulation_parameters, dt, system_data, fprec, rng_key=None, 
 
         rng_key, v_key = jax.random.split(rng_key)
         Tscale = schedule(0)
-        print(f"# ANNEAL: initial temperature = {Tscale*kT*au.KELVIN:.3e} K")
+        print(f"# ANNEAL: initial temperature = {Tscale*kT*us.KELVIN:.3e} K")
         vel = (
             jax.random.normal(v_key, (mass.shape[0], 3), dtype=fprec)
             * (kT * Tscale / mass[:, None]) ** 0.5
@@ -421,7 +421,7 @@ def initialize_qtb(
 
     # spectra parameters
     omegasmear = np.pi / dt / 100.0
-    Tseg = qtb_parameters.get("tseg", 1.0 / au.PS) * au.FS
+    Tseg = qtb_parameters.get("tseg", 1.0 / us.PS)
     """@keyword[fennol_md] qtb/tseg
     Time segment length for QTB spectrum calculation.
     Default: 1.0 ps
@@ -429,7 +429,7 @@ def initialize_qtb(
     nseg = int(Tseg / dt)
     Tseg = nseg * dt
     dom = 2 * np.pi / (3 * Tseg)
-    omegacut = qtb_parameters.get("omegacut", 15000.0 / au.CM1) / au.FS
+    omegacut = qtb_parameters.get("omegacut", 15000.0 / us.CM1)
     """@keyword[fennol_md] qtb/omegacut
     Cutoff frequency for QTB spectrum.
     Default: 15000.0 cm⁻¹
@@ -441,7 +441,7 @@ def initialize_qtb(
     )
     assert (
         omegacut < omega[-1]
-    ), f"omegacut must be smaller than {omega[-1]*au.CM1} CM-1"
+    ), f"omegacut must be smaller than {omega[-1]*us.CM1} CM-1"
 
     # initialize gammar
     assert (
@@ -458,7 +458,7 @@ def initialize_qtb(
         for i, sp in enumerate(species_set):
             if not os.path.exists(f"QTB_spectra_{sp}.out"): continue
             data = np.loadtxt(f"QTB_spectra_{sp}.out")
-            gammar[i] = data[:, 4]/(gamma*au.FS*au.THZ)
+            gammar[i] = data[:, 4]/(gamma*us.THZ)
             print(f"# Restored gammar for species {sp} from QTB_spectra_{sp}.out")
     except Exception as e:
         print(f"# Could not restore gammar for all species with exception {e}. Starting from scratch.")
@@ -478,7 +478,7 @@ def initialize_qtb(
     Use classical instead of quantum kernel for QTB.
     Default: False
     """
-    hbar = qtb_parameters.get("hbar", 1.0) * au.FS
+    hbar = qtb_parameters.get("hbar", 1.0) * us.HBAR
     """@keyword[fennol_md] qtb/hbar
     Reduced Planck constant scaling factor for quantum effects.
     Default: 1.0 a.u.
@@ -546,14 +546,14 @@ def initialize_qtb(
             adaptation_method in authorized_methods
         ), f"adaptation_method must be one of {authorized_methods}"
         if adaptation_method == "SIMPLE":
-            agamma = qtb_parameters.get("agamma", 1.0e-3) / au.FS
+            agamma = qtb_parameters.get("agamma", 0.1)
             """@keyword[fennol_md] qtb/agamma
             Learning rate for adaptive QTB gamma update.
-            Default: 1.0e-3 (SIMPLE), 0.1 (ADABELIEF)
+            Default: 0.1
             """
             assert agamma > 0, "agamma must be positive"
             a1_ad = agamma * Tseg  #  * gamma
-            print(f"# ADQTB SIMPLE: agamma = {agamma*au.FS:.3f}")
+            print(f"# ADQTB SIMPLE: agamma = {agamma:.3f}")
 
             def update_gammar(post_state):
                 g = post_state["dFDT"]
@@ -562,19 +562,19 @@ def initialize_qtb(
                 return {**post_state, "gammar": gammar}
 
         elif adaptation_method == "RATIO":
-            tau_ad = qtb_parameters.get("tau_ad", 5.0 / au.PS) * au.FS
+            tau_ad = qtb_parameters.get("tau_ad", 5.0 / us.PS) 
             """@keyword[fennol_md] qtb/tau_ad
             Adaptation time constant for momentum averaging.
             Default: 5.0 ps (RATIO), 1.0 ps (ADABELIEF)
             """
-            tau_s = qtb_parameters.get("tau_s", 10 * tau_ad) * au.FS
+            tau_s = qtb_parameters.get("tau_s", 10 * tau_ad)
             """@keyword[fennol_md] qtb/tau_s
             Second moment time constant for variance averaging.
             Default: 10*tau_ad (RATIO), 100*tau_ad (ADABELIEF)
             """
             assert tau_ad > 0, "tau_ad must be positive"
             print(
-                f"# ADQTB RATIO: tau_ad = {tau_ad*1e-3:.2f} ps, tau_s = {tau_s*1e-3:.2f} ps"
+                f"# ADQTB RATIO: tau_ad = {tau_ad*us.PS:.2f} ps, tau_s = {tau_s*us.PS:.2f} ps"
             )
             b1 = np.exp(-Tseg / tau_ad)
             b2 = np.exp(-Tseg / tau_s)
@@ -601,13 +601,13 @@ def initialize_qtb(
 
         elif adaptation_method == "ADABELIEF":
             agamma = qtb_parameters.get("agamma", 0.1)
-            tau_ad = qtb_parameters.get("tau_ad", 1.0 / au.PS) * au.FS
-            tau_s = qtb_parameters.get("tau_s", 100 * tau_ad) * au.FS
+            tau_ad = qtb_parameters.get("tau_ad", 1.0 / us.PS)
+            tau_s = qtb_parameters.get("tau_s", 100 * tau_ad)
             assert tau_ad > 0, "tau_ad must be positive"
             assert tau_s > 0, "tau_s must be positive"
             assert agamma > 0, "agamma must be positive"
             print(
-                f"# ADQTB ADABELIEF: agamma = {agamma:.3f}, tau_ad = {tau_ad*1.e-3:.2f} ps, tau_s = {tau_s*1.e-3:.2f} ps"
+                f"# ADQTB ADABELIEF: agamma = {agamma:.3f}, tau_ad = {tau_ad*us.PS:.2f} ps, tau_s = {tau_s*us.PS:.2f} ps"
             )
 
             a1_ad = agamma * gamma  # * Tseg #* gamma
@@ -681,7 +681,7 @@ def initialize_qtb(
         )
         corr_pot = 1.0 + (s_out - s_0) / s_0
         columns = np.column_stack(
-            (omega[:nom] * au.CM1, corr_pot - 1.0, s_0, s_out, s_rec)
+            (omega[:nom] * us.CM1, corr_pot - 1.0, s_0, s_out, s_rec)
         )
         np.savetxt(
             "corr_pot.dat", columns, header="omega(cm-1) corr_pot s_0 s_out s_rec"
@@ -827,14 +827,14 @@ def initialize_qtb(
         gammar = np.array(post_state["gammar"])
         Cff_theo = np.array(ff_kernel(post_state))[:nom].T
         for i, sp in enumerate(species_set):
-            ff_scale = au.KELVIN / ((2 * gamma / dt) * mass_idx[i])
+            ff_scale = us.KELVIN / ((2 * gamma / dt) * mass_idx[i])
             columns = np.column_stack(
                 (
-                    omega[:nom] * (au.FS * au.CM1),
+                    omega[:nom] * us.CM1,
                     mCvv_avg[i],
                     Cvfg_avg[i],
                     dFDT_avg[i],
-                    gammar[i] * gamma * (au.FS * au.THZ),
+                    gammar[i] * gamma * us.THZ,
                     Cff_avg[i] * ff_scale,
                     Cff_theo[i] * ff_scale,
                 )
