@@ -8,12 +8,13 @@ import os
 import pickle
 
 from .utils import us 
-from ..utils import Counter
+from ..utils import Counter,read_tinker_interval
 from ..utils.deconvolution import (
     deconvolute_spectrum,
     kernel_lorentz_pot,
     kernel_lorentz,
 )
+from ..utils.periodic_table import PERIODIC_TABLE
 
 
 def get_thermostat(simulation_parameters, dt, system_data, fprec, rng_key=None, restart_data={}):
@@ -224,14 +225,6 @@ def get_thermostat(simulation_parameters, dt, system_data, fprec, rng_key=None, 
 
     elif thermostat_name in ["QTB", "ADQTB"]:
         assert nbeads is None, "QTB is not compatible with PIMD"
-        qtb_parameters = simulation_parameters.get("qtb", None)
-        """@keyword[fennol_md] qtb
-        Parameters for Quantum Thermal Bath thermostat configuration.
-        Required for QTB/ADQTB thermostats
-        """
-        assert (
-            qtb_parameters is not None
-        ), "qtb_parameters must be provided for QTB thermostat"
         assert rng_key is not None, "rng_key must be provided for QTB thermostat"
         assert kT is not None, "kT must be specified for QTB thermostat"
         assert gamma is not None, "gamma must be specified for QTB thermostat"
@@ -243,7 +236,7 @@ def get_thermostat(simulation_parameters, dt, system_data, fprec, rng_key=None, 
         )
 
         thermostat, postprocess, qtb_state = initialize_qtb(
-            qtb_parameters,
+            simulation_parameters,
             system_data,
             fprec=fprec,
             dt=dt,
@@ -359,7 +352,7 @@ def get_thermostat(simulation_parameters, dt, system_data, fprec, rng_key=None, 
 
 
 def initialize_qtb(
-    qtb_parameters,
+    simulation_parameters,
     system_data,
     fprec,
     dt,
@@ -373,6 +366,7 @@ def initialize_qtb(
 ):
     state = {}
     post_state = {}
+    qtb_parameters = simulation_parameters.get("qtb", {})
     verbose = qtb_parameters.get("verbose", False)
     """@keyword[fennol_md] qtb/verbose
     Print verbose QTB thermostat information.
@@ -389,12 +383,32 @@ def initialize_qtb(
     nspecies = len(species_set)
     idx = {sp: i for i, sp in enumerate(species_set)}
     type_idx = np.array([idx[sp] for sp in species], dtype=np.int32)
+    type_labels = [PERIODIC_TABLE[sp] for sp in species_set]
 
-    n_of_type = np.zeros(nspecies, dtype=np.int32)
-    for i in range(nspecies):
+    adapt_groups = qtb_parameters.get("adapt_groups", {})
+    """@keyword[fennol_md] qtb/adapt_groups
+    Groups of atoms with separate adQTB parameters (atoms of differents species within groups will be separated in subtypes).
+    Default: {}
+    """
+    ntypes = nspecies
+    allgroups = set()
+    for groupname, interval in adapt_groups.items():
+        indices = read_tinker_interval(interval)
+        assert allgroups.isdisjoint(indices), f"Indices in group {groupname} overlap with other groups"
+        allgroups.update(indices)
+        species_in_group = set(species[indices])
+        idx = {sp: i for i, sp in enumerate(species_in_group)}
+        for i in indices:
+            type_idx[i] = ntypes + idx[species[i]]
+        type_labels += [f"{PERIODIC_TABLE[sp]}_{groupname}" for sp in species_in_group]
+        ntypes = len(type_labels)
+
+    n_of_type = np.zeros(ntypes, dtype=np.int32)
+    for i in range(ntypes):
         n_of_type[i] = (type_idx == i).nonzero()[0].shape[0]
+        print(f"# QTB: n({type_labels[i]}) =", n_of_type[i])
     n_of_type = jnp.asarray(n_of_type, dtype=fprec)
-    mass_idx = jax.ops.segment_sum(mass, type_idx, nspecies) / n_of_type
+    mass_idx = jax.ops.segment_sum(mass, type_idx, ntypes) / n_of_type
 
     niter_deconv_kin = qtb_parameters.get("niter_deconv_kin", 7)
     """@keyword[fennol_md] qtb/niter_deconv_kin
@@ -453,9 +467,9 @@ def initialize_qtb(
     Default: 0.1
     """
     # post_state["gammar"] = jnp.asarray(np.ones((nspecies, nom)), dtype=fprec)
-    gammar = np.ones((nspecies, nom), dtype=float)
+    gammar = np.ones((ntypes, nom), dtype=float)
     try:
-        for i, sp in enumerate(species_set):
+        for i, sp in enumerate(type_labels):
             if not os.path.exists(f"QTB_spectra_{sp}.out"): continue
             data = np.loadtxt(f"QTB_spectra_{sp}.out")
             gammar[i] = data[:, 4]/(gamma*us.THZ)
@@ -515,14 +529,14 @@ def initialize_qtb(
     if do_compute_spectra:
         state["vel"] = jnp.zeros((nseg, nat, 3), dtype=fprec)
 
-        post_state["dFDT"] = jnp.zeros((nspecies, nom), dtype=fprec)
-        post_state["mCvv"] = jnp.zeros((nspecies, nom), dtype=fprec)
-        post_state["Cvf"] = jnp.zeros((nspecies, nom), dtype=fprec)
-        post_state["Cff"] = jnp.zeros((nspecies, nom), dtype=fprec)
-        post_state["dFDT_avg"] = jnp.zeros((nspecies, nom), dtype=fprec)
-        post_state["mCvv_avg"] = jnp.zeros((nspecies, nom), dtype=fprec)
-        post_state["Cvfg_avg"] = jnp.zeros((nspecies, nom), dtype=fprec)
-        post_state["Cff_avg"] = jnp.zeros((nspecies, nom), dtype=fprec)
+        post_state["dFDT"] = jnp.zeros((ntypes, nom), dtype=fprec)
+        post_state["mCvv"] = jnp.zeros((ntypes, nom), dtype=fprec)
+        post_state["Cvf"] = jnp.zeros((ntypes, nom), dtype=fprec)
+        post_state["Cff"] = jnp.zeros((ntypes, nom), dtype=fprec)
+        post_state["dFDT_avg"] = jnp.zeros((ntypes, nom), dtype=fprec)
+        post_state["mCvv_avg"] = jnp.zeros((ntypes, nom), dtype=fprec)
+        post_state["Cvfg_avg"] = jnp.zeros((ntypes, nom), dtype=fprec)
+        post_state["Cff_avg"] = jnp.zeros((ntypes, nom), dtype=fprec)
 
     if not adaptive:
         update_gammar = lambda x: x
@@ -541,10 +555,6 @@ def initialize_qtb(
         Method for adaptive QTB (SIMPLE, RATIO, ADABELIEF).
         Default: ADABELIEF
         """
-        authorized_methods = ["SIMPLE", "RATIO", "ADABELIEF"]
-        assert (
-            adaptation_method in authorized_methods
-        ), f"adaptation_method must be one of {authorized_methods}"
         if adaptation_method == "SIMPLE":
             agamma = qtb_parameters.get("agamma", 0.1)
             """@keyword[fennol_md] qtb/agamma
@@ -613,8 +623,8 @@ def initialize_qtb(
             a1_ad = agamma * gamma  # * Tseg #* gamma
             b1 = np.exp(-Tseg / tau_ad)
             b2 = np.exp(-Tseg / tau_s)
-            post_state["dFDT_m"] = jnp.zeros((nspecies, nom), dtype=fprec)
-            post_state["dFDT_s"] = jnp.zeros((nspecies, nom), dtype=fprec)
+            post_state["dFDT_m"] = jnp.zeros((ntypes, nom), dtype=fprec)
+            post_state["dFDT_s"] = jnp.zeros((ntypes, nom), dtype=fprec)
             post_state["n_adabelief"] = 0
 
             def update_gammar(post_state):
@@ -638,6 +648,10 @@ def initialize_qtb(
                     "n_adabelief": n_adabelief,
                     "dFDT_s": dFDT_s,
                 }
+        else: 
+            raise ValueError(
+                f"Unknown adaptation method {adaptation_method}."
+            )
     
     #####################
     # RESTART
@@ -750,7 +764,7 @@ def initialize_qtb(
             (
                 post_state["gammar"].T * post_state["corr_pot"][:, None],
                 jnp.ones(
-                    (kernel.shape[0] - nom, nspecies), dtype=post_state["gammar"].dtype
+                    (kernel.shape[0] - nom, ntypes), dtype=post_state["gammar"].dtype
                 ),
             ),
             axis=0,
@@ -826,7 +840,7 @@ def initialize_qtb(
         dFDT_avg = np.array(post_state["dFDT_avg"])
         gammar = np.array(post_state["gammar"])
         Cff_theo = np.array(ff_kernel(post_state))[:nom].T
-        for i, sp in enumerate(species_set):
+        for i, sp in enumerate(type_labels):
             ff_scale = us.KELVIN / ((2 * gamma / dt) * mass_idx[i])
             columns = np.column_stack(
                 (
