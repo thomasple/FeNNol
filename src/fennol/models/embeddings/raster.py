@@ -91,6 +91,8 @@ class RaSTER(nn.Module):
     """The end of close-range covalent switch (in units of covalent radii)."""
     normalize_keys: bool = False
     """Whether to normalize queries and keys in the attention mechanism."""
+    normalize_components: bool = False
+    """Whether to normalize the components before the update network."""
     keep_all_layers: bool = False
     """Whether to return the stacked scalar embeddings from all message-passing layers."""
     kernel_init: Optional[str] = None
@@ -385,6 +387,8 @@ class RaSTER(nn.Module):
 
             ### CONCATENATE UPDATE COMPONENTS
             components = jnp.concatenate(components, axis=-1)
+            if self.normalize_components:
+                components = _layer_norm(components)
             ### COMPUTE UPDATE
             if self.block_index_key is not None:
                 ## MoE neural network from block index
