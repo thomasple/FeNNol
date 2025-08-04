@@ -365,10 +365,8 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
             system["virial"] = vir
             out["virial_tensor"] = vir * model_energy_unit
             
-            pV =  2 * ek  - vir
-            system["PV_tensor"] = pV
             volume = jnp.abs(jnp.linalg.det(system["cell"]))
-            Pres = pV / volume
+            Pres =  ek*(2./volume)  - vir/volume
             system["pressure_tensor"] = Pres
             system["pressure"] = jnp.trace(Pres) * (1.0 / 3.0)
             if variable_cell:
@@ -501,7 +499,7 @@ def initialize_dynamics(simulation_parameters, fprec, rng_key):
         if nblist_stride <= 0:
             ## reference skin parameters at 300K (from Tinker-HP)
             ##   => skin of 2 A gives you 40 fs without complete rebuild
-            t_ref = 40.0  # FS
+            t_ref = 40.0 /us.FS # FS
             nblist_skin_ref = 2.0  # A
             nblist_stride = int(math.floor(nblist_skin / nblist_skin_ref * t_ref / dt))
         print(
