@@ -81,8 +81,8 @@ def get_loss_definition(
             loss_prms["mult"] = 1.0
         if "display_unit" not in loss_prms and "unit" in loss_prms:
             loss_prms["display_unit"] = loss_prms["unit"]
-        au_convert = loss_prms["mult"] * au.get_multiplier(loss_prms.get("unit", "au"))
-        loss_prms["display_mult"] = au_convert/au.get_multiplier(loss_prms.get("display_unit", "au"))
+        au_convert = loss_prms["mult"] * au.get_multiplier(loss_prms.get("unit", "1"))
+        loss_prms["display_mult"] = au_convert/au.get_multiplier(loss_prms.get("display_unit", "1"))
 
         if "key" not in loss_prms:
             loss_prms["key"] = k

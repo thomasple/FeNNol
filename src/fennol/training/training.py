@@ -735,7 +735,7 @@ def train(
             "loss": loss,
         }
         for k in rmses_avg.keys():
-            mult = loss_definition[k]["mult"]
+            mult = loss_definition[k]["display_mult"]
             metrics[f"rmse_{k}"] = rmses_avg[k] / mult
             metrics[f"mae_{k}"] = maes_avg[k] / mult
 
@@ -744,7 +744,7 @@ def train(
         if smoothen_metrics:
             nsmooth += 1
             for k in rmses_avg.keys():
-                mult = loss_definition[k]["mult"]
+                mult = loss_definition[k]["display_mult"]
                 rmses_smooth[k] = (
                     metrics_beta * rmses_smooth[k] + (1.0 - metrics_beta) * rmses_avg[k]
                 )
