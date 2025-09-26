@@ -177,7 +177,7 @@ def detect_topology(species,coordinates, cell=None):
     Inspired by OpenBabel's ConnectTheDots in mol.cpp
     """
     from .periodic_table import COV_RADII, UFF_MAX_COORDINATION
-    radii = (COV_RADII* AtomicUnits.BOHR)[species]
+    radii = (COV_RADII* AtomicUnits.ANG)[species]
     max_coord = UFF_MAX_COORDINATION[species]
 
     if cell is not None:
