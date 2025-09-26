@@ -85,6 +85,7 @@ class MACE(nn.Module):
     zmax: int = 86
     """The maximum atomic number to consider."""
     convolution_mode: int = 1
+    species_encoding_key: Optional[str] = None
 
     FID: ClassVar[str] = "MACE"
 
@@ -139,13 +140,16 @@ class MACE(nn.Module):
         encoding_irreps: e3nn.Irreps = (
             (num_features * hidden_irreps).filter("0e").regroup()
         )
-        species_encoding = self.param(
-            "species_encoding",
-            lambda key, shape: jax.nn.standardize(
-                jax.random.normal(key, shape, dtype=jnp.float32)
-            ),
-            (num_species, encoding_irreps.dim),
-        )[species_indices]
+        if self.species_encoding_key is not None:
+            species_encoding = nn.Dense(encoding_irreps.dim,use_bias=False)(inputs[self.species_encoding_key])
+        else:
+            species_encoding = self.param(
+                "species_encoding",
+                lambda key, shape: jax.nn.standardize(
+                    jax.random.normal(key, shape, dtype=jnp.float32)
+                ),
+                (num_species, encoding_irreps.dim),
+            )[species_indices]
         # convert to IrrepsArray
         node_feats = e3nn.IrrepsArray(encoding_irreps, species_encoding)
 
