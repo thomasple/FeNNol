@@ -185,15 +185,18 @@ class MultiEmaState(NamedTuple):
 def multi_ema(
     decays: Sequence[float],
     debias: bool = True,
-    power: Union[bool,Sequence[bool]] = False,
+    power: Union[bool, Sequence[bool]] = False,
 ) -> base.GradientTransformation:
     """Compute mutliple power moving averages of past updates."""
 
     if len(decays) == 0:
+
         def init_fn(params):
             return base.EmptyState()
+
         def update_fn(updates, state, params=None):
             return [updates], state
+
         return base.GradientTransformation(init_fn, update_fn)
 
     if isinstance(power, bool):
@@ -201,7 +204,7 @@ def multi_ema(
     assert len(power) == len(decays), "power and decays must have the same length"
 
     gammas = []
-    for decay,p in zip(decays,power):
+    for decay, p in zip(decays, power):
         if not p:
             gammas.append(None)
             continue
@@ -220,12 +223,10 @@ def multi_ema(
         count_inc = state.count + 1
         updates = []
         state_ema = []
-        for decay,gamma,ema in zip(decays, gammas,state.ema):
+        for decay, gamma, ema in zip(decays, gammas, state.ema):
             if gamma is not None:
                 decay = (1.0 - 1.0 / count_inc) ** (gamma + 1)
-            update = new_ema = otu.tree_update_moment(
-                params, ema, decay, order=1
-            )
+            update = new_ema = otu.tree_update_moment(params, ema, decay, order=1)
             if debias and gamma is None:
                 update = otu.tree_bias_correction(update, decay, count_inc)
             updates.append(update)
@@ -287,14 +288,28 @@ def get_optimizer(
     if zero_nans:
         grad_processing.append(optax.zero_nans())
 
+    # gradient clipping
+    clip_threshold = training_parameters.get("gradient_clipping", -1.0)
+    clip_range = str(training_parameters.get("clipping_range", "global")).lower()
+    if clip_threshold > 0.0:
+        print("gradient norm clipping threshold:", clip_threshold)
+        if clip_range == "local":
+            _clip = optax.clip
+        elif clip_range == "global":
+            _clip = optax.clip_by_global_norm
+        elif clip_range == "block":
+            _clip = optax.clip_by_block_rms
+        else:
+            raise ValueError(f"Invalid gradnorm_clipping_range: {clip_range}. Should be 'local', 'global' or 'block'.")
+
+        grad_processing.append(_clip(clip_threshold))
+
     use_grokfast = training_parameters.get("use_grokfast", False)
     if use_grokfast:
         print("Using Grokfast")
         alpha_grokfast = training_parameters.get("alpha_grokfast", 0.9)
         l_grokfast = training_parameters.get("l_grokfast", 1.0)
         grad_processing.append(add_grokfast(alpha=alpha_grokfast, l=l_grokfast))
-
-    
 
     # OPTIMIZER
     optimizer_name = training_parameters.get("optimizer", "adabelief")
@@ -357,7 +372,7 @@ def get_optimizer(
     ilr = -1
 
     # gradient clipping
-    clip_threshold = training_parameters.get("gradient_clipping", -1.0)
+    clip_threshold = training_parameters.get("adaptive_gradient_clipping", -1.0)
     if clip_threshold > 0.0:
         print("Adaptive gradient clipping threshold:", clip_threshold)
         grad_processing.append(optax.adaptive_grad_clip(clip_threshold))
@@ -368,7 +383,7 @@ def get_optimizer(
         *grad_processing,
     )
     partition_optimizer = {"trainable": optimizer_, "frozen": optax.set_to_zero()}
-    return optax.multi_transform(partition_optimizer, params_partition),ilr
+    return optax.multi_transform(partition_optimizer, params_partition), ilr
 
 
 def get_lr_schedule(max_epochs, nbatch_per_epoch, training_parameters):
@@ -386,13 +401,24 @@ def get_lr_schedule(max_epochs, nbatch_per_epoch, training_parameters):
     if schedule_type == "cosine_onecycle":
         transition_epochs = training_parameters.get("onecycle_epochs", max_epochs)
         peak_epoch = training_parameters.get("peak_epoch", 0.3 * transition_epochs)
-        schedule_ = optax.cosine_onecycle_schedule(
-            peak_value=lr,
-            div_factor=lr / init_lr,
-            final_div_factor=init_lr / final_lr,
-            transition_steps=transition_epochs * nbatch_per_epoch,
-            pct_start=peak_epoch / transition_epochs,
-        )
+        linear_warmup = training_parameters.get("linear_warmup", False)
+
+        if linear_warmup:
+            schedule_ = optax.warmup_cosine_decay_schedule(
+                init_value=init_lr,
+                peak_value=lr,
+                warmup_steps=peak_epoch * nbatch_per_epoch,
+                decay_steps=transition_epochs * nbatch_per_epoch,
+                end_value=final_lr,
+            )
+        else:
+            schedule_ = optax.cosine_onecycle_schedule(
+                peak_value=lr,
+                div_factor=lr / init_lr,
+                final_div_factor=init_lr / final_lr,
+                transition_steps=transition_epochs * nbatch_per_epoch,
+                pct_start=peak_epoch / transition_epochs,
+            )
         sch_state = {"count": 0, "best": np.inf, "lr": init_lr}
 
         def schedule(state, rmse=None):
