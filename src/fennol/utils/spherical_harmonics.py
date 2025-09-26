@@ -131,8 +131,9 @@ def generate_spherical_harmonics(
 
     if print_code:
         print(fn_str)
-    exec(fn_str)
-    sh = locals()["spherical_harmonics_"]
+    new_locals = {}
+    exec(fn_str,locals=new_locals)
+    sh = new_locals["spherical_harmonics_"]
     if jit:
         sh = jax.jit(sh)
     if not vmapped:
