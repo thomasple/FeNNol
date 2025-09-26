@@ -5,15 +5,8 @@ import numpy as np
 from typing import Any, Dict, Union, Callable, Sequence, Optional, ClassVar
 from ...utils.atomic_units import au
 from ...utils.periodic_table import (
-    D3_ELECTRONEGATIVITIES,
-    D3_HARDNESSES,
-    D3_VDW_RADII,
-    D3_COV_RADII,
-    D3_KAPPA,
-    VDW_RADII,
     POLARIZABILITIES,
     C6_FREE,
-    VALENCE_ELECTRONS,
 )
 import pathlib
 import pickle
@@ -172,6 +165,7 @@ class DispersionD3(nn.Module):
     s8: float = 1.0
     a1: float = 0.4
     a2: float = 5.0
+    trainable: bool = False
     _energy_unit: str = "Ha"
     """The energy unit of the model. **Automatically set by FENNIX**"""
 
@@ -237,10 +231,41 @@ class DispersionD3(nn.Module):
         qq = 3 * r4r2[edge_src] * r4r2[edge_dst]
         c8 = c6 * qq
 
-        r0 = self.a1 * jnp.sqrt(qq) + self.a2
+        if self.trainable:
+            s6 = jnp.abs(
+                self.param(
+                    "s6",
+                    lambda key: jnp.array(self.s6, dtype=c6.dtype),
+                )
+            )
+            s8 = jnp.abs(
+                self.param(
+                    "s8",
+                    lambda key: jnp.array(self.s8, dtype=c6.dtype),
+                )
+            )
+            a1 = jnp.abs(
+                self.param(
+                    "a1",
+                    lambda key: jnp.array(self.a1, dtype=c6.dtype),
+                )
+            )
+            a2 = jnp.abs(
+                self.param(
+                    "a2",
+                    lambda key: jnp.array(self.a2, dtype=c6.dtype),
+                )
+            )
+        else:
+            s6 = self.s6
+            s8 = self.s8
+            a1 = self.a1
+            a2 = self.a2
 
-        t6 = self.s6 / (rij**6 + r0**6)
-        t8 = self.s8 / (rij**8 + r0**8)
+        r0 = a1 * jnp.sqrt(qq) + a2
+
+        t6 = s6 / (rij**6 + r0**6)
+        t8 = s8 / (rij**8 + r0**8)
 
         energy_unit = au.get_multiplier(self._energy_unit)
         energy = (-0.5*energy_unit) * jax.ops.segment_sum(
