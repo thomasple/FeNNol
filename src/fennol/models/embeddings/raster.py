@@ -57,6 +57,8 @@ class RaSTER(nn.Module):
     """Whether to use edge values in the attention mechanism."""
     layer_normalization: bool = True
     """Whether to use layer normalization of atomic embeddings."""
+    layernorm_shift: bool = True
+    """Whether to shift the mean in layer normalization."""
     graph_key: str = "graph"
     """ The key in the input dictionary that corresponds to the radial graph."""
     embedding_key: str = "embedding"
@@ -104,12 +106,18 @@ class RaSTER(nn.Module):
         species = inputs["species"]
 
         ## SETUP LAYER NORMALIZATION
-        def _layer_norm(x):
-            mu = jnp.mean(x, axis=-1, keepdims=True)
-            dx = x - mu
-            var = jnp.mean(dx**2, axis=-1, keepdims=True)
-            sig = (1.0e-6 + var) ** (-0.5)
-            return dx * sig
+        if self.layernorm_shift:
+            def _layer_norm(x):
+                mu = jnp.mean(x, axis=-1, keepdims=True)
+                dx = x - mu
+                var = jnp.mean(dx**2, axis=-1, keepdims=True)
+                sig = (1.0e-6 + var) ** (-0.5)
+                return dx * sig
+        else:
+            def _layer_norm(x):
+                var = jnp.mean(x**2, axis=-1, keepdims=True)
+                sig = (1.0e-6 + var) ** (-0.5)
+                return x * sig
 
         if self.layer_normalization:
             layer_norm = _layer_norm
