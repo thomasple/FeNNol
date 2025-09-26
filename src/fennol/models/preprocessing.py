@@ -1810,6 +1810,16 @@ class JaxConverter(nn.Module):
     def __call__(self, data):
         return convert_to_jax(data)
 
+def convert_to_numpy(data):
+    """Convert jax arrays to numpy arrays in a pytree."""
+
+    def convert(x):
+        if isinstance(x, jax.Array):
+            return np.array(x)
+        return x
+
+    return jax.tree_util.tree_map(convert, data)
+
 
 @dataclasses.dataclass(frozen=True)
 class PreprocessingChain:

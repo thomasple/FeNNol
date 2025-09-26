@@ -17,6 +17,8 @@ from .preprocessing import (
     JaxConverter,
     atom_unpadding,
     check_input,
+    convert_to_jax,
+    convert_to_numpy,
 )
 from .modules import MODULES, PREPROCESSING, FENNIXModules
 
@@ -234,6 +236,8 @@ class FENNIX:
                         atomic_energies = jnp.where(
                             out["true_atoms"], atomic_energies, 0.0
                         )
+                    atomic_energies = atomic_energies.flatten()
+                    assert atomic_energies.shape == out["species"].shape
                     out["atomic_energies"] = atomic_energies
                     energies = jax.ops.segment_sum(
                         atomic_energies,
@@ -628,23 +632,34 @@ class FENNIX:
         _, inputs = self.preprocessing.init_with_output(example_data)
         return head + nn.tabulate(self.modules, rng_key, **kwargs)(inputs)
 
-    def to_dict(self):
+    def to_dict(self,convert_numpy=False):
         """return a dictionary representation of the model"""
+        if convert_numpy:
+            variables = convert_to_numpy(self.variables)
+        else:
+            variables = deepcopy(self.variables)
         return {
             **self._input_args,
             "energy_terms": self.energy_terms,
-            "variables": deepcopy(self.variables),
+            "variables": variables,
         }
 
     def save(self, filename):
         """save the model to a file"""
-        state_dict = self.to_dict()
+        filename_str = str(filename)
+        do_pickle = filename_str.endswith(".pkl") or filename_str.endswith(".pickle")
+        state_dict = self.to_dict(convert_numpy=do_pickle)
         state_dict["preprocessing"] = [
             [k, v] for k, v in state_dict["preprocessing"].items()
         ]
         state_dict["modules"] = [[k, v] for k, v in state_dict["modules"].items()]
-        with open(filename, "wb") as f:
-            f.write(serialization.msgpack_serialize(state_dict))
+        if do_pickle:
+            import pickle
+            with open(filename, "wb") as f:
+                pickle.dump(state_dict, f)
+        else:
+            with open(filename, "wb") as f:
+                f.write(serialization.msgpack_serialize(state_dict))
 
     @classmethod
     def load(
@@ -654,8 +669,16 @@ class FENNIX:
         graph_config={},
     ):
         """load a model from a file"""
-        with open(filename, "rb") as f:
-            state_dict = serialization.msgpack_restore(f.read())
+        filename_str = str(filename)
+        do_pickle = filename_str.endswith(".pkl") or filename_str.endswith(".pickle")
+        if do_pickle:
+            import pickle
+            with open(filename, "rb") as f:
+                state_dict = pickle.load(f)
+                state_dict["variables"] = convert_to_jax(state_dict["variables"])
+        else:
+            with open(filename, "rb") as f:
+                state_dict = serialization.msgpack_restore(f.read())
         state_dict["preprocessing"] = {k: v for k, v in state_dict["preprocessing"]}
         state_dict["modules"] = {k: v for k, v in state_dict["modules"]}
         return cls(
