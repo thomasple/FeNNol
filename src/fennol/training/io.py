@@ -263,7 +263,8 @@ def load_dataset(
                 v_array = np.array(v)
                 # Shift atom number if necessary
                 if k.endswith("_atidx"):
-                    v_array = v_array + atom_shift
+                    mask = (v_array > 0).astype(int)
+                    v_array = v_array + atom_shift*mask
                 output[k].append(v_array)
 
     else:
@@ -275,13 +276,15 @@ def load_dataset(
                 v_array = np.array(d[k])
                 # Shift atom number if necessary
                 if k.endswith("_atidx"):
-                    v_array = v_array + atom_shift
+                    mask = (v_array > 0).astype(int)
+                    v_array =v_array + atom_shift*mask
                 output[k].append(v_array)
             for k in ref_keys_:
                 v_array = np.array(d[k])
                 # Shift atom number if necessary
                 if k.endswith("_atidx"):
-                    v_array = v_array + atom_shift
+                    mask = (v_array > 0).astype(int)
+                    v_array =v_array + atom_shift*mask
                 output[k].append(v_array)
                 if k + "_mask" in d:
                     output[k + "_mask"].append(np.asarray(d[k + "_mask"]))
