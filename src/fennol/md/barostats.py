@@ -8,8 +8,15 @@ from enum import Enum
 
 from .utils import us
 
+
 def get_barostat(
-    thermostat, simulation_parameters, dt, system_data, fprec, rng_key=None, restart_data={}
+    thermostat,
+    simulation_parameters,
+    dt,
+    system_data,
+    fprec,
+    rng_key=None,
+    restart_data={},
 ):
     state = {}
 
@@ -39,7 +46,7 @@ def get_barostat(
     Use anisotropic barostat allowing independent cell parameter scaling.
     Default: False
     """
-    
+
     isotropic = not anisotropic
 
     pbc_data = system_data["pbc"]
@@ -48,8 +55,8 @@ def get_barostat(
     Time delay before starting barostat pressure coupling.
     Default: 0.0
     """
-    start_time = restart_data.get("simulation_time_ps",0.) / us.PS
-    start_barostat = max(0.,start_barostat-start_time)
+    start_time = restart_data.get("simulation_time_ps", 0.0) / us.PS
+    start_barostat = max(0.0, start_barostat - start_time)
     istart_barostat = int(round(start_barostat / dt))
     if istart_barostat > 0 and barostat_name not in ["NONE"]:
         print(
@@ -72,10 +79,11 @@ def get_barostat(
         """
         nat = system_data["nat"]
         masspiston = 3 * nat * kT * tau_piston**2
-        print(f"# LANGEVIN barostat with piston mass={masspiston*us.get_multiplier('KCALPERMOL*PS^{2}'):.1e} kcal/mol.ps^2")
+        print(
+            f"# LANGEVIN barostat with piston mass={masspiston*us.get_multiplier('KCALPERMOL*PS^{2}'):.1e} kcal/mol.ps^2"
+        )
         a1 = math.exp(-gamma * dt)
         a2 = ((1 - a1 * a1) * kT / masspiston) ** 0.5
-
 
         rng_key, v_key = jax.random.split(rng_key)
         if anisotropic:
@@ -102,15 +110,16 @@ def get_barostat(
                     [aniso_mask[0], aniso_mask[3], aniso_mask[4]],
                     [aniso_mask[3], aniso_mask[1], aniso_mask[5]],
                     [aniso_mask[4], aniso_mask[5], aniso_mask[2]],
-                ]
-            ,dtype=np.int32)
+                ],
+                dtype=np.int32,
+            )
         else:
             extvol = jnp.asarray(pbc_data["volume"])
             vextvol = (
                 jax.random.normal(v_key, (1,), dtype=extvol.dtype)
                 * (kT / masspiston) ** 0.5
             )
-            ndof_piston = 1.
+            ndof_piston = 1.0
 
         state["extvol"] = extvol
         state["vextvol"] = vextvol
@@ -130,30 +139,32 @@ def get_barostat(
             istep = barostat_state["istep"] + 1
             dt_bar = dt * (istep >= istart_barostat)
 
-
             # apply B
             # pV = 2 * (system["ek_tensor"] + jnp.trace(system["ek_tensor"])*jnp.eye(3)/(3*x.shape[0])) - system["virial"]
-            ek = system["ek_c"] if nbeads is not None else system["ek"] 
-            Pres = system["pressure_tensor"] + ek*jnp.array(np.eye(3)*(2/(3*x.shape[0])))/volume
+            ek = system["ek_c"] if nbeads is not None else system["ek"]
+            Pres = (
+                system["pressure_tensor"]
+                + ek * jnp.array(np.eye(3) * (2 / (3 * x.shape[0]))) / volume
+            )
             if isotropic:
                 dPres = jnp.trace(Pres) - 3 * target_pressure
             else:
-                dPres = 0.5 * (Pres + Pres.T) -  jnp.array(target_pressure * np.eye(3))
+                dPres = 0.5 * (Pres + Pres.T) - jnp.array(target_pressure * np.eye(3))
 
-            vextvol = vextvol + ((dt_bar/masspiston)*volume) * dPres
+            vextvol = vextvol + ((dt_bar / masspiston) * volume) * dPres
 
             # apply A
             if isotropic:
-                vdt2 = 0.5*dt_bar * vextvol
-                scalev = jnp.exp(-vdt2*(1+1./x.shape[0])) 
+                vdt2 = 0.5 * dt_bar * vextvol
+                scalev = jnp.exp(-vdt2 * (1 + 1.0 / x.shape[0]))
                 vel = vel * scalev
                 scale1 = jnp.exp(vdt2)
             else:
                 vextvol = aniso_mask * vextvol
-                vdt2 = 0.5* dt_bar * vextvol
-                l, O = jnp.linalg.eigh(vdt2) 
-                lcorr = jnp.trace(vdt2)/(3*x.shape[0])
-                Dv = jnp.diag(jnp.exp(-(l+lcorr)))
+                vdt2 = 0.5 * dt_bar * vextvol
+                l, O = jnp.linalg.eigh(vdt2)
+                lcorr = jnp.trace(vdt2) / (3 * x.shape[0])
+                Dv = jnp.diag(jnp.exp(-(l + lcorr)))
                 Dx = jnp.diag(jnp.exp(l))
                 scalev = O @ Dv @ O.T
                 scale1 = O @ Dx @ O.T
@@ -180,7 +191,7 @@ def get_barostat(
             # apply A
             if isotropic:
                 vdt2 = 0.5 * dt_bar * vextvol
-                scalev = jnp.exp(-vdt2*(1+1./x.shape[0]))
+                scalev = jnp.exp(-vdt2 * (1 + 1.0 / x.shape[0]))
                 vel = vel * scalev
                 scale2 = jnp.exp(vdt2)
                 x = x * (scale1 * scale2)
@@ -189,22 +200,34 @@ def get_barostat(
             else:
                 vextvol = aniso_mask * vextvol
                 vdt2 = 0.5 * dt_bar * vextvol
-                l, O = jnp.linalg.eigh(vdt2) 
-                lcorr = jnp.trace(vdt2)/(3*x.shape[0])
-                Dv = jnp.diag(jnp.exp(-(l+lcorr)))
+                l, O = jnp.linalg.eigh(vdt2)
+                lcorr = jnp.trace(vdt2) / (3 * x.shape[0])
+                Dv = jnp.diag(jnp.exp(-(l + lcorr)))
                 Dx = jnp.diag(jnp.exp(l))
                 scalev = O @ Dv @ O.T
                 scale = scale1 @ (O @ Dx @ O.T)
-                vel = vel @ scalev
-                x = x @ scale
+
                 extvol = extvol @ scale
+
+                # ensure cell is lower triangular
+                extvol, rotation_matrix = tril_cell_(extvol)
                 cell = extvol
+                vextvol = rotation_matrix.T @ vextvol @ rotation_matrix
+
+                # scale and rotate positions and velocities
+                vel = vel @ (scalev @ rotation_matrix)
+                x = x @ (scale @ rotation_matrix)
 
             if nbeads is not None:
+                if not isotropic:
+                    eigx = eigx @ rotation_matrix
+                    eigv = eigv @ rotation_matrix
                 x = jnp.concatenate((x[None], eigx), axis=0)
                 vel = jnp.concatenate((vel[None], eigv), axis=0)
 
-            piston_temperature = (us.KELVIN * masspiston/ndof_piston) * jnp.sum(vextvol**2)
+            piston_temperature = (us.KELVIN * masspiston / ndof_piston) * jnp.sum(
+                vextvol**2
+            )
             barostat_state = {
                 **barostat_state,
                 "istep": istep,
@@ -235,3 +258,31 @@ def get_barostat(
         raise ValueError(f"Unknown barostat {barostat_name}")
 
     return barostat, variable_cell, state
+
+
+def tril_cell_(cell):
+    cell = jnp.asarray(cell, dtype=float).reshape(3, 3)
+    a = jnp.linalg.norm(cell[0])
+    b = jnp.linalg.norm(cell[1])
+    c = jnp.linalg.norm(cell[2])
+    cos_alpha = jnp.dot(cell[1], cell[2]) / (b * c)
+    cos_beta = jnp.dot(cell[0], cell[2]) / (a * c)
+    cos_gamma = jnp.dot(cell[0], cell[1]) / (a * b)
+    cell_tril = cell_lengths_angles_to_tril(a, b, c, cos_alpha, cos_beta, cos_gamma)
+    rotation = cell_tril @ jnp.linalg.inv(cell)
+    return cell_tril, rotation
+
+
+def cell_lengths_angles_to_tril(a, b, c, cos_alpha, cos_beta, cos_gamma):
+    sin_gamma = jnp.sqrt(1.0 - cos_gamma * cos_gamma)
+
+    # Build the cell vectors
+    va = a * jnp.array([1, 0, 0])
+    vb = b * jnp.array([cos_gamma, sin_gamma, 0])
+    cx = cos_beta
+    cy = (cos_alpha - cos_beta * cos_gamma) / sin_gamma
+    cz_sqr = 1.0 - cx * cx - cy * cy
+    cz = jnp.sqrt(cz_sqr)
+    vc = c * jnp.array([cx, cy, cz])
+
+    return jnp.vstack((va, vb, vc))

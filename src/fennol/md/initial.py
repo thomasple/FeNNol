@@ -12,7 +12,7 @@ from ..models import FENNIX
 
 from ..utils.periodic_table import PERIODIC_TABLE_REV_IDX, ATOMIC_MASSES
 from .utils import us
-from ..utils import detect_topology,parse_cell
+from ..utils import detect_topology,parse_cell,cell_is_triangular,tril_cell
 
 
 def load_model(simulation_parameters):
@@ -170,6 +170,10 @@ def load_system_data(simulation_parameters, fprec):
     """
     if cell is not None:
         cell = parse_cell(cell).astype(fprec)
+        rotate_cell = not cell_is_triangular(cell)
+        if rotate_cell:
+            print("# Warning: provided cell is not lower triangular. Rotating to canonical cell orientation.")
+            cell, cell_rotation = tril_cell(cell)
         # cell = np.array(cell, dtype=fprec).reshape(3, 3)
         reciprocal_cell = np.linalg.inv(cell)
         volume = np.abs(np.linalg.det(cell))
@@ -198,6 +202,9 @@ def load_system_data(simulation_parameters, fprec):
         """
         if crystal_input:
             coordinates = coordinates @ cell
+        
+        if rotate_cell:
+            coordinates = coordinates @ cell_rotation
 
         pbc_data = {
             "cell": cell,

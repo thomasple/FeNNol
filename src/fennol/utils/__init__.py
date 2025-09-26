@@ -43,6 +43,24 @@ def parse_cell(cell):
     
     return cell_lengths_angles_to_vectors(cell)
 
+def cell_is_triangular(cell, tol=1e-5):
+    if cell is None:
+        return False
+    cell = np.asarray(cell, dtype=float).reshape(3, 3)
+    return np.all(np.abs(cell - np.tril(cell)) < tol)
+
+def tril_cell(cell,reciprocal_cell=None):
+    if cell is None:
+        return None
+    cell = np.asarray(cell, dtype=float).reshape(3, 3)
+    if reciprocal_cell is None:
+        reciprocal_cell = np.linalg.inv(cell)
+    length_angles = cell_vectors_to_lengths_angles(cell)
+    cell_tril = cell_lengths_angles_to_vectors(length_angles)
+    rotation = reciprocal_cell @ cell_tril
+    return cell_tril, rotation
+
+
 def mask_filter_1d(mask, max_size, *values_fill):
     cumsum = jnp.cumsum(mask,dtype=jnp.int32)
     scatter_idx = jnp.where(mask, cumsum - 1, max_size)
