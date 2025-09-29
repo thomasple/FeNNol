@@ -6,7 +6,7 @@
 ## FeNNol: Force-field-enhanced Neural Networks optimized library
 FeNNol is a library for building, training and running neural network potentials for molecular simulations. It is based on the JAX library and is designed to be fast and flexible.
 
-FeNNol's documentation is available [here](https://thomasple.github.io/FeNNol/) and the article describing the library at https://doi.org/10.1063/5.0217688
+FeNNol's documentation is available [here](https://fennol-tools.github.io/FeNNol/) and the article describing the library at https://doi.org/10.1063/5.0217688
 
 Active Learning tutorial in this [Colab notebook](https://colab.research.google.com/drive/1Z3G_jVSF60_nbDdJwbgyLdJBHTYuQ5nL?usp=sharing)
 
@@ -38,7 +38,7 @@ pip install -U "jax[cuda12]"
 
 Then, you can clone the repo and install FeNNol using pip:
 ```bash
-git clone https://github.com/thomasple/FeNNol.git
+git clone https://github.com/FeNNol-tools/FeNNol.git
 cd FeNNol
 pip install .
 ```
@@ -58,9 +58,9 @@ pip install cffi pycuda
 ```
 
 ## Examples
-To learn how to train a FeNNol model, you can check the examples in the [`examples/training`](https://github.com/thomasple/FeNNol/tree/main/examples/training) directory. The `README.md` file in that directory contains instructions on how to train a model on the aspirin revMD17 dataset.
+To learn how to train a FeNNol model, you can check the examples in the [`examples/training`](https://github.com/fennol-tools/FeNNol/tree/main/examples/training) directory. The `README.md` file in that directory contains instructions on how to train a model on the aspirin revMD17 dataset.
 
-To learn how to run molecular dynamics simulations with FeNNol models, you can check the examples in the [`examples/md`](https://github.com/thomasple/FeNNol/tree/main/examples/md) directory. The `README.md` file in that directory contains instructions on how to run simulations with the provided ANI-2x model.
+To learn how to run molecular dynamics simulations with FeNNol models, you can check the examples in the [`examples/md`](https://github.com/fennol-tools/FeNNol/tree/main/examples/md) directory. The `README.md` file in that directory contains instructions on how to run simulations with the provided ANI-2x model.
 
 
 ## Citation
@@ -88,4 +88,4 @@ T. Plé, O. Adjoua, L. Lagardère and J-P. Piquemal. FeNNol: an Efficient and Fl
 
 ## License
 
-This project is licensed under the terms of the GNU LGPLv3 license. See [LICENSE](https://github.com/thomasple/FeNNol/blob/main/LICENSE) for additional details.
+This project is licensed under the terms of the GNU LGPLv3 license. See [LICENSE](https://github.com/fennol-tools/FeNNol/blob/main/LICENSE) for additional details.

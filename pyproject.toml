@@ -41,7 +41,7 @@ e3nn = ["e3nn-jax"]
 deephp = ["cffi", "pydlpack", "pycuda"]
 
 [project.urls]
-Homepage = "https://github.com/thomasple/FeNNol"
+Homepage = "https://github.com/FeNNol-tools/FeNNol"
 
 [project.scripts]
 fennol_md = "fennol.md.dynamic:main"
