@@ -6,7 +6,7 @@ import sympy
 from sympy.printing.pycode import pycode
 from sympy.physics.wigner import clebsch_gordan
 from functools import partial
-
+import sys
 
 def CG_SU2(j1: int, j2: int, j3: int) -> np.array:
     r"""Clebsch-Gordan coefficients for the direct product of two irreducible representations of :math:`SU(2)`
@@ -131,9 +131,15 @@ def generate_spherical_harmonics(
 
     if print_code:
         print(fn_str)
-    new_locals = {}
-    exec(fn_str,locals=new_locals)
-    sh = new_locals["spherical_harmonics_"]
+    if sys.version_info[0] == 2:
+        raise RuntimeError("Python 2 is not supported")
+    if sys.version_info[1] >= 13:
+        new_locals = {}
+        exec(fn_str,locals=new_locals)
+        sh = new_locals["spherical_harmonics_"]
+    else:
+        exec(fn_str)
+        sh = locals()["spherical_harmonics_"]
     if jit:
         sh = jax.jit(sh)
     if not vmapped:
